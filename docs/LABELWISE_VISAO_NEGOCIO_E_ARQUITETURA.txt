@@ -1,0 +1,358 @@
+================================================================================
+LABELWISE — VISÃO DE NEGÓCIO E ARQUITETURA
+Documento base para alinhamento técnico e de produto
+================================================================================
+
+--------------------------------------------------------------------------------
+1. RESUMO EXECUTIVO
+--------------------------------------------------------------------------------
+LabelWise é um aplicativo de análise nutricional inteligente que permite ao
+usuário entender, em segundos, se um alimento industrializado é bom ou ruim
+para o seu perfil de saúde. A entrada acontece por dois caminhos:
+
+  (a) Foto da tabela nutricional (rótulo do produto).
+  (b) Código de barras (EAN/UPC) lido pela câmera.
+
+A saída é uma resposta unificada contendo:
+  - Tabela nutricional reconstruída (o que foi lido na imagem ou na base).
+  - Score global de 0 a 100 (quanto maior, mais saudável).
+  - Classificação por perfil de saúde:
+        • Diabético
+        • Hipertenso (pressão alta)
+        • Ganho de massa muscular
+        • Perda de peso (emagrecimento)
+  - Pontos fortes e pontos fracos do alimento, em linguagem simples.
+
+A proposta é genérica, baseada em sinais nutricionais e classificações da
+ANVISA / front-of-pack — sem heurísticas específicas por produto.
+
+--------------------------------------------------------------------------------
+2. DECISÃO ESTRATÉGICA: A IDEIA FAZ SENTIDO?
+--------------------------------------------------------------------------------
+SIM, a ideia é coerente e tem mercado. Pontos a favor:
+
+  • Existe demanda crescente por rotulagem clara (Lei da Rotulagem ANVISA 2022).
+  • Apps concorrentes (Yuka, Open Food Facts, Desrotulando) validam o modelo.
+  • A combinação "código de barras + fallback por imagem (IA)" cobre o gap
+    onde a base pública não tem o produto — diferencial real no Brasil.
+  • Score por perfil (diabético, hipertenso, etc.) é diferencial competitivo
+    em relação a um único score genérico (Nutri-Score).
+
+Pontos de atenção que precisam ser decididos cedo:
+
+  • Custo por análise via OpenAI Vision (GPT-4.1) — precisa de cache agressivo.
+  • Precisão da extração via foto: dependência forte da qualidade da imagem.
+  • Compliance: o app NÃO pode prescrever dieta. Deve ser informativo.
+  • Privacidade: foto e dados de saúde do usuário são sensíveis (LGPD).
+
+--------------------------------------------------------------------------------
+3. PROPOSTA DE VALOR (PRODUTO)
+--------------------------------------------------------------------------------
+"Aponte a câmera para o rótulo ou para o código de barras e descubra, em
+segundos, se aquele alimento combina com você."
+
+Diferenciais:
+  • Score 0–100 personalizado por perfil de saúde, não apenas global.
+  • Funciona offline-first para produtos já consultados (cache).
+  • Funciona mesmo quando o produto não está em nenhuma base pública,
+    porque a IA lê a tabela diretamente da foto.
+  • Linguagem simples, sem termos técnicos, com aviso quando a análise é
+    baseada em categoria de produto (transparência).
+
+--------------------------------------------------------------------------------
+4. JORNADA DO USUÁRIO (FLUXO DE NEGÓCIO)
+--------------------------------------------------------------------------------
+Cenário A — Código de barras encontrado:
+  1. Usuário escaneia o código de barras.
+  2. App consulta Open Food Facts (OFF).
+  3. Se OFF retorna dados nutricionais válidos → calcula score e perfis.
+  4. Mostra tabela + score + pontos fortes/fracos por perfil.
+
+Cenário B — Código de barras não encontrado OU dados incompletos:
+  1. App orienta o usuário a fotografar a tabela nutricional.
+  2. Imagem é enviada para a pipeline de visão (OpenAI GPT-4.1 Vision).
+  3. IA extrai os campos da tabela (kcal, carbs, açúcar, sódio, etc.).
+  4. Pipeline valida, normaliza e calcula score + perfis.
+  5. Mostra resultado idêntico ao Cenário A.
+
+Cenário C — Foto direta (sem código de barras):
+  1. Usuário fotografa a tabela diretamente.
+  2. Vai direto para o passo 2 do Cenário B.
+
+Em todos os cenários, o resultado é cacheado para reuso (ver seção 7).
+
+--------------------------------------------------------------------------------
+5. REGRAS DE NEGÓCIO — SCORE E PERFIS
+--------------------------------------------------------------------------------
+5.1. Score global (0–100)
+  Baseado em sinais nutricionais por 100 g (sólidos) ou 100 ml (líquidos):
+    • Penaliza: açúcar, açúcar adicionado, sódio, gorduras saturadas,
+                gorduras trans, calorias densas.
+    • Bonifica: fibras, proteínas (em contextos adequados).
+  Os limiares seguem ANVISA (alto em açúcar, alto em sódio, alto em gordura
+  saturada) — regra GENÉRICA, não específica por produto.
+
+5.2. Perfis de saúde (cada um devolve 0–100 + classificação textual)
+
+  • DIABÉTICO
+      Foco: açúcar total, açúcar adicionado, carboidratos, índice glicêmico
+      estimado por categoria, fibras (atenuante).
+      Penalização forte: açúcar adicionado > 5 g/100 g; carbs > 50 g/100 g.
+
+  • HIPERTENSO (pressão alta)
+      Foco: sódio (mg/100 g) e gordura saturada (efeito cardiovascular).
+      Penalização forte: sódio > 400 mg/100 g (limiar ANVISA "alto em sódio").
+
+  • GANHO DE MASSA
+      Foco: proteína por 100 g, densidade calórica adequada, gorduras boas.
+      Bonifica: proteína ≥ 10 g/100 g; calorias ≥ 150 kcal/100 g.
+      Penaliza menos açúcar moderado (energia útil pós-treino).
+
+  • PERDA DE PESO
+      Foco: densidade calórica, açúcar, fibras, proteína (saciedade).
+      Penaliza: kcal > 300/100 g; açúcar > 10 g/100 g.
+      Bonifica: fibras ≥ 3 g/100 g; proteína ≥ 8 g/100 g.
+
+5.3. Equivalência líquido/sólido
+  Para bebidas, 100 ml ≈ 100 g (densidade ~1) é tratado como regra genérica
+  para alimentar o motor de score. Já documentado e implementado no
+  OpenAiNutritionImageAnalyzer.
+
+5.4. Pontos fortes / pontos fracos
+  Gerados a partir dos sinais que mais influenciaram o score (positiva ou
+  negativamente), traduzidos em frases curtas e em português simples.
+
+5.5. BASE DE CÁLCULO DO SCORE (decisão arquitetural)
+  REGRA DE OURO: o score é SEMPRE calculado em base por 100 g (sólidos) ou
+  100 ml (líquidos). NUNCA por porção. Isto vale tanto para dados vindos da
+  imagem (OpenAI Vision) quanto para dados vindos do Open Food Facts.
+
+  Justificativas:
+    1. Comparabilidade: só é possível comparar produtos diferentes em uma
+       base comum. Porções variam (30 g, 45 g, 200 ml, 1 fatia, etc.).
+    2. Antifraude de rotulagem: porções declaradas podem ser reduzidas
+       artificialmente pelo fabricante para "esconder" valores ruins.
+    3. Compatibilidade ANVISA: os limiares legais ("alto em açúcar",
+       "alto em sódio", "alto em gordura saturada") são definidos por
+       100 g ou 100 ml.
+    4. Compatibilidade com Nutri-Score / Yuka / OFF: todos usam 100 g/ml.
+
+  Algoritmo de seleção da base (genérico, sem heurística por produto):
+    a) Se o rótulo trouxer coluna por 100 g  → usar direto.
+    b) Se o rótulo trouxer coluna por 100 ml → usar direto (densidade ≈ 1).
+    c) Se o rótulo trouxer SOMENTE por porção:
+         - Identificar a unidade da porção (g ou ml).
+         - Normalizar:  valor_por_100 = valor_porcao × (100 / amount_porcao)
+         - Se a unidade da porção for desconhecida, NÃO normalizar; sinalizar
+           baixa confiança e exibir aviso ao usuário.
+    d) Para produtos em pó com coluna "100 ml preparado" (ex.: achocolatado,
+       suco em pó, sopa instantânea), priorizar SEMPRE a coluna do produto
+       como vendido (em pó / 100 g). A coluna "preparado" pode ser exibida
+       ao usuário, mas NÃO entra no scoring. Esta é uma regra genérica
+       baseada em sinal nutricional (presença de duas colunas com unidades
+       diferentes), não em nome de produto.
+
+  Prioridade de fonte de dados (quando ambas existirem):
+    1º) Open Food Facts (barcode) — base curada, mais estável.
+    2º) Foto via OpenAI Vision   — quando OFF não tem o produto OU quando
+        OFF tem dados incompletos (faltando açúcar adicionado, sódio,
+        fibras etc.) OU quando o usuário força reanálise.
+    Em ambos os caminhos, o scoring é IDÊNTICO porque o
+    EstimatedNutritionProfileDto é o contrato comum em base 100 g/ml.
+
+  O que é exibido ao usuário (3 blocos, sempre):
+    [1] CONFORME O RÓTULO     → valores por porção, fiéis ao rótulo lido.
+    [2] POR 100 g / 100 ml    → valores normalizados, base do score.
+    [3] SCORE + PERFIS        → calculado a partir do bloco [2].
+  Esta divisão garante transparência (usuário vê o que está no rótulo) e
+  honestidade analítica (score em base comparável).
+
+--------------------------------------------------------------------------------
+6. ARQUITETURA — VISÃO GERAL
+--------------------------------------------------------------------------------
+Stack: .NET 10, C# 14, ASP.NET Core (Controllers), MongoDB (cache),
+        Azure/OpenAI Vision (GPT-4.1), Open Food Facts (REST público),
+        ImageSharp (pré-processamento).
+
+Camadas (Clean Architecture já adotada no repo):
+
+  LabelWise.Api               → Controllers HTTP (entrada).
+  LabelWise.Application       → Interfaces, DTOs, Models, regras de domínio
+                                aplicacional (score, perfis, validações).
+  LabelWise.Domain            → Entidades e parsers nutricionais puros.
+  LabelWise.Infrastructure    → Implementações: OpenAI, OFF, Mongo, OCR,
+                                cache, pipeline de análise.
+
+--------------------------------------------------------------------------------
+7. ARQUITETURA — FLUXO DE ANÁLISE (PIPELINE)
+--------------------------------------------------------------------------------
+Entrada HTTP única no NutritionController, com dois modos:
+   modo = "barcode"  → payload contém EAN/UPC.
+   modo = "image"    → payload contém imagem (multipart).
+
+Orquestrador: INutritionAnalysisOrchestrator
+  ├─ 1. Resolver fonte de dados:
+  │     ├─ Se barcode → IOpenFoodFactsService
+  │     └─ Se imagem  → INutritionImageAnalyzer (OpenAI Vision)
+  │
+  ├─ 2. Cache em camadas (já implementado):
+  │     ├─ Hash exato da imagem (SHA-256)
+  │     ├─ pHash (similaridade visual)
+  │     └─ Fingerprint nutricional (conteúdo)
+  │
+  ├─ 3. Normalização (NutritionNormalizer):
+  │     ├─ Unidades (g, ml, mg)
+  │     ├─ Conversão de porção → 100 g/ml
+  │     └─ Detecção de coluna (g vs ml)
+  │
+  ├─ 4. Validação (INutritionValidator + NutritionConfidenceEngine):
+  │     ├─ Limites físicos (carbs ≤ 100 g/100 g)
+  │     ├─ Equação calórica (kcal ≈ 4C + 4P + 9F)
+  │     └─ Coerência porção vs 100 g
+  │
+  ├─ 5. Scoring (INutritionScoringService):
+  │     ├─ Score global
+  │     └─ Score por perfil (4 perfis)
+  │
+  ├─ 6. Construção da resposta (INutritionResponseBuilder):
+  │     ├─ Tabela exibível
+  │     ├─ Score e classificações
+  │     ├─ Pontos fortes / fracos
+  │     └─ Aviso de baixa confiança quando aplicável
+  │
+  └─ 7. Persistência de cache para reuso futuro.
+
+--------------------------------------------------------------------------------
+8. ARQUITETURA — COMPONENTES-CHAVE
+--------------------------------------------------------------------------------
+• INutritionImageAnalyzer (OpenAiNutritionImageAnalyzer)
+    Responsável SOMENTE por extrair JSON estruturado da imagem via GPT-4.1.
+    Não calcula score. Não classifica. Apenas extrai dados visíveis.
+
+• IOpenFoodFactsService
+    Consulta REST pública. Mapeia para o mesmo DTO usado pela IA
+    (EstimatedNutritionProfileDto), garantindo um único caminho de scoring.
+
+• INutritionConfidenceEngine
+    Avalia confiabilidade dos dados extraídos (0–1). Bloqueia cache
+    abaixo de 0.7 (regra atual do código).
+
+• IImageAnalysisCacheService + INutritionFingerprintService
+    Cache em três níveis: hash exato, pHash, fingerprint nutricional.
+    Reduz custo de OpenAI drasticamente em produção.
+
+• INutritionScoringService
+    Calcula score global e por perfil. Único ponto onde regras de
+    saúde (diabético, hipertenso, massa, emagrecimento) vivem.
+
+• INutritionResponseBuilder
+    Monta UnifiedNutritionAnalysisResponse — contrato único do app,
+    independente da origem (barcode ou imagem).
+
+--------------------------------------------------------------------------------
+9. CONTRATO DE SAÍDA (RESPONSE UNIFICADO)
+--------------------------------------------------------------------------------
+UnifiedNutritionAnalysisResponse
+{
+  source: "openfoodfacts" | "openai-vision" | "cache",
+  productName, brand,
+  nutritionTable: {
+    asLabel:   { amount, unit, values },   // bloco [1] - fiel ao rótulo
+    per100:    { unit: "g"|"ml", values }, // bloco [2] - base do score
+    perServing:{ amount, unit, values }    // opcional, quando disponível
+  },
+  scoreBasis: "per100g" | "per100ml",      // qual base alimentou o score
+  globalScore: 0..100,
+  globalLabel: "Excelente" | "Bom" | "Médio" | "Ruim" | "Péssimo",
+  profileScores: {
+     diabetic:     { score, label, reasons[] },
+     hypertensive: { score, label, reasons[] },
+     muscleGain:   { score, label, reasons[] },
+     weightLoss:   { score, label, reasons[] }
+  },
+  strengths: string[],     // pontos fortes em linguagem simples
+  weaknesses: string[],    // pontos fracos em linguagem simples
+  confidence: 0..1,
+  disclaimer: "Análise informativa, não substitui orientação profissional."
+}
+
+--------------------------------------------------------------------------------
+10. PERSISTÊNCIA E CACHE
+--------------------------------------------------------------------------------
+MongoDB (já configurado no repo):
+  • image_analysis_cache       → hash exato + pHash + payload.
+  • nutrition_analysis_cache   → fingerprint nutricional + score consolidado.
+  • (futuro) products_cache    → snapshot de OFF por EAN.
+
+Política:
+  • Salvar somente se confidence ≥ 0.7.
+  • Invalidar manualmente por EAN quando OFF for atualizado (futuro).
+
+--------------------------------------------------------------------------------
+11. CUSTOS E PERFORMANCE
+--------------------------------------------------------------------------------
+• Cache hit (qualquer nível) → custo zero de OpenAI, latência < 100 ms.
+• Cache miss + OpenAI Vision → ~1–3 s, custo por imagem.
+• Pré-processamento da imagem (ImageSharp) reduz tokens de entrada.
+• Timeout atual: 30 s. Recomendado adicionar retry com backoff exponencial.
+• max_tokens = 500 e temperature = 0 (determinístico) — adequado.
+
+--------------------------------------------------------------------------------
+12. SEGURANÇA, PRIVACIDADE E COMPLIANCE
+--------------------------------------------------------------------------------
+• Imagens não devem ser persistidas além do necessário (debug é opt-in).
+• Dados de perfil de saúde do usuário (diabético etc.) → LGPD: tratamento
+  como dado sensível, consentimento explícito.
+• Disclaimer obrigatório em toda resposta: caráter informativo.
+• Nunca recomendar dose, dieta ou substituição de medicamento.
+
+--------------------------------------------------------------------------------
+13. ROADMAP SUGERIDO
+--------------------------------------------------------------------------------
+Fase 1 — MVP funcional
+  • Fluxo barcode (OFF) + fluxo imagem (OpenAI) com response unificado.
+  • Score global + 4 perfis.
+  • Cache de imagem e fingerprint (já existem).
+
+Fase 2 — Qualidade
+  • Retry/backoff na chamada OpenAI.
+  • Telemetria (Application Insights) por etapa do pipeline.
+  • Painel administrativo de auditoria de extrações de baixa confiança.
+
+Fase 3 — Crescimento
+  • Histórico do usuário e comparação entre produtos.
+  • Sugestão de substitutos mais saudáveis (mesma categoria).
+  • Modo offline com base local sincronizada.
+
+Fase 4 — Monetização
+  • Plano free (N análises/mês) + plano premium (ilimitado + perfis extras
+    como gestante, intolerância à lactose, doença celíaca).
+
+--------------------------------------------------------------------------------
+14. RISCOS E MITIGAÇÕES
+--------------------------------------------------------------------------------
+Risco                              | Mitigação
+-----------------------------------+------------------------------------------
+Custo OpenAI escalando             | Cache em 3 níveis + barcode primeiro.
+Imagem ruim → extração errada      | Confidence engine + aviso ao usuário.
+OFF desatualizado                  | Permitir foto mesmo com barcode achado.
+Heurística por produto vazando     | Regras genéricas + revisão de PR.
+LGPD / dados sensíveis             | Consentimento + criptografia em repouso.
+Dependência de fornecedor (OpenAI) | Abstração via INutritionImageAnalyzer.
+
+--------------------------------------------------------------------------------
+15. CONCLUSÃO
+--------------------------------------------------------------------------------
+A ideia faz sentido técnica e comercialmente. A arquitetura atual do
+LabelWise já contempla as peças certas: orquestrador, pipeline, cache em
+camadas, confidence engine e abstrações por interface. O esforço a partir
+daqui se concentra em:
+
+  1. Consolidar o contrato unificado de resposta (barcode + imagem).
+  2. Implementar/finalizar o INutritionScoringService com os 4 perfis.
+  3. Endurecer cache, retries e telemetria.
+  4. Garantir compliance (LGPD + disclaimer informativo).
+
+Com isso, o produto entrega uma promessa clara: "fotografou ou escaneou,
+sabe se pode comer".
+================================================================================
