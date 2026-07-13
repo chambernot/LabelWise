@@ -1,0 +1,121 @@
+using System.Text.RegularExpressions;
+
+namespace LabelWise.Infrastructure.Services.IngredientAnalysis;
+
+/// <summary>
+/// Final sanitization layer applied right before the mobile-first response is built.
+/// Removes scientific/transgenic annotations, regulatory notes and generic truncated
+/// tokens that should NEVER reach the user-facing payload.
+/// </summary>
+public static class MobileIngredientSanitizer
+{
+    // Banned scientific / transgenic markers — case-insensitive.
+    private static readonly string[] BannedScientificMarkers =
+    [
+        "Agrobacterium", "tumefaciens",
+        "Bacillus", "thuringiensis",
+        "Zea mays",
+        "transgênico", "transgenico", "transgênicos", "transgenicos",
+        "OGM", "GMO"
+    ];
+
+    // Closed parenthesis containing a banned marker → remove the whole group.
+    private static readonly Regex BannedParenthesisClosed = new(
+        @"\s*\([^)]*\b(?:Agrobacterium|Bacillus|Zea\s*mays|tumefaciens|thuringiensis|transg[eê]nicos?|OGM|GMO)\b[^)]*\)",
+        RegexOptions.IgnoreCase | RegexOptions.CultureInvariant | RegexOptions.Compiled);
+
+    // Truncated parenthesis (no closing `)`) containing a banned marker → remove from `(` to end.
+    private static readonly Regex BannedParenthesisTruncated = new(
+        @"\s*\([^)]*\b(?:Agrobacterium|Bacillus|Zea\s*mays|tumefaciens|thuringiensis|transg[eê]nicos?|OGM|GMO)\b[^)]*$",
+        RegexOptions.IgnoreCase | RegexOptions.CultureInvariant | RegexOptions.Compiled);
+
+    // Banned tokens floating outside parentheses → strip.
+    private static readonly Regex BannedFloatingTokens = new(
+        @"\b(?:Agrobacterium\s*tumefaciens|Bacillus\s*thuringiensis|Zea\s*mays|Agrobacterium|Bacillus|tumefaciens|thuringiensis|transg[eê]nicos?|OGM|GMO)\b",
+        RegexOptions.IgnoreCase | RegexOptions.CultureInvariant | RegexOptions.Compiled);
+
+    private static readonly Regex EmptyParenthesis = new(
+        @"\(\s*\)",
+        RegexOptions.CultureInvariant | RegexOptions.Compiled);
+
+    private static readonly Regex DanglingOpenParenthesis = new(
+        @"\s*\(\s*$",
+        RegexOptions.CultureInvariant | RegexOptions.Compiled);
+
+    private static readonly Regex MultipleSpaces = new(
+        @"\s{2,}",
+        RegexOptions.CultureInvariant | RegexOptions.Compiled);
+
+    private static readonly Regex TrailingPunctuation = new(
+        @"[\s,;:.\-–—(]+$",
+        RegexOptions.CultureInvariant | RegexOptions.Compiled);
+
+    private static readonly Regex LeadingPunctuation = new(
+        @"^[\s,;:.\-–—)]+",
+        RegexOptions.CultureInvariant | RegexOptions.Compiled);
+
+    // Tokens que indicam lote, fabricante, contato ou código e devem ser descartados integralmente.
+    private static readonly Regex ManufacturerOrLotToken = new(
+        @"(?:^|\s)(?:[A-Z]{2,5}\d{3,}|LOT\w+|VALD\w+)\b|" +
+        @"\b(?:marpa|alimentos|ind\.?\s*bras|ltda|eireli|cnpj|sac\b|email|@|www\.|f:\s*\(|\(\d{2}\)\s*\d)",
+        RegexOptions.IgnoreCase | RegexOptions.CultureInvariant | RegexOptions.Compiled);
+
+    private static readonly HashSet<string> GenericStandaloneTokens = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "extrato", "extratos",
+        "aroma", "aromas",
+        "óleo", "oleo", "óleos", "oleos",
+        "farinha", "farinhas",
+        "essência", "essencia",
+        "ingrediente", "ingredientes",
+        "outros", "diversos",
+        "componente", "componentes"
+    };
+
+    public static string Sanitize(string? value)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+            return string.Empty;
+
+        // Discard tokens that contain lot codes, brand names or manufacturer data —
+        // these should never reach the user-facing payload.
+        if (ManufacturerOrLotToken.IsMatch(value))
+            return string.Empty;
+
+        var text = value;
+
+        // 1) Remove closed parenthesized scientific notes.
+        text = BannedParenthesisClosed.Replace(text, " ");
+
+        // 2) Remove truncated parenthesized scientific notes (`... (Agrobacterium ...`).
+        text = BannedParenthesisTruncated.Replace(text, " ");
+
+        // 3) Strip any remaining banned token outside parentheses.
+        text = BannedFloatingTokens.Replace(text, " ");
+
+        // 4) Clean leftover artifacts.
+        text = EmptyParenthesis.Replace(text, " ");
+        text = DanglingOpenParenthesis.Replace(text, string.Empty);
+        text = MultipleSpaces.Replace(text, " ").Trim();
+        text = TrailingPunctuation.Replace(text, string.Empty);
+        text = LeadingPunctuation.Replace(text, string.Empty).Trim();
+
+        if (string.IsNullOrWhiteSpace(text))
+            return string.Empty;
+
+        // If after sanitization any banned marker still exists (e.g. OCR variant), discard.
+        foreach (var marker in BannedScientificMarkers)
+        {
+            if (text.Contains(marker, StringComparison.OrdinalIgnoreCase))
+                return string.Empty;
+        }
+
+        if (GenericStandaloneTokens.Contains(text))
+            return string.Empty;
+
+        if (text.Length < 3)
+            return string.Empty;
+
+        return text;
+    }
+}
