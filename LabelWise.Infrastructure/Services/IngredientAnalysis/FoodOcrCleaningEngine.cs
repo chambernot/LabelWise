@@ -306,7 +306,7 @@ public sealed class FoodSemanticFinalizationEngine(
         response.UnifiedSemanticState = BuildUnifiedState(response);
         ApplyFinalConsistency(response);
         BuildPayloads(response, rawOcr, parsingTraces);
-        ApplyHardFilters(response);
+        //ApplyHardFilters(response);
         logger.LogDebug("[FoodSemanticFinalization] Entities={Entities}; Ingredients={Ingredients}; Trust={Trust}", response.StructuredFoodEntities.Count, response.IngredientsDetected.Count, response.Trust.AnalysisTrustScore);
     }
 
