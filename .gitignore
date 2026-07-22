@@ -361,3 +361,8 @@ MigrationBackup/
 
 # Fody - auto-generated XML schema
 FodyWeavers.xsd
+/LabelWise.Api/appsettings.json
+/LabelWise.Api/cenviado.jpg
+/LabelWise.Api/ctemplabelwise_debug_imagesenviado.jpg
+/LabelWise.Api/cUserschambOneDriveDesktopenviado.jpg
+/LabelWise.Api/appsettings.json
