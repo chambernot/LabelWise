@@ -1,4 +1,5 @@
-﻿using LabelWise.Application.Services;
+﻿using LabelWise.Api.Models;
+using LabelWise.Application.Services;
 using Microsoft.AspNetCore.Mvc;
 
 namespace LabelWise.Api.Controllers;
@@ -20,23 +21,17 @@ public class EvaluationController : ControllerBase
     [HttpPost("{id:guid}/pre-grade")]
     public async Task<IActionResult> PreGradeCard(
         Guid id,
-        [FromForm] decimal currentRawValue,
-        [FromForm] IFormFile frontImage,
-        [FromForm] IFormFile backImage)
+        [FromForm] PreGradeCardFormModel model)
     {
-        if (frontImage == null || backImage == null)
+        if (model?.FrontImage == null || model?.BackImage == null)
             return BadRequest("As fotos da frente e do verso em alta qualidade são obrigatórias para a pré-gradação.");
 
         try
         {
-            // O serviço agora deve ser injetado via construtor no Controller!
-            // Para o exemplo de onde injetar: 
-            // var preGradingService = HttpContext.RequestServices.GetRequiredService<PreGradingService>();
+            using var frontStream = model.FrontImage.OpenReadStream();
+            using var backStream = model.BackImage.OpenReadStream();
 
-            using var frontStream = frontImage.OpenReadStream();
-            using var backStream = backImage.OpenReadStream();
-
-            var result = await _preGradingService.SimulateGradingAsync(id, currentRawValue, frontStream, backStream);
+            var result = await _preGradingService.SimulateGradingAsync(id, model.CurrentRawValue, frontStream, backStream);
 
             return Ok(new
             {

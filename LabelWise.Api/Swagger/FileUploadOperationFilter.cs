@@ -14,14 +14,19 @@ namespace LabelWise.Api.Swagger
     {
         public void Apply(OpenApiOperation operation, OperationFilterContext context)
         {
-            // Detectar parâmetros que são IFormFile ou IFormFile[]
-            var formFileParams = context.ApiDescription.ParameterDescriptions
+            // Detectar parâmetros que são IFormFile ou IFormFile[] (diretos)
+            var directFormFileParams = context.ApiDescription.ParameterDescriptions
                 .Where(p => p.ModelMetadata != null && 
                            (p.ModelMetadata.ModelType == typeof(IFormFile) ||
                             p.ModelMetadata.ModelType == typeof(IFormFile[])))
                 .ToList();
 
-            if (!formFileParams.Any())
+            // Detectar propriedades IFormFile em modelos complexos
+            var complexWithFiles = context.ApiDescription.ParameterDescriptions
+                .Where(p => p.ModelMetadata != null && p.ModelMetadata.Properties != null && p.ModelMetadata.Properties.Any(prop => prop.ModelType == typeof(IFormFile) || prop.ModelType == typeof(IFormFile[])))
+                .ToList();
+
+            if (!directFormFileParams.Any() && !complexWithFiles.Any())
                 return;
 
             // Obter todos os parâmetros (incluindo não-IFormFile como strings, etc.)
@@ -34,15 +39,14 @@ namespace LabelWise.Api.Swagger
             var properties = new Dictionary<string, OpenApiSchema>();
             var requiredFields = new HashSet<string>();
 
-            // Processar cada parâmetro
-            foreach (var param in allParams)
+            // Processar parâmetros diretos (ex.: method(IFormFile file))
+            foreach (var param in directFormFileParams)
             {
                 var paramName = param.Name;
                 var isRequired = param.IsRequired;
 
-                if (param.ModelMetadata?.ModelType == typeof(IFormFile))
+                if (param.ModelMetadata.ModelType == typeof(IFormFile))
                 {
-                    // Parâmetro IFormFile
                     properties[paramName] = new OpenApiSchema
                     {
                         Type = "string",
@@ -51,13 +55,10 @@ namespace LabelWise.Api.Swagger
                     };
 
                     if (isRequired)
-                    {
                         requiredFields.Add(paramName);
-                    }
                 }
-                else if (param.ModelMetadata?.ModelType == typeof(IFormFile[]))
+                else if (param.ModelMetadata.ModelType == typeof(IFormFile[]))
                 {
-                    // Array de IFormFile
                     properties[paramName] = new OpenApiSchema
                     {
                         Type = "array",
@@ -70,38 +71,86 @@ namespace LabelWise.Api.Swagger
                     };
 
                     if (isRequired)
-                    {
                         requiredFields.Add(paramName);
-                    }
                 }
-                else if (param.ModelMetadata?.ModelType == typeof(string))
-                {
-                    // Parâmetro string
-                    properties[paramName] = new OpenApiSchema
-                    {
-                        Type = "string",
-                        Description = param.ModelMetadata.Description ?? $"Parameter: {paramName}"
-                    };
+            }
 
-                    if (isRequired)
-                    {
-                        requiredFields.Add(paramName);
-                    }
-                }
-                else
+            // Processar parâmetros complexos: expor propriedades do modelo
+            foreach (var param in complexWithFiles)
+            {
+                // Para cada propriedade do modelo
+                foreach (var prop in param.ModelMetadata.Properties)
                 {
-                    // Outros tipos (int, bool, etc.)
-                    properties[paramName] = new OpenApiSchema
-                    {
-                        Type = GetSchemaType(param.ModelMetadata?.ModelType),
-                        Description = param.ModelMetadata?.Description ?? $"Parameter: {paramName}"
-                    };
+                    var propName = prop.BinderModelName ?? prop.PropertyName ?? prop.Name ?? prop.UnderlyingOrModelType?.Name ?? "unknown";
 
-                    if (isRequired)
+                    var isRequired = prop.IsRequired;
+
+                    if (prop.ModelType == typeof(IFormFile))
                     {
-                        requiredFields.Add(paramName);
+                        properties[propName] = new OpenApiSchema
+                        {
+                            Type = "string",
+                            Format = "binary",
+                            Description = GetFileDescription(propName)
+                        };
+
+                        if (isRequired)
+                            requiredFields.Add(propName);
+                    }
+                    else if (prop.ModelType == typeof(IFormFile[]))
+                    {
+                        properties[propName] = new OpenApiSchema
+                        {
+                            Type = "array",
+                            Items = new OpenApiSchema
+                            {
+                                Type = "string",
+                                Format = "binary"
+                            },
+                            Description = GetFileDescription(propName)
+                        };
+
+                        if (isRequired)
+                            requiredFields.Add(propName);
+                    }
+                    else
+                    {
+                        // Adicionar também outras propriedades simples do modelo para documentação
+                        properties[propName] = new OpenApiSchema
+                        {
+                            Type = GetSchemaType(prop.ModelType),
+                            Description = prop.Description ?? $"Parameter: {propName}"
+                        };
+
+                        if (isRequired)
+                            requiredFields.Add(propName);
                     }
                 }
+            }
+
+            // Para suportar também parâmetros simples que não fazem parte dos complexos
+            // (ex.: string cardName via [FromForm])
+            var simpleParams = allParams
+                .Where(p => p.ModelMetadata != null && (p.ModelMetadata.ModelType != typeof(IFormFile) && p.ModelMetadata.ModelType != typeof(IFormFile[]) && (p.ModelMetadata.Properties == null || !p.ModelMetadata.Properties.Any())))
+                .ToList();
+
+            foreach (var param in simpleParams)
+            {
+                // Se a propriedade já foi adicionada acima (por modelo), pular
+                if (properties.ContainsKey(param.Name))
+                    continue;
+
+                var paramName = param.Name;
+                var isRequired = param.IsRequired;
+
+                properties[paramName] = new OpenApiSchema
+                {
+                    Type = GetSchemaType(param.ModelMetadata?.ModelType),
+                    Description = param.ModelMetadata?.Description ?? $"Parameter: {paramName}"
+                };
+
+                if (isRequired)
+                    requiredFields.Add(paramName);
             }
 
             // Configurar RequestBody para multipart/form-data
