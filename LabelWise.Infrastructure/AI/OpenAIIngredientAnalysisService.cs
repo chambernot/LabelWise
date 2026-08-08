@@ -12,25 +12,123 @@ namespace LabelWise.Infrastructure.AI;
 
 public sealed class OpenAIIngredientAnalysisService : IOpenAIIngredientAnalysisService
 {
-    private const string SystemPrompt = "Você é um extrator OCR/visão estrito para ingredientes e restrições alimentares. Trabalhe apenas com texto e elementos VISÍVEIS na imagem ou no contexto OCR fornecido. Nunca invente ingredientes, alergênicos ou claims. Responda apenas JSON válido.";
+    private const string SystemPrompt = "Você é um mecanismo profissional de OCR especializado em rótulos de alimentos.\r\n\r\nSua primeira responsabilidade é LER. Sua segunda responsabilidade é EXTRAIR.\r\n\r\nREGRAS ABSOLUTAS\r\n\r\n- Nunca invente texto.\r\n- Nunca complete palavras ilegíveis.\r\n- Nunca utilize conhecimento prévio do produto.\r\n- Nunca deduza ingredientes.\r\n- Nunca substitua palavras.\r\n- Nunca normalize nomes.\r\n- Nunca corrija erros de impressão.\r\n- Preserve exatamente a grafia encontrada.\r\n- Preserve maiúsculas, minúsculas e acentuação quando legíveis.\r\n- Preserve exatamente a ordem em que os ingredientes aparecem.\r\n\r\nPROCESSO OBRIGATÓRIO\r\n\r\nAntes de responder:\r\n\r\n1. Faça uma leitura completa da imagem.\r\n2. Faça uma segunda leitura procurando textos pequenos.\r\n3. Faça uma terceira leitura nas regiões próximas ao rodapé, laterais e abaixo da tabela nutricional.\r\n4. Somente após concluir a leitura completa extraia as informações solicitadas.\r\n\r\nIMPORTANTE\r\n\r\nSua prioridade é OCR.\r\n\r\nNão resuma.\r\n\r\nNão interprete antes de terminar a leitura.\r\n\r\nNão ignore textos por parecerem irrelevantes.\r\n\r\nQuando houver dúvida sobre um caractere, mantenha apenas o que puder ler com confiança.\r\n\r\nResponda exclusivamente com JSON válido.";
 
-    private const string UserPrompt = @"TAREFA: analisar a imagem de uma embalagem de alimento para extrair ingredientes, alergênicos e claims alimentares visíveis.
+    private const string UserPrompt = @"Você está analisando um rótulo de alimento.
 
-REGRAS OBRIGATÓRIAS:
-- Não exige tabela nutricional.
-- Use apenas elementos visíveis na imagem ou no contexto OCR fornecido.
-- Se não houver lista de ingredientes legível, retorne ingredientsDetected como array vazio.
-- Não use conhecimento prévio do produto.
-- Não complete palavras ilegíveis.
-- Se a lista estiver cortada, parcial, com reflexo ou baixa legibilidade, inclua um aviso em warnings.
-- Nunca afirme certeza absoluta sem evidência textual forte.
-- Preserve claims literais quando visíveis, como: contém leite, contém glúten, pode conter, não contém lactose, vegano, vegetariano, plant based, sem lactose, sem glúten.
-- Alergênicos devem vir apenas de ingredientes/claims detectados.
-- Diferencie CONTÉM de PODE CONTER: avisos como ""pode conter"", ""traços de"" ou ""fabricado em equipamento"" devem ir em claims, não como ingrediente confirmado.
-- Não extraia ingredientes da tabela nutricional, como sódio, carboidrato, gordura, kcal, mg, g ou %VD.
-- Frases como ""equivale ao açúcar"", ""poder adoçante"" ou ""substitui açúcar"" não significam açúcar adicionado.
+OBJETIVO
 
-JSON de saída:
+Localizar e extrair com a maior precisão possível a LISTA DE INGREDIENTES da embalagem.
+
+Antes de gerar o JSON execute mentalmente este processo:
+
+PASSO 1
+
+Leia toda a imagem do canto superior esquerdo até o canto inferior direito.
+
+PASSO 2
+
+Faça uma segunda leitura procurando especificamente qualquer bloco que contenha:
+
+- INGREDIENTES
+- INGREDIENTE
+- COMPOSIÇÃO
+- COMPOSIÇÃO DO PRODUTO
+- INGREDIENTES:
+- ingredientes
+- ingrediente
+- 
+
+Também considere títulos parcialmente visíveis ou parcialmente cortados.
+
+PASSO 3
+
+Quando localizar esse bloco, releia SOMENTE essa região cuidadosamente.
+
+Leia linha por linha.
+
+Não pule nenhuma linha.
+
+Não pule ingredientes escritos em fonte pequena.
+
+Leia inclusive linhas próximas ao rodapé.
+
+Leia inclusive texto abaixo da tabela nutricional.
+
+Leia inclusive texto em outras cores.
+
+PASSO 4
+
+Continue lendo até encontrar um dos seguintes delimitadores:
+
+- ALÉRGICOS
+- INFORMAÇÃO NUTRICIONAL
+- TABELA NUTRICIONAL
+- MODO DE PREPARO
+- CONSERVAÇÃO
+- ARMAZENAMENTO
+- fim da imagem
+
+PASSO 5
+
+Extraia também qualquer informação sobre alergênicos.
+
+Considere expressões como:
+
+- CONTÉM
+- PODE CONTER
+- PODE CONTER TRAÇOS
+- FABRICADO EM EQUIPAMENTO
+- ALÉRGICOS
+
+Essas informações devem ser retornadas apenas em ""allergens"".
+
+Nunca transforme alergênicos em ingredientes.
+
+PASSO 6
+
+Extraia literalmente qualquer claim encontrado.
+
+Exemplos:
+
+- vegano
+- vegetariano
+- plant based
+- sem lactose
+- não contém lactose
+- sem glúten
+- contém glúten
+- zero açúcar
+- zero adição de açúcar
+- alto teor de proteína
+- fonte de proteína
+- integral
+- orgânico
+- sem conservantes
+- sem corantes
+
+Não invente claims.
+
+PASSO 7
+
+Preencha rawExtractedText com todas as linhas efetivamente utilizadas para montar a resposta.
+
+IMPORTANTE
+
+Se existir qualquer parte legível da lista de ingredientes, extraia tudo o que conseguir.
+
+Nunca deixe ingredientsDetected vazio apenas porque parte do texto está ilegível.
+
+Somente deixe ingredientsDetected vazio quando tiver absoluta certeza de que a embalagem não possui nenhuma seção de ingredientes visível.
+
+Não utilize informações da tabela nutricional para criar ingredientes.
+
+Não utilize conhecimento prévio do produto.
+
+Não complete palavras parcialmente ilegíveis.
+
+JSON
+
 {
   ""productName"": string | null,
   ""brand"": string | null,
@@ -41,7 +139,7 @@ JSON de saída:
   ""warnings"": [string]
 }
 
-Não retorne texto fora do JSON.";
+Retorne exclusivamente o JSON.";
 
     private readonly HttpClient _httpClient;
     private readonly AzureOpenAiVisionOptions _options;
@@ -79,12 +177,19 @@ Não retorne texto fora do JSON.";
 
         try
         {
+
+        
+
             var base64Image = Convert.ToBase64String(imageBytes);
             var resolvedMimeType = ResolveMimeType(mimeType, base64Image);
             var prompt = string.IsNullOrWhiteSpace(ocrContext)
-                ? UserPrompt
-                : $"{UserPrompt}\n\nCONTEXTO OCR AUXILIAR, extraído da mesma imagem. Use apenas se compatível com a imagem:\n{ocrContext}";
+    ? UserPrompt
+    : $"""
+{UserPrompt}
 
+
+{ocrContext}
+""";
             var requestBody = new
             {
                 model = _options.Model,
@@ -105,10 +210,11 @@ Não retorne texto fora do JSON.";
                         }
                     }
                 },
-                max_tokens = 1200,
-                temperature = 0
+                max_tokens = 1800,
+                temperature = 0,
+                top_p = 0.1
             };
-
+            
             using var content = new StringContent(JsonSerializer.Serialize(requestBody), Encoding.UTF8, "application/json");
             var response = await _httpClient.PostAsync("", content, cancellationToken);
             var responseBody = await response.Content.ReadAsStringAsync(cancellationToken);

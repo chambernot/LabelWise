@@ -138,7 +138,9 @@ public sealed class IngredientAnalysisService : IIngredientAnalysisService
 
         var ocrTextTask = ExtractOcrTextAsync(analysisBytes, analysisMimeType, cancellationToken);
         var documentTextTask = _documentIntelligenceService.ExtractTextAsync(analysisBytes, cancellationToken);
-
+        File.WriteAllBytes(
+    @"C:\temp\labelwise_debug_images\enviado.jpg",
+    analysisBytes);
         await Task.WhenAll(ocrTextTask, documentTextTask);
 
         var ocrText = await ocrTextTask;

@@ -1,12 +1,17 @@
+using LabelWise.Api.Swagger;
 using LabelWise.Application;
+using LabelWise.Application.Interfaces;
+using LabelWise.Application.Services;
+using LabelWise.Infrastructure.AI;
 using LabelWise.Infrastructure.Extensions;
+using LabelWise.Infrastructure.Persistence.Mongo;
+using LabelWise.Infrastructure.Repositories;
+using LabelWise.Infrastructure.Services;
 using LabelWise.Shared.Options;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.IdentityModel.Tokens;
 using Microsoft.OpenApi.Models;
 using System.Text;
-using LabelWise.Api.Swagger;
-using LabelWise.Infrastructure.Persistence.Mongo;
 
 Console.WriteLine("========================================");
 Console.WriteLine("LabelWise API - Starting...");
@@ -78,7 +83,18 @@ try
         Console.WriteLine("Application Insights: disabled (no connection string configured)");
     }
 
+    builder.Services.AddScoped<ILeadRepository, LeadRepository>();
+    builder.Services.AddScoped<LeadService>();
+    builder.Services.AddScoped<IEmpresaRepository, EmpresaRepository>();
+    builder.Services.AddScoped<EmpresaService>();
     // Application & Infrastructure
+
+    builder.Services.AddSingleton<TributarioPromptBuilder>();
+
+    builder.Services.AddScoped<
+        IOpenAIDiagnosticoTributarioService,
+        OpenAIDiagnosticoTributarioService>();
+
     Console.WriteLine("[5/8] Registering Application services...");
     builder.Services.AddApplicationServices();
 
@@ -119,7 +135,14 @@ try
     builder.Services.AddAuthorization();
 
     builder.Services.AddControllers();
+    // --- INJEÇÃO DE DEPENDÊNCIA DA NOSSA ARQUITETURA ---
+    // Infraestrutura
+    builder.Services.AddScoped<IVisionAnalysisService, VisionAnalysisService>();
+    builder.Services.AddScoped<ICardMarketPricingService, CardMarketPricingService>();
 
+    // Aplicação
+    builder.Services.AddScoped<ConditionEvaluationService>();
+    builder.Services.AddScoped<PreGradingService>();
     // Swagger with JWT support
     builder.Services.AddEndpointsApiExplorer();
     builder.Services.AddSwaggerGen(cfg =>

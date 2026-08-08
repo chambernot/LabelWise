@@ -42,22 +42,28 @@ public static class VisionImagePreparer
                     "Imagem aparenta estar em preto e branco. Envie uma foto colorida do rótulo.");
             }
 
-            image.Mutate(ctx => ctx.AutoOrient());
-
-            var (targetWidth, targetHeight) = ComputeTargetSize(image.Width, image.Height);
-
-            if (targetWidth != image.Width || targetHeight != image.Height)
+            image.Mutate(x =>
             {
-                image.Mutate(ctx => ctx.Resize(new ResizeOptions
-                {
-                    Size = new Size(targetWidth, targetHeight),
-                    Mode = ResizeMode.Stretch,
-                    Sampler = KnownResamplers.Lanczos3
-                }));
-            }
+                x.AutoOrient();
+
+                x.Grayscale();
+
+                x.BinaryThreshold(0.55f);
+            });
+            // var (targetWidth, targetHeight) = ComputeTargetSize(image.Width, image.Height);
+
+            //if (targetWidth != image.Width || targetHeight != image.Height)
+            //{
+            //    image.Mutate(ctx => ctx.Resize(new ResizeOptions
+            //    {
+            //        Size = new Size(targetWidth, targetHeight),
+            //        Mode = ResizeMode.Stretch,
+            //        Sampler = KnownResamplers.Lanczos3
+            //    }));
+            //}
 
             using var output = new MemoryStream();
-            image.Save(output, new JpegEncoder { Quality = JpegQuality });
+            image.Save(output, new JpegEncoder { Quality = 100 });
 
             return VisionImageResult.Ok(
                 output.ToArray(),
