@@ -528,9 +528,9 @@ namespace LabelWise.Infrastructure.Extensions
                 System.Console.WriteLine("   💡 Configure in appsettings.json:");
                 System.Console.WriteLine("      OCR:AzureVision:Endpoint = https://your-resource.cognitiveservices.azure.com/");
                 System.Console.WriteLine("      OCR:AzureVision:ApiKey = your-api-key");
-                throw new InvalidOperationException(
-                    "Azure AI Vision OCR selected but endpoint or API key not configured. " +
-                    "Please configure OCR:AzureVision:Endpoint and OCR:AzureVision:ApiKey in appsettings.json");
+                //throw new InvalidOperationException(
+                //    "Azure AI Vision OCR selected but endpoint or API key not configured. " +
+                //    "Please configure OCR:AzureVision:Endpoint and OCR:AzureVision:ApiKey in appsettings.json");
             }
 
             services.AddSingleton<LabelWise.Application.Interfaces.IOcrProvider>(sp =>
@@ -581,9 +581,9 @@ namespace LabelWise.Infrastructure.Extensions
                 System.Console.WriteLine("   ❌ ERROR: Azure Vision not configured!");
                 System.Console.WriteLine("   💡 Selector requires Azure Vision as fallback.");
                 System.Console.WriteLine("   💡 Configure OCR:AzureVision:Endpoint and OCR:AzureVision:ApiKey");
-                throw new InvalidOperationException(
-                    "Selector provider requires Azure Vision configuration. " +
-                    "Please configure OCR:AzureVision:Endpoint and OCR:AzureVision:ApiKey in appsettings.json");
+                //throw new InvalidOperationException(
+                //    "Selector provider requires Azure Vision configuration. " +
+                //    "Please configure OCR:AzureVision:Endpoint and OCR:AzureVision:ApiKey in appsettings.json");
             }
 
             services.AddSingleton<LabelWise.Application.Interfaces.IOcrProvider>(sp =>

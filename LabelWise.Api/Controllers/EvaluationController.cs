@@ -46,10 +46,12 @@ public class EvaluationController : ControllerBase
     }
 
     [HttpPost("condition")]
+    [HttpPost]
+    [Consumes("multipart/form-data")]
     public async Task<IActionResult> EvaluateCondition(
-        [FromForm] string cardName,
-        [FromForm] IFormFile frontImage,
-        [FromForm] IFormFile backImage)
+    [FromForm] string cardName,
+    IFormFile frontImage,
+    IFormFile backImage)
     {
         if (frontImage == null || backImage == null)
             return BadRequest("As fotos da frente e do verso são obrigatórias.");
@@ -62,7 +64,11 @@ public class EvaluationController : ControllerBase
             using var frontStream = frontImage.OpenReadStream();
             using var backStream = backImage.OpenReadStream();
 
-            var result = await _evaluationService.EvaluateConditionAsync(userId, cardName, frontStream, backStream);
+            var result = await _evaluationService.EvaluateConditionAsync(
+                userId,
+                cardName,
+                frontStream,
+                backStream);
 
             return Ok(new
             {
