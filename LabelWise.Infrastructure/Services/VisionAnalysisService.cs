@@ -25,4 +25,9 @@ public class VisionAnalysisService : IVisionAnalysisService
             Defects: mockDefects
         );
     }
+
+    public Task<PreGradingAiResult> AnalyzePreGradingAsync(Stream frontImage, Stream backImage)
+    {
+        throw new NotImplementedException();
+    }
 }
