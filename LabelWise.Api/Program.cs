@@ -25,9 +25,11 @@ try
 
     // Configuration
     Console.WriteLine("[2/8] Loading configuration...");
-    builder.Configuration.AddJsonFile("appsettings.json", optional: false, reloadOnChange: true)
-                         .AddEnvironmentVariables();
-    Console.WriteLine($"Environment: {builder.Environment.EnvironmentName}");
+    //builder.Configuration.AddJsonFile(
+    //"appsettings.json",
+    //optional: true,
+    //reloadOnChange: true)
+    //.AddEnvironmentVariables();
 
     Console.WriteLine($"Environment: {builder.Environment.EnvironmentName}");
 
