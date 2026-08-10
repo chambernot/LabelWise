@@ -1,4 +1,5 @@
-﻿using LabelWise.Api.Models;
+﻿using LabelWise.Api.Dtos;
+using LabelWise.Api.Models;
 using LabelWise.Application.Services;
 using Microsoft.AspNetCore.Mvc;
 
@@ -19,23 +20,34 @@ public class EvaluationController : ControllerBase
     }
 
     [HttpPost("{id:guid}/pre-grade")]
-    public async Task<IActionResult> PreGradeCard(
-        Guid id,
-        [FromForm] PreGradeCardFormModel model)
+    public async Task<IActionResult> PreGradeCard(Guid id, [FromForm] PreGradeRequestDto request)
     {
-        if (model?.FrontImage == null || model?.BackImage == null)
-            return BadRequest("As fotos da frente e do verso em alta qualidade são obrigatórias para a pré-gradação.");
+        // Validação usando as propriedades do DTO
+        if (request.FrontStraight == null || request.FrontAngled == null ||
+            request.BackStraight == null || request.BackAngled == null)
+        {
+            return BadRequest("Todas as 4 fotos (Retas e Inclinadas com luz) são obrigatórias.");
+        }
 
         try
         {
-            using var frontStream = model.FrontImage.OpenReadStream();
-            using var backStream = model.BackImage.OpenReadStream();
+            // Abrindo os streams a partir do DTO
+            using var frontStraightStream = request.FrontStraight.OpenReadStream();
+            using var frontAngledStream = request.FrontAngled.OpenReadStream();
+            using var backStraightStream = request.BackStraight.OpenReadStream();
+            using var backAngledStream = request.BackAngled.OpenReadStream();
 
-            var result = await _preGradingService.SimulateGradingAsync(id, model.CurrentRawValue, frontStream, backStream);
+            var result = await _preGradingService.SimulateGradingAsync(
+                id,
+                request.CurrentRawValue,
+                frontStraightStream,
+                frontAngledStream,
+                backStraightStream,
+                backAngledStream);
 
             return Ok(new
             {
-                Message = "Simulação de Gradação concluída com inteligência artificial.",
+                Message = "Simulação de Gradação concluída com sucesso.",
                 Data = result
             });
         }

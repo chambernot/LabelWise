@@ -242,52 +242,74 @@ ESTRUTURA DE SAÍDA OBRIGATÓRIA (JSON PURO)
         return rawText.Trim();
     }
 
+    // PROMPTS ATUALIZADOS PARA GERAR RELATÓRIO DETALHADO
     private const string PreGradingSystemPrompt =
-        "Você é um classificador profissional de cartas estilo PSA, BGS e CGC. " +
-        "Sua função é avaliar imagens da frente e do verso de uma carta e dar notas de 1.0 a 10.0 (em incrementos de 0.5) " +
-        "para as 4 categorias principais: Centering, Corners, Edges e Surface. Retorne APENAS um JSON válido.";
+        "Você é um classificador profissional de cartas (Grader) nos padrões PSA, BGS e CGC. " +
+        "Sua função é avaliar detalhadamente imagens de uma carta e fornecer um laudo analítico em português. " +
+        "Você deve analisar as 4 categorias dando notas de 1.0 a 10.0 (incrementos de 0.5) E justificar detalhadamente o que encontrou na frente e no verso. " +
+        "Retorne APENAS um JSON válido.";
 
-    private const string PreGradingUserPrompt = @"TAREFA: Avaliar as 4 sub-notas para gradação profissional.
+    private const string PreGradingUserPrompt = @"TAREFA: Gerar um laudo de pré-gradação profissional detalhado.
+Você receberá 4 imagens: 
+1. Frente (Visão Reta)
+2. Frente (Inclinada com luz)
+3. Verso (Visão Reta)
+4. Verso (Inclinada com luz)
 
-Avalie rigorosamente (Nota 1.0 a 10.0):
-1. Centering (Centralização): As bordas da frente e do verso são simétricas?
-2. Corners (Cantos): Há whitening (branco), desfiamento ou amassados nos 4 cantos?
-3. Edges (Bordas): As laterais apresentam desgaste ou cortes irregulares de fábrica?
-4. Surface (Superfície): Há riscos, sujeira, marcas de impressão ou vincos?
+REGRAS DE AVALIAÇÃO E PREENCHIMENTO:
+1. CardName: Identifique o nome da carta e numeração (ex: 'Jaula de Batalha 116/094').
+2. Details (Centering, Corners, Edges, Surface): Para CADA métrica, escreva 1 a 2 frases explicando os defeitos encontrados. Separe a análise visual da Frente e do Verso.
+3. Estimated Grade: Calcule a nota final estimada (ex: 'PSA/CGC 6.0'). A nota final é guiada pela nota mais baixa se houver dano severo.
+4. Worth Grading: 'true' se a nota for promissora (geralmente >= 9). 'false' se o desgaste limitar a nota e não compensar o custo.
+5. Verdict Message: Uma conclusão de 1 a 2 frases com um emoji inicial justificando a decisão.
 
-ESTRUTURA DE SAÍDA OBRIGATÓRIA (JSON PURO):
+ESTRUTURA DE SAÍDA OBRIGATÓRIA (JSON PURO COM ESSAS CHAVES EXATAS):
 {
-  ""centering"": number,
-  ""corners"": number,
-  ""edges"": number,
-  ""surface"": number
+  ""cardName"": ""string"",
+  ""centeringScore"": number,
+  ""centeringDetails"": ""string"",
+  ""cornersScore"": number,
+  ""cornersDetails"": ""string"",
+  ""edgesScore"": number,
+  ""edgesDetails"": ""string"",
+  ""surfaceScore"": number,
+  ""surfaceDetails"": ""string"",
+  ""estimatedGrade"": ""string"",
+  ""isWorthGrading"": boolean,
+  ""verdictMessage"": ""string""
 }";
 
-    public async Task<PreGradingAiResult> AnalyzePreGradingAsync(Stream frontImage, Stream backImage)
+    public async Task<PreGradingAiResult> AnalyzePreGradingAsync(
+        Stream frontStraight, Stream frontAngled, Stream backStraight, Stream backAngled)
     {
-        _logger.LogInformation("[OpenAI PreGrading] 🔍 Iniciando simulação de sub-notas...");
+        _logger.LogInformation("[OpenAI PreGrading] 🔍 Iniciando simulação com lote de 4 imagens...");
 
-        var frontBase64 = await ConvertStreamToBase64Async(frontImage);
-        var backBase64 = await ConvertStreamToBase64Async(backImage);
+        var b64FrontStraight = await ConvertStreamToBase64Async(frontStraight);
+        var b64FrontAngled = await ConvertStreamToBase64Async(frontAngled);
+        var b64BackStraight = await ConvertStreamToBase64Async(backStraight);
+        var b64BackAngled = await ConvertStreamToBase64Async(backAngled);
 
-        // Reaproveita o construtor de request, mas passa o prompt específico de gradação
         var requestBody = new
         {
             model = _model,
             temperature = 0.0,
-            max_tokens = 300,
+            max_tokens = 1200,
             messages = new object[]
             {
                 new { role = "system", content = PreGradingSystemPrompt },
                 new { role = "user", content = new object[]
                     {
                         new { type = "text", text = PreGradingUserPrompt },
-                        new { type = "image_url", image_url = new { url = $"data:image/jpeg;base64,{frontBase64}", detail = "high" } },
-                        new { type = "image_url", image_url = new { url = $"data:image/jpeg;base64,{backBase64}", detail = "high" } }
+                        new { type = "image_url", image_url = new { url = $"data:image/jpeg;base64,{b64FrontStraight}", detail = "high" } },
+                        new { type = "image_url", image_url = new { url = $"data:image/jpeg;base64,{b64FrontAngled}", detail = "high" } },
+                        new { type = "image_url", image_url = new { url = $"data:image/jpeg;base64,{b64BackStraight}", detail = "high" } },
+                        new { type = "image_url", image_url = new { url = $"data:image/jpeg;base64,{b64BackAngled}", detail = "high" } }
                     }
                 }
             }
         };
+
+        // ... resto do código continua igual (chamada HttpClient, desserialização, etc) ...
 
         var content = new StringContent(JsonSerializer.Serialize(requestBody), Encoding.UTF8, "application/json");
         var response = await _httpClient.PostAsync(_endpoint, content);
@@ -300,8 +322,8 @@ ESTRUTURA DE SAÍDA OBRIGATÓRIA (JSON PURO):
 
         if (result == null) throw new Exception("Falha ao processar notas da IA.");
 
-        _logger.LogInformation("[OpenAI PreGrading] ✅ Notas geradas: Centering={C}, Corners={Co}, Edges={E}, Surface={S}",
-            result.Centering, result.Corners, result.Edges, result.Surface);
+        _logger.LogInformation("[OpenAI PreGrading] ✅ Notas geradas: Centering={C}, Corners={Co}, Edges={E}, Surface={S}, Grade={G}",
+    result.CenteringScore, result.CornersScore, result.EdgesScore, result.SurfaceScore, result.EstimatedGrade);
 
         return result;
     }

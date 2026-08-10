@@ -12,23 +12,34 @@ public class PreGradingService
         _visionService = visionService;
     }
 
-    public async Task<PreGradingResult> SimulateGradingAsync(Guid evaluationId, decimal currentRawValue, Stream frontImage, Stream backImage)
+    public async Task<PreGradingResult> SimulateGradingAsync(
+        Guid evaluationId,
+        decimal currentRawValue,
+        Stream frontStraight,
+        Stream frontAngled,
+        Stream backStraight,
+        Stream backAngled)
     {
-        // 1. Chama a IA real (OpenAI Vision) para analisar a carta e extrair as sub-notas
-        var aiScores = await _visionService.AnalyzePreGradingAsync(frontImage, backImage);
+        var aiScores = await _visionService.AnalyzePreGradingAsync(
+            frontStraight, frontAngled, backStraight, backAngled);
 
-        // 2. Gera a entidade de domínio que calcula automaticamente o veredito financeiro (Compensa ou não)
+        // Repassando os novos campos recebidos da IA
         var result = new PreGradingResult(
             evaluationId,
-            aiScores.Centering,
-            aiScores.Corners,
-            aiScores.Edges,
-            aiScores.Surface,
+            aiScores.CardName,
+            aiScores.CenteringScore,
+            aiScores.CenteringDetails,
+            aiScores.CornersScore,
+            aiScores.CornersDetails,
+            aiScores.EdgesScore,
+            aiScores.EdgesDetails,
+            aiScores.SurfaceScore,
+            aiScores.SurfaceDetails,
+            aiScores.EstimatedGrade,
+            aiScores.IsWorthGrading,
+            aiScores.VerdictMessage,
             currentRawValue
         );
-
-        // 3. Aqui você salvaria no banco de dados
-        // await _preGradingRepository.SaveAsync(result);
 
         return result;
     }
