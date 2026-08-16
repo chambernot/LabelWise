@@ -366,3 +366,5 @@ FodyWeavers.xsd
 /LabelWise.Api/ctemplabelwise_debug_imagesenviado.jpg
 /LabelWise.Api/cUserschambOneDriveDesktopenviado.jpg
 /LabelWise.Api/appsettings.json
+/LabelWise.Api/appsettings.json
+/.gitignore

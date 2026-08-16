@@ -145,6 +145,17 @@ try
     // Aplicação
     builder.Services.AddScoped<ConditionEvaluationService>();
     builder.Services.AddScoped<PreGradingService>();
+    // --- INJEÇÃO DA IA E MOTOR DE RÓTULOS ---
+    var geminiApiKey = builder.Configuration["GeminiApiKey"]
+                       ?? throw new InvalidOperationException("A chave 'GeminiApiKey' não foi encontrada no appsettings.json.");
+
+    // 1. Registra o Gemini vinculando a Interface (IGeminiService) à Implementação.
+    // Usamos Scoped para que o histórico de chat não vaze entre requisições de usuários diferentes.
+    builder.Services.AddScoped<IGeminiService>(provider => new GeminiService(geminiApiKey));
+
+    // 2. Registra o Motor de Regras Nutricionais (O 'Cérebro' que avalia o JSON do Gemini)
+    // Se a interface estiver em outra pasta, adicione o using no topo (ex: using LabelWise.Api.Services;)
+    builder.Services.AddScoped<INutritionRulesEngine, NutritionRulesEngine>();
     // Swagger with JWT support
     builder.Services.AddEndpointsApiExplorer();
     builder.Services.AddSwaggerGen(cfg =>
