@@ -30,7 +30,6 @@ namespace LabelWise.Api.Controllers
                 return BadRequest("Pelo menos uma imagem deve ser fornecida (ingredientes ou tabela).");
             }
 
-            // 1. Converter IFormFile para DTOs de transporte em memória
             var imageAttachments = new List<ImageAttachmentDto>();
             foreach (var file in request.Images)
             {
@@ -43,28 +42,50 @@ namespace LabelWise.Api.Controllers
                 });
             }
 
-            // 2. O Prompt Estruturado (Força a saída no formato exato da classe GeminiRawExtraction)
-            var extractionPrompt = @"Você é um extrator de dados de rótulos de alimentos. Receba estas fotos do mesmo produto.
-Extraia a lista de ingredientes e a tabela nutricional completa (porção, calorias, carboidratos, açúcares, proteínas, gorduras totais, gorduras saturadas, gorduras trans, fibras e sódio).
-Retorne EXATAMENTE UM JSON, sem markdown (```json), sem textos extras, no seguinte formato:
+            // 🔥 PROMPT ATUALIZADO: Suporte a 100g/mL e Porção (Padrão ANVISA)
+            var extractionPrompt = @"Você é um extrator especialista de dados de rótulos nutricionais.
+Analise a(s) imagem(ns) do rótulo e extraia:
+1. Nome do produto e marca (se visíveis na foto).
+2. Lista de ingredientes.
+3. Avisos explícitos de alergênicos e glúten (ex: 'NÃO CONTÉM GLÚTEN', 'ALÉRGICOS: CONTÉM...').
+4. Tabela nutricional (colunas de 100g/mL e Porção).
+
+Retorne EXATAMENTE UM JSON, sem marcação markdown (sem ```json), sem textos extras, no seguinte formato:
 {
-  ""ingredients"": [""ingrediente 1"", ""ingrediente 2""],
+  ""productName"": ""Suco de Uva e Maçã"",
+  ""brand"": ""Marca X"",
+  ""ingredients"": [""ÁGUA"", ""AÇÚCAR""],
+  ""allergenWarnings"": [""NÃO CONTÉM GLÚTEN""],
   ""nutritionFacts"": {
-     ""servingSize"": ""30g"",
-     ""caloriesKcal"": 140,
-     ""carbohydrates"": 19,
-     ""sugars"": 5.7,
-     ""proteins"": 1.3,
-     ""totalFats"": 6,
-     ""saturatedFats"": 1.4,
-     ""transFats"": 0.2,
-     ""fiber"": 2.2,
-     ""sodiumMg"": 72
+     ""servingSize"": ""200 ml (1 unidade)"",
+     ""servingsPerPackage"": null,
+     ""per100g"": {
+        ""caloriesKcal"": 35,
+        ""carbohydrates"": 8.7,
+        ""sugars"": 8.7,
+        ""addedSugars"": 7.2,
+        ""proteins"": 0,
+        ""totalFats"": 0,
+        ""saturatedFats"": 0,
+        ""transFats"": 0,
+        ""fiber"": 0,
+        ""sodiumMg"": 4.1
+     },
+     ""perServing"": {
+        ""caloriesKcal"": 71,
+        ""carbohydrates"": 17,
+        ""sugars"": 17,
+        ""addedSugars"": 14,
+        ""proteins"": 0,
+        ""totalFats"": 0,
+        ""saturatedFats"": 0,
+        ""transFats"": 0,
+        ""fiber"": 0,
+        ""sodiumMg"": 8.3
+     }
   }
 }
-Se uma informação não existir nas fotos, retorne null no campo específico.";
-
-            // 3. Chamada para o Gemini
+Se uma informação não existir na imagem, retorne null no respectivo campo.";
             var geminiResponseText = await _geminiService.AnalyzeMultipleImagesAsync(extractionPrompt, imageAttachments);
 
             if (string.IsNullOrWhiteSpace(geminiResponseText))
@@ -72,7 +93,6 @@ Se uma informação não existir nas fotos, retorne null no campo específico.";
                 return StatusCode(500, "Falha ao se comunicar com a IA Visual.");
             }
 
-            // 4. Limpeza e Desserialização de Dados Brutos
             var cleanJson = CleanJsonString(geminiResponseText);
             GeminiRawExtraction? extractedData;
 
@@ -91,11 +111,9 @@ Se uma informação não existir nas fotos, retorne null no campo específico.";
                 return BadRequest("Não foi possível extrair dados estruturados das imagens fornecidas.");
             }
 
-            // 5. O Motor (Cérebro) entra em ação
-            // Ele pega os dados "burros" do Gemini e gera os dados "inteligentes" para o App
+            // O Motor de regras recebe o objeto completo com per100g e perServing
             var finalResponse = _rulesEngine.ProcessAndSimplify(extractedData);
 
-            // 6. Retorna o DTO ultra-leve e processado para o aplicativo MAUI pintar a tela
             return Ok(finalResponse);
         }
 

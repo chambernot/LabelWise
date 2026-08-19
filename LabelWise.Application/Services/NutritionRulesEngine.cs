@@ -14,7 +14,12 @@ namespace LabelWise.Application.Services
     {
         private readonly HashSet<string> _knownAllergens = new(StringComparer.OrdinalIgnoreCase)
         {
-            "soja", "leite", "trigo", "amendoim", "farinha de trigo enriquecida"
+            "soja", "leite", "trigo", "amendoim", "farinha de trigo", "castanha", "nozes", "ovo", "avelã", "cevada", "centeio", "aveia"
+        };
+
+        private readonly HashSet<string> _dairyKeywords = new(StringComparer.OrdinalIgnoreCase)
+        {
+            "leite", "queijo", "manteiga", "requeijão", "soro de leite", "lactose", "creme de leite", "caseína"
         };
 
         public ClientAppResponse ProcessAndSimplify(GeminiRawExtraction extractedData)
@@ -22,127 +27,229 @@ namespace LabelWise.Application.Services
             var response = new ClientAppResponse();
             var facts = extractedData.NutritionFacts;
 
+            // 0. Preencher informações do Produto
+            response.Product.Name = extractedData.ProductName;
+            response.Product.Brand = extractedData.Brand;
+
             // 1. Processar Ingredientes e Alergênicos
-            foreach (var ingRaw in extractedData.Ingredients)
+            bool hasDairy = false;
+            if (extractedData.Ingredients != null)
             {
-                var name = ingRaw.Trim();
-                bool isAllergen = _knownAllergens.Any(a => name.Contains(a, StringComparison.OrdinalIgnoreCase));
+                foreach (var ingRaw in extractedData.Ingredients)
+                {
+                    var name = ingRaw.Trim();
+                    bool isAllergen = _knownAllergens.Any(a => name.Contains(a, StringComparison.OrdinalIgnoreCase));
 
-                if (isAllergen)
-                    response.CriticalAlerts.Add($"Contém alergênico: {name}");
+                    if (_dairyKeywords.Any(d => name.Contains(d, StringComparison.OrdinalIgnoreCase)))
+                    {
+                        hasDairy = true;
+                    }
 
-                response.IngredientsList.Add(new IngredientItem { Name = name, IsAllergen = isAllergen });
+                    if (isAllergen && !response.CriticalAlerts.Contains($"Contém alergênico: {name}", StringComparer.OrdinalIgnoreCase))
+                    {
+                        response.CriticalAlerts.Add($"Contém alergênico: {name}");
+                    }
+
+                    response.IngredientsList.Add(new IngredientItem
+                    {
+                        Name = name,
+                        IsAllergen = isAllergen
+                    });
+                }
             }
 
-            // 2. Popular Tabela Nutricional
+            // 1b. Processar Avisos Explícitos de Alergênicos / Selos
+            var allergyReasons = new List<string>();
+            bool hasExplicitAllergenRisk = false;
+            bool isExplicitGlutenFree = false;
+
+            if (extractedData.AllergenWarnings != null)
+            {
+                foreach (var warning in extractedData.AllergenWarnings)
+                {
+                    var cleanWarning = warning.Trim();
+                    if (string.IsNullOrWhiteSpace(cleanWarning)) continue;
+
+                    if (cleanWarning.Contains("NÃO CONTÉM GLÚTEN", StringComparison.OrdinalIgnoreCase) ||
+                        cleanWarning.Contains("ISENTO DE GLÚTEN", StringComparison.OrdinalIgnoreCase))
+                    {
+                        isExplicitGlutenFree = true;
+                        allergyReasons.Add("Não contém glúten");
+                        AddUnique(response.Strengths, "NÃO CONTÉM GLÚTEN");
+                    }
+                    else if (cleanWarning.Contains("NÃO CONTÉM", StringComparison.OrdinalIgnoreCase) ||
+                             cleanWarning.Contains("ISENTO", StringComparison.OrdinalIgnoreCase))
+                    {
+                        allergyReasons.Add(cleanWarning);
+                        AddUnique(response.Strengths, cleanWarning);
+                    }
+                    else
+                    {
+                        hasExplicitAllergenRisk = true;
+                        AddUnique(response.CriticalAlerts, cleanWarning);
+                        allergyReasons.Add(cleanWarning);
+                    }
+                }
+            }
+
+            // 2. Criar Selos / Badges (DietaryBadges)
+            if (isExplicitGlutenFree)
+            {
+                response.DietaryBadges.Add(new DietaryBadge { Type = "gluten_free", IsCompatible = true, Label = "Sem Glúten" });
+            }
+            if (!hasDairy)
+            {
+                response.DietaryBadges.Add(new DietaryBadge { Type = "lactose_free", IsCompatible = true, Label = "Sem Lactose" });
+            }
+
+            // 3. Extrair Tabela Nutricional
+            var valuesPer100 = facts?.Per100g;
+            var valuesPerServing = facts?.PerServing;
+            var refValues = valuesPer100 ?? valuesPerServing;
+
             if (facts != null)
             {
-                response.Nutrition.AsLabel = new NutritionValues
-                {
-                    CaloriesKcal = facts.CaloriesKcal,
-                    Carbohydrates = facts.Carbohydrates,
-                    Sugars = facts.Sugars,
-                    Proteins = facts.Proteins,
-                    TotalFats = facts.TotalFats,
-                    SaturatedFats = facts.SaturatedFats,
-                    TransFats = facts.TransFats,
-                    Fiber = facts.Fiber,
-                    SodiumMg = facts.SodiumMg
-                };
-
-                response.Nutrition.Per100 = response.Nutrition.AsLabel;
+                if (valuesPer100 != null) response.Nutrition.Per100 = MapNutritionalValues(valuesPer100);
+                if (valuesPerServing != null) response.Nutrition.AsLabel = MapNutritionalValues(valuesPerServing);
+                else if (valuesPer100 != null) response.Nutrition.AsLabel = MapNutritionalValues(valuesPer100);
             }
 
-            // 3. Avaliação por Perfis (Diabético, Pressão Alta, Emagrecimento, Ganho de Massa)
-            var sugarValue = facts?.Sugars ?? 0;
-            int diabeticScore = sugarValue > 10 ? 10 : (sugarValue > 5 ? 35 : 80);
-            response.Profiles["diabetico"] = new ProfileEvaluation
+            if (refValues == null)
+            {
+                response.Score.Global = 50;
+                response.Score.GlobalLabel = "Atenção";
+                response.Score.ExplicacaoScore = "Tabela nutricional incompleta para cálculo detalhado.";
+                return response;
+            }
+
+            double calValue = refValues.CaloriesKcal ?? 0;
+            double sugarValue = refValues.Sugars ?? 0;
+            double addedSugarsValue = refValues.AddedSugars ?? 0;
+            double proteinValue = refValues.Proteins ?? 0;
+            double fatValue = refValues.TotalFats ?? 0;
+            double satFatValue = refValues.SaturatedFats ?? 0;
+            double fiberValue = refValues.Fiber ?? 0;
+            double sodiumValue = refValues.SodiumMg ?? 0;
+
+            // Selo de Baixo Sódio em Badges
+            if (sodiumValue <= 120)
+            {
+                response.DietaryBadges.Add(new DietaryBadge { Type = "low_sodium", IsCompatible = true, Label = "Baixo Sódio" });
+            }
+
+            // Alertas Críticos da ANVISA (RDC 429 - Lupa de Alerta Líquidos: >= 7.5g por 100ml)
+            if (addedSugarsValue >= 7.5 || sugarValue >= 15.0)
+            {
+                AddUnique(response.CriticalAlerts, "Alto em Açúcar Adicionado");
+            }
+            if (satFatValue >= 3.0)
+            {
+                AddUnique(response.CriticalAlerts, "Alto em Gordura Saturada");
+            }
+            if (sodiumValue >= 300)
+            {
+                AddUnique(response.CriticalAlerts, "Alto em Sódio");
+            }
+
+            // 4. Perfis Nutricionais
+            int allergyScore = (response.IngredientsList.Any(i => i.IsAllergen) || hasExplicitAllergenRisk) ? 20 : 100;
+            response.Profiles["alergias"] = new()
+            {
+                Score = allergyScore,
+                Label = allergyScore == 100 ? "Liberado" : "Evitar",
+                Reasons = allergyReasons.Any() ? allergyReasons : new List<string> { "Nenhum alergênico identificado." }
+            };
+
+            int diabeticScore = sugarValue <= 5 ? 85 : (sugarValue <= 10 ? 60 : 30);
+            response.Profiles["diabetico"] = new()
             {
                 Score = diabeticScore,
-                Label = diabeticScore < 40 ? "Evitar" : (diabeticScore < 70 ? "Atenção" : "Liberado"),
-                Reasons = new List<string> { sugarValue > 5 ? $"Açúcar alto ({sugarValue}g) — evite picos de glicemia" : "Teor de açúcar favorável" }
+                Label = diabeticScore >= 75 ? "Liberado" : (diabeticScore >= 50 ? "Atenção" : "Evitar"),
+                Reasons = new List<string> { sugarValue <= 5 ? "Teor de açúcar favorável" : $"Açúcar: {sugarValue}g — atenção à glicemia" }
             };
 
-            var sodiumValue = facts?.SodiumMg ?? 0;
-            int hipertensaoScore = sodiumValue > 400 ? 30 : (sodiumValue > 200 ? 50 : 85);
-            response.Profiles["hipertensao"] = new ProfileEvaluation
+            int hypertensionScore = sodiumValue <= 200 ? 85 : (sodiumValue <= 400 ? 60 : 30);
+            response.Profiles["hipertensao"] = new()
             {
-                Score = hipertensaoScore,
-                Label = hipertensaoScore < 40 ? "Evitar" : (hipertensaoScore < 70 ? "Atenção" : "Liberado"),
-                Reasons = new List<string> { sodiumValue > 200 ? $"Sódio moderado/alto ({sodiumValue}mg)" : "Baixo teor de sódio" }
+                Score = hypertensionScore,
+                Label = hypertensionScore >= 85 ? "Liberado" : (hypertensionScore >= 60 ? "Atenção" : "Evitar"),
+                Reasons = new List<string> { sodiumValue <= 200 ? "Baixo teor de sódio" : $"Sódio: {sodiumValue}mg" }
             };
 
-            var calories = facts?.CaloriesKcal ?? 0;
-            int emagrecimentoScore = calories > 250 ? 25 : (calories > 150 ? 50 : 80);
-            response.Profiles["emagrecimento"] = new ProfileEvaluation
+            int weightLossScore = calValue <= 100 ? 85 : (calValue <= 250 ? 50 : 30);
+            response.Profiles["emagrecimento"] = new()
             {
-                Score = emagrecimentoScore,
-                Label = emagrecimentoScore < 40 ? "Evitar" : "Atenção",
-                Reasons = new List<string> { calories > 150 ? $"Produto calórico ({calories} kcal) — atenção à quantidade" : "Baixas calorias" }
+                Score = weightLossScore,
+                Label = weightLossScore >= 85 ? "Liberado" : (weightLossScore >= 50 ? "Atenção" : "Evitar"),
+                Reasons = new List<string> { calValue <= 100 ? "Baixas calorias" : $"Valor calórico: {calValue} kcal" }
             };
 
-            // --- Perfil: Ganho de Massa (Proteína) ---
-            var proteinValue = facts?.Proteins ?? 0;
-            int ganhoMassaScore = proteinValue > 10 ? 80 : (proteinValue > 5 ? 60 : 40);
-            response.Profiles["ganhoDeMassa"] = new ProfileEvaluation
+            // Ajuste para Bebidas/Sucos: Não penalizar pesadamente bebidas de baixas calorias e gordura zero por falta de proteína
+            bool isBeverageProfile = calValue <= 100 && fatValue == 0 && proteinValue == 0;
+            int muscleGainScore = proteinValue >= 10 ? 85 : (proteinValue >= 5 ? 65 : (isBeverageProfile ? 60 : 40));
+
+            response.Profiles["ganhoDeMassa"] = new()
             {
-                Score = ganhoMassaScore,
-                Label = ganhoMassaScore < 50 ? "Atenção" : "Liberado",
-                Reasons = new List<string> { proteinValue < 5 ? $"Baixo teor de proteína ({proteinValue}g). Complementar com outras fontes." : $"Bom aporte proteico ({proteinValue}g)" }
+                Score = muscleGainScore,
+                Label = muscleGainScore >= 65 ? "Liberado" : "Atenção",
+                Reasons = new List<string> {
+                    proteinValue >= 5
+                        ? $"Aporte proteico ({proteinValue}g)"
+                        : (isBeverageProfile ? "Bebida sem proteínas (esperado para a categoria)" : $"Baixo teor de proteína ({proteinValue}g)")
+                }
             };
 
-            // 4. Cálculo Dinâmico do Score Global e Resumo (Média dos 4 perfis)
-            int globalScore = (diabeticScore + hipertensaoScore + emagrecimentoScore + ganhoMassaScore) / 4;
+            // 5. Pontos Fortes e Fracos
+            if (sodiumValue <= 200) AddUnique(response.Strengths, "Baixo teor de sódio");
+            if (sugarValue <= 5) AddUnique(response.Strengths, "Baixo teor de açúcar");
+            if (fiberValue > 2) AddUnique(response.Strengths, "Boa fonte de fibra");
+            if (proteinValue >= 5) AddUnique(response.Strengths, "Boa fonte de proteína");
 
-            if (facts?.SaturatedFats > 4)
-            {
-                globalScore -= 10;
-            }
-            globalScore = Math.Clamp(globalScore, 0, 100);
+            if (sugarValue > 5) AddUnique(response.Weaknesses, $"Açúcar elevado ({sugarValue}g). Consumir com moderação.");
+            if (proteinValue < 5 && !isBeverageProfile) AddUnique(response.Weaknesses, $"Baixo teor de proteína ({proteinValue}g).");
+            if (satFatValue > 4) AddUnique(response.Weaknesses, $"Gordura saturada alta ({satFatValue}g).");
 
-            string globalLabel;
-            string explicacaoScore;
+            // 6. Score Global Ajustado
+            int globalScore = (int)Math.Round((diabeticScore + hypertensionScore + weightLossScore + muscleGainScore + allergyScore) / 5.0);
 
-            if (globalScore >= 70)
+            string globalLabel = globalScore switch
             {
-                globalLabel = "Bom";
-                explicacaoScore = $"A nota {globalScore} reflete um perfil equilibrado, com bom suporte nutricional.";
-            }
-            else if (globalScore >= 40)
-            {
-                globalLabel = "Atenção";
-                explicacaoScore = $"A nota {globalScore} indica um produto intermediário, com pontos de atenção nos macronutrientes.";
-            }
-            else
-            {
-                globalLabel = "Muito ruim";
-                explicacaoScore = $"A nota {globalScore} reflete restrições importantes na composição nutricional.";
-            }
+                >= 85 => "Excelente",
+                >= 70 => "Bom",
+                >= 50 => "Atenção",
+                _ => "Muito ruim"
+            };
 
             response.Score.Global = globalScore;
             response.Score.GlobalLabel = globalLabel;
-            response.Score.ExplicacaoScore = explicacaoScore;
-
-            // 5. Pontos Positivos e de Atenção Dinâmicos
-            if (sodiumValue <= 200) response.Strengths.Add("Baixo teor de sódio");
-            if (sugarValue <= 5) response.Strengths.Add("Baixo teor de açúcar");
-            if (facts?.Fiber > 2) response.Strengths.Add("Boa fonte de fibra");
-            if (proteinValue >= 5) response.Strengths.Add("Boa fonte de proteína");
-
-            if (sugarValue > 5)
-            {
-                response.Weaknesses.Add($"Açúcar alto ({sugarValue}g). Consumir esporadicamente.");
-            }
-            if (proteinValue < 5)
-            {
-                response.Weaknesses.Add($"Baixo teor de proteína ({proteinValue}g). Complementar com outras fontes.");
-            }
-            if (facts?.SaturatedFats > 4)
-            {
-                response.Weaknesses.Add($"Gordura saturada alta ({facts.SaturatedFats}g). Consumir com moderação.");
-            }
+            response.Score.ExplicacaoScore = $"A nota {globalScore} ({globalLabel}) reflete o equilíbrio geral da composição nutricional do produto.";
 
             return response;
+        }
+
+        private static void AddUnique(List<string> list, string value)
+        {
+            if (!list.Contains(value, StringComparer.OrdinalIgnoreCase))
+            {
+                list.Add(value);
+            }
+        }
+
+        private static NutritionValues MapNutritionalValues(GeminiNutritionalValuesDto src)
+        {
+            return new NutritionValues
+            {
+                CaloriesKcal = (decimal)(src.CaloriesKcal ?? 0),
+                Carbohydrates = (decimal)(src.Carbohydrates ?? 0),
+                Sugars = (decimal)(src.Sugars ?? 0),
+                AddedSugars = (decimal)(src.AddedSugars ?? 0),
+                Proteins = (decimal)(src.Proteins ?? 0),
+                TotalFats = (decimal)(src.TotalFats ?? 0),
+                SaturatedFats = (decimal)(src.SaturatedFats ?? 0),
+                TransFats = (decimal)(src.TransFats ?? 0),
+                Fiber = (decimal)(src.Fiber ?? 0),
+                SodiumMg = (decimal)(src.SodiumMg ?? 0)
+            };
         }
     }
 }
