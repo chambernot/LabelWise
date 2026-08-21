@@ -247,6 +247,7 @@ namespace LabelWise.Application.DTOs
             else
                 writer.WriteStringValue(value);
         }
-    
-}
+    }
+
+
 }
