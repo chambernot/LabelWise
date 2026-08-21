@@ -169,7 +169,8 @@ namespace LabelWise.Application.DTOs
         public string? ServingSize { get; set; }
 
         [JsonPropertyName("servingsPerPackage")]
-        public string? ServingsPerPackage { get; set; }
+        [JsonNumberHandling(JsonNumberHandling.AllowReadingFromString)]
+        public double? ServingsPerPackage { get; set; }
 
         [JsonPropertyName("per100g")]
         public GeminiNutritionalValuesDto? Per100g { get; set; }
