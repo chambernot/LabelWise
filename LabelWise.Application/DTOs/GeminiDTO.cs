@@ -1,5 +1,6 @@
 ﻿using System;
 using System.Collections.Generic;
+using System.Text.Json;
 using System.Text.Json.Serialization;
 
 namespace LabelWise.Application.DTOs
@@ -169,8 +170,8 @@ namespace LabelWise.Application.DTOs
         public string? ServingSize { get; set; }
 
         [JsonPropertyName("servingsPerPackage")]
-        [JsonNumberHandling(JsonNumberHandling.AllowReadingFromString)]
-        public double? ServingsPerPackage { get; set; }
+        [JsonConverter(typeof(FlexibleStringConverter))]
+        public string? ServingsPerPackage { get; set; }
 
         [JsonPropertyName("per100g")]
         public GeminiNutritionalValuesDto? Per100g { get; set; }
@@ -182,33 +183,70 @@ namespace LabelWise.Application.DTOs
     public class GeminiNutritionalValuesDto
     {
         [JsonPropertyName("caloriesKcal")]
+        [JsonNumberHandling(JsonNumberHandling.AllowReadingFromString)]
         public double? CaloriesKcal { get; set; }
 
         [JsonPropertyName("carbohydrates")]
+        [JsonNumberHandling(JsonNumberHandling.AllowReadingFromString)]
         public double? Carbohydrates { get; set; }
 
         [JsonPropertyName("sugars")]
+        [JsonNumberHandling(JsonNumberHandling.AllowReadingFromString)]
         public double? Sugars { get; set; }
 
         [JsonPropertyName("addedSugars")]
+        [JsonNumberHandling(JsonNumberHandling.AllowReadingFromString)]
         public double? AddedSugars { get; set; }
 
         [JsonPropertyName("proteins")]
+        [JsonNumberHandling(JsonNumberHandling.AllowReadingFromString)]
         public double? Proteins { get; set; }
 
         [JsonPropertyName("totalFats")]
+        [JsonNumberHandling(JsonNumberHandling.AllowReadingFromString)]
         public double? TotalFats { get; set; }
 
         [JsonPropertyName("saturatedFats")]
+        [JsonNumberHandling(JsonNumberHandling.AllowReadingFromString)]
         public double? SaturatedFats { get; set; }
 
         [JsonPropertyName("transFats")]
+        [JsonNumberHandling(JsonNumberHandling.AllowReadingFromString)]
         public double? TransFats { get; set; }
 
         [JsonPropertyName("fiber")]
+        [JsonNumberHandling(JsonNumberHandling.AllowReadingFromString)]
         public double? Fiber { get; set; }
 
         [JsonPropertyName("sodiumMg")]
+        [JsonNumberHandling(JsonNumberHandling.AllowReadingFromString)]
         public double? SodiumMg { get; set; }
     }
+
+    public class FlexibleStringConverter : JsonConverter<string?>
+    {
+        public override string? Read(ref Utf8JsonReader reader, Type typeToConvert, JsonSerializerOptions options)
+        {
+            if (reader.TokenType == JsonTokenType.Number)
+            {
+                return System.Text.Encoding.UTF8.GetString(reader.ValueSpan);
+            }
+
+            if (reader.TokenType == JsonTokenType.String)
+            {
+                return reader.GetString();
+            }
+
+            return null;
+        }
+
+        public override void Write(Utf8JsonWriter writer, string? value, JsonSerializerOptions options)
+        {
+            if (value == null)
+                writer.WriteNullValue();
+            else
+                writer.WriteStringValue(value);
+        }
+    
+}
 }
