@@ -1,10 +1,6 @@
-# Acesse https://aka.ms/customizecontainer para saber como personalizar seu contêiner de depuração e como o Visual Studio usa este Dockerfile para criar suas imagens para uma depuração mais rápida.
-
-# Esta fase é usada durante a execução no VS no modo rápido
+# Esta fase é usada durante a execução no VS no modo rápido (Padrão para a configuração de Depuração)
 FROM mcr.microsoft.com/dotnet/aspnet:10.0 AS base
 USER root
-
-# Instalando dependências com os nomes corretos para o Debian/Ubuntu moderno
 RUN apt-get update && apt-get install -y \
     libgl1 \
     libglib2.0-0 \
@@ -16,11 +12,11 @@ RUN apt-get update && apt-get install -y \
     zlib1g \
     libc6 \
     && rm -rf /var/lib/apt/lists/*
-
 USER $APP_UID
 WORKDIR /app
 EXPOSE 8080
 EXPOSE 8081
+
 # Esta fase é usada para compilar o projeto de serviço
 FROM mcr.microsoft.com/dotnet/sdk:10.0 AS build
 ARG BUILD_CONFIGURATION=Release
@@ -35,13 +31,13 @@ COPY . .
 WORKDIR "/src/LabelWise.Api"
 RUN dotnet build "./LabelWise.Api.csproj" -c $BUILD_CONFIGURATION -o /app/build
 
-# Esta fase é usada para publicar o projeto de serviço a ser copiado para a fase final
+# Esta fase é usada para publicar o projeto de serviço
 FROM build AS publish
 ARG BUILD_CONFIGURATION=Release
-# ADICIONADO O "-r linux-x64 --self-contained false" AQUI PARA FORÇAR A CÓPIA DOS BINÁRIOS NATIVOS DO UBUNTU:
-RUN dotnet publish "./LabelWise.Api.csproj" -c $BUILD_CONFIGURATION -o /app/publish -r linux-x64 --self-contained false /p:UseAppHost=false
+# A MÁGICA ACONTECE AQUI: Usando o RID específico do pacote para forçar a cópia do arquivo nativo
+RUN dotnet publish "./LabelWise.Api.csproj" -c $BUILD_CONFIGURATION -o /app/publish -r ubuntu.20.04-x64 --self-contained false /p:UseAppHost=false
 
-# Esta fase é usada na produção ou quando executada no VS no modo normal (padrão quando não está usando a configuração de Depuração)
+# Esta fase é usada na produção
 FROM base AS final
 WORKDIR /app
 COPY --from=publish /app/publish .
