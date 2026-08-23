@@ -47,4 +47,6 @@
     <Message Text="📂 Arquivos tessdata copiados: @(TessdataFiles->'%(Filename)%(Extension)')" Importance="high" Condition="'@(TessdataFiles)' != ''" />
     <Warning Text="⚠️ ATENÇÃO: Nenhum arquivo .traineddata encontrado em tessdata. OCR não funcionará!" Condition="'@(TessdataFiles)' == ''" />
   </Target>
+
+  <ProjectExtensions><VisualStudio><UserProperties appsettings_1json__JsonSchema="https://www.schemastore.org/assetlinks.json" /></VisualStudio></ProjectExtensions>
 </Project>
