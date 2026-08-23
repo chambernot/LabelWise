@@ -1,8 +1,7 @@
-# 1. FASE BASE: A SOLUÇÃO NUCLEAR PARA DEPENDÊNCIAS
+# 1. IMAGEM BASE OFICIAL
 FROM mcr.microsoft.com/dotnet/aspnet:10.0 AS base
 USER root
-# Instalar libopencv-dev traz centenas de pacotes (codecs JPEG/PNG, matrizes, ffmpeg)
-# Isso garante que NENHUMA dependência gráfica ou de codec faltará para o OpenCvSharp.
+# Instalamos o ecossistema completo do OpenCV para garantir todos os codecs e gráficos
 RUN apt-get update && apt-get install -y \
     libopencv-dev \
     && rm -rf /var/lib/apt/lists/*
@@ -28,12 +27,11 @@ RUN dotnet build "./LabelWise.Api.csproj" -c $BUILD_CONFIGURATION -o /app/build
 # 3. FASE DE PUBLICAÇÃO
 FROM build AS publish
 ARG BUILD_CONFIGURATION=Release
-# Compilamos de forma genérica para permitir a geração da pasta "runtimes"
+# Compilação sem o "-r" para que o .NET não delete os arquivos do Ubuntu
 RUN dotnet publish "./LabelWise.Api.csproj" -c $BUILD_CONFIGURATION -o /app/publish /p:UseAppHost=false
 
-# 🚀 A CARTADA DE MESTRE: Extração manual do binário
-# Buscamos qualquer arquivo .so escondido nas subpastas de runtime e jogamos na raiz da aplicação
-RUN cp /app/publish/runtimes/*/native/*.so /app/publish/ 2>/dev/null || true
+# 🚀 A EXTRAÇÃO CIRÚRGICA: Tiramos o arquivo nativo do esconderijo e colocamos na raiz da aplicação
+RUN cp /app/publish/runtimes/ubuntu.20.04-x64/native/libOpenCvSharpExtern.so /app/publish/ || true
 
 # 4. FASE FINAL
 FROM base AS final
