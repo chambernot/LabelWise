@@ -4,13 +4,13 @@
 FROM mcr.microsoft.com/dotnet/aspnet:10.0 AS base
 USER root
 
-# Instalando o ecossistema gráfico completo exigido pelo OpenCV no Linux
+# Instalando dependências com os nomes corretos para o Debian/Ubuntu moderno
 RUN apt-get update && apt-get install -y \
-    libgl1-mesa-glx \
+    libgl1 \
     libglib2.0-0 \
     libsm6 \
     libxext6 \
-    libxrender-dev \
+    libxrender1 \
     libgomp1 \
     libstdc++6 \
     zlib1g \
