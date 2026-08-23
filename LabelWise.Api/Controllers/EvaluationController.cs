@@ -7,7 +7,6 @@ namespace LabelWise.Api.Controllers;
 
 [ApiController]
 [Route("api/[controller]")]
-// [Authorize] -> Descomente quando integrar o JWT
 public class EvaluationController : ControllerBase
 {
     private readonly ConditionEvaluationService _evaluationService;
@@ -19,10 +18,9 @@ public class EvaluationController : ControllerBase
         _preGradingService = preGradingService;
     }
 
-    [HttpPost("{id:guid}/pre-grade")]
-    public async Task<IActionResult> PreGradeCard(Guid id, [FromForm] PreGradeRequestDto request)
+    [HttpPost("pre-grade")]
+    public async Task<IActionResult> PreGradeCard([FromForm] PreGradeRequestDto request)
     {
-        // Validação usando as propriedades do DTO
         if (request.FrontStraight == null || request.FrontAngled == null ||
             request.BackStraight == null || request.BackAngled == null)
         {
@@ -31,14 +29,13 @@ public class EvaluationController : ControllerBase
 
         try
         {
-            // Abrindo os streams a partir do DTO
             using var frontStraightStream = request.FrontStraight.OpenReadStream();
             using var frontAngledStream = request.FrontAngled.OpenReadStream();
             using var backStraightStream = request.BackStraight.OpenReadStream();
             using var backAngledStream = request.BackAngled.OpenReadStream();
 
             var result = await _preGradingService.SimulateGradingAsync(
-                id,
+                request.Id, // Usa o Id extraído automaticamente da rota pelo DTO
                 request.CurrentRawValue,
                 frontStraightStream,
                 frontAngledStream,
@@ -58,19 +55,17 @@ public class EvaluationController : ControllerBase
     }
 
     [HttpPost("condition")]
-    [HttpPost]
     [Consumes("multipart/form-data")]
     public async Task<IActionResult> EvaluateCondition(
-    [FromForm] string cardName,
-    IFormFile frontImage,
-    IFormFile backImage)
+        [FromForm] string cardName,
+        IFormFile frontImage,
+        IFormFile backImage)
     {
         if (frontImage == null || backImage == null)
             return BadRequest("As fotos da frente e do verso são obrigatórias.");
 
         try
         {
-            // Simula pegar o ID do usuário logado via Token JWT
             var userId = Guid.NewGuid();
 
             using var frontStream = frontImage.OpenReadStream();
@@ -90,7 +85,6 @@ public class EvaluationController : ControllerBase
         }
         catch (Exception ex)
         {
-            // Em produção, use um middleware de tratamento global de exceções
             return BadRequest(new { Error = ex.Message });
         }
     }

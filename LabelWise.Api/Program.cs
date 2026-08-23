@@ -139,7 +139,9 @@ try
     builder.Services.AddControllers();
     // --- INJEÇÃO DE DEPENDÊNCIA DA NOSSA ARQUITETURA ---
     // Infraestrutura
-    builder.Services.AddScoped<IVisionAnalysisService, VisionAnalysisService>();
+   // builder.Services.AddScoped<IVisionAnalysisService, VisionAnalysisService>();
+    builder.Services.AddScoped<IVisionAnalysisService, GeminiVisionAnalysisService>();
+
     builder.Services.AddScoped<ICardMarketPricingService, CardMarketPricingService>();
 
     // Aplicação
@@ -156,6 +158,7 @@ try
     // 2. Registra o Motor de Regras Nutricionais (O 'Cérebro' que avalia o JSON do Gemini)
     // Se a interface estiver em outra pasta, adicione o using no topo (ex: using LabelWise.Api.Services;)
     builder.Services.AddScoped<INutritionRulesEngine, NutritionRulesEngine>();
+    builder.Services.AddHttpClient("GeminiVision");
     // Swagger with JWT support
     builder.Services.AddEndpointsApiExplorer();
     builder.Services.AddSwaggerGen(cfg =>
