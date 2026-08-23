@@ -1,16 +1,10 @@
-# 1. FASE BASE: Instalando as dependências gráficas corretas do Debian
+# 1. FASE BASE: A SOLUÇÃO NUCLEAR PARA DEPENDÊNCIAS
 FROM mcr.microsoft.com/dotnet/aspnet:10.0 AS base
 USER root
+# Instalar libopencv-dev traz centenas de pacotes (codecs JPEG/PNG, matrizes, ffmpeg)
+# Isso garante que NENHUMA dependência gráfica ou de codec faltará para o OpenCvSharp.
 RUN apt-get update && apt-get install -y \
-    libgl1 \
-    libglib2.0-0 \
-    libsm6 \
-    libxext6 \
-    libxrender1 \
-    libgomp1 \
-    libstdc++6 \
-    zlib1g \
-    libc6 \
+    libopencv-dev \
     && rm -rf /var/lib/apt/lists/*
 USER $APP_UID
 WORKDIR /app
@@ -34,12 +28,12 @@ RUN dotnet build "./LabelWise.Api.csproj" -c $BUILD_CONFIGURATION -o /app/build
 # 3. FASE DE PUBLICAÇÃO
 FROM build AS publish
 ARG BUILD_CONFIGURATION=Release
-# Compilamos para o Linux genérico
-RUN dotnet publish "./LabelWise.Api.csproj" -c $BUILD_CONFIGURATION -o /app/publish -r linux-x64 --self-contained false /p:UseAppHost=false
+# Compilamos de forma genérica para permitir a geração da pasta "runtimes"
+RUN dotnet publish "./LabelWise.Api.csproj" -c $BUILD_CONFIGURATION -o /app/publish /p:UseAppHost=false
 
-# 🚀 A MÁGICA ACONTECE AQUI:
-# Buscamos o arquivo nativo no cache do NuGet e forçamos a cópia para a pasta de publicação
-RUN find /root/.nuget/packages/ -name "libOpenCvSharpExtern.so" -exec cp {} /app/publish/ \;
+# 🚀 A CARTADA DE MESTRE: Extração manual do binário
+# Buscamos qualquer arquivo .so escondido nas subpastas de runtime e jogamos na raiz da aplicação
+RUN cp /app/publish/runtimes/*/native/*.so /app/publish/ 2>/dev/null || true
 
 # 4. FASE FINAL
 FROM base AS final
