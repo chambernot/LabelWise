@@ -5,8 +5,10 @@ FROM mcr.microsoft.com/dotnet/aspnet:10.0 AS base
 
 USER root
 
-# Dependências nativas C++ e multimídia do Linux para o OpenCV no Debian 12
+# Dependências nativas C++ exigidas pelo OpenCvSharp no Debian 12
 RUN apt-get update && apt-get install -y \
+    libatomic1 \
+    libgomp1 \
     libgl1 \
     libglib2.0-0 \
     libdrm2 \
@@ -15,8 +17,6 @@ RUN apt-get update && apt-get install -y \
     libxcb-dri3-0 \
     libfontconfig1 \
     libgtk-3-0 \
-    libavcodec-extra \
-    ffmpeg \
     && rm -rf /var/lib/apt/lists/*
 
 USER $APP_UID
@@ -25,7 +25,6 @@ WORKDIR /app
 
 EXPOSE 8080
 EXPOSE 8081
-
 # ============================================================
 # 2. BUILD
 # ============================================================
