@@ -68,17 +68,38 @@ Retorne EXATAMENTE este JSON:
 }";
 
     public GeminiVisionAnalysisService(
-        IHttpClientFactory httpClientFactory,
-        IConfiguration configuration,
-        ILogger<GeminiVisionAnalysisService> logger)
+    IHttpClientFactory httpClientFactory,
+    IConfiguration configuration,
+    ILogger<GeminiVisionAnalysisService> logger)
     {
         _httpClient = httpClientFactory.CreateClient("GeminiVision");
         _logger = logger;
-        _apiKey = configuration["GeminiApiKey"] ?? throw new ArgumentNullException("GeminiVision:ApiKey");
-        _model = configuration["Model"] ?? "gemini-1.5-flash";
-        _httpClient.Timeout = TimeSpan.FromSeconds(60);
-    }
 
+        // Busca a chave testando as duas convenções possíveis no .NET
+        var rawKey = configuration["GeminiApiKey"];
+        if (string.IsNullOrWhiteSpace(rawKey))
+        {
+            rawKey = configuration["GeminiVision:ApiKey"];
+        }
+
+        _apiKey = rawKey?.Trim() ?? string.Empty;
+
+        // Validação estrita contra string vazia ou nula
+        if (string.IsNullOrWhiteSpace(_apiKey))
+        {
+            _logger.LogError("[Gemini PreGrading] ❌ 'GeminiApiKey' está VAZIA ou não foi encontrada no IConfiguration!");
+            throw new InvalidOperationException("A chave da API do Gemini não foi carregada. Verifique as variáveis de ambiente.");
+        }
+
+        // Log seguro para conferir no painel do Render se a chave foi lida com sucesso
+        var maskedKey = _apiKey.Length > 8
+            ? $"{_apiKey[..4]}...{_apiKey[^4..]}"
+            : "***";
+        _logger.LogInformation("[Gemini PreGrading] 🔑 Chave do Gemini carregada com sucesso: {MaskedKey}", maskedKey);
+
+        _model = configuration["Model"] ?? "gemini-1.5-flash";
+        _httpClient.Timeout = TimeSpan.FromSeconds(90);
+    }
     public async Task<VisionConditionResult> AnalyzeCardConditionAsync(Stream frontImage, Stream backImage)
     {
         await Task.Delay(500);
@@ -100,7 +121,7 @@ Retorne EXATAMENTE este JSON:
             var bytesBackStraight = await StreamToBytesAsync(backStraight);
             var bytesBackAngled = await StreamToBytesAsync(backAngled);
 
-            // Geração automática dos zooms de alta precisão via OpenCV no backend
+            // Geração automática dos zooms via OpenCV no backend
             var bytesCornersGrid = CardCroppingHelper.GenerateCornersZoomGrid(bytesFrontStraight, bytesBackStraight);
             var bytesEdgesGrid = CardCroppingHelper.GenerateEdgesZoomGrid(bytesFrontStraight, bytesBackStraight);
             var bytesArtBoxZoom = CardCroppingHelper.GenerateArtBoxZoom(bytesFrontStraight);
@@ -138,13 +159,19 @@ Retorne EXATAMENTE este JSON:
                 }
             };
 
-            var content = new StringContent(JsonSerializer.Serialize(requestBody), Encoding.UTF8, "application/json");
-            var response = await _httpClient.PostAsync(endpoint, content);
+            var jsonBody = JsonSerializer.Serialize(requestBody);
+            var response = await PostWithRetryAsync(endpoint, jsonBody);
 
             if (!response.IsSuccessStatusCode)
             {
                 var errorContent = await response.Content.ReadAsStringAsync();
                 _logger.LogError("[Gemini PreGrading] ❌ Status={Status}, Body={Body}", response.StatusCode, errorContent);
+
+                if ((int)response.StatusCode == 503 || errorContent.Contains("UNAVAILABLE") || errorContent.Contains("high demand"))
+                {
+                    throw new InvalidOperationException("O serviço do Gemini está com alta demanda no momento. Por favor, tente novamente em instantes.");
+                }
+
                 throw new Exception("Falha ao comunicar com o serviço Gemini Vision.");
             }
 
@@ -166,6 +193,31 @@ Retorne EXATAMENTE este JSON:
             _logger.LogError(ex, "[Gemini PreGrading] ❌ Erro inesperado na análise");
             throw;
         }
+    }
+
+    private async Task<HttpResponseMessage> PostWithRetryAsync(string endpoint, string jsonBody, int maxRetries = 3)
+    {
+        for (int attempt = 1; attempt <= maxRetries; attempt++)
+        {
+            var content = new StringContent(jsonBody, Encoding.UTF8, "application/json");
+            var response = await _httpClient.PostAsync(endpoint, content);
+
+            var statusCode = (int)response.StatusCode;
+
+            if ((statusCode == 503 || statusCode == 429 || statusCode >= 500) && attempt < maxRetries)
+            {
+                var delaySeconds = (int)Math.Pow(2, attempt);
+                _logger.LogWarning("[Gemini PreGrading] ⚠️ Tentativa {Attempt}/{Max} falhou com status {Status}. Aguardando {Delay}s antes do retry...",
+                    attempt, maxRetries, response.StatusCode, delaySeconds);
+
+                await Task.Delay(TimeSpan.FromSeconds(delaySeconds));
+                continue;
+            }
+
+            return response;
+        }
+
+        throw new HttpRequestException("Serviço do Gemini temporariamente indisponível após várias tentativas.");
     }
 
     private async Task<byte[]> StreamToBytesAsync(Stream stream)
