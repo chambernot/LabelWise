@@ -5,7 +5,7 @@ FROM mcr.microsoft.com/dotnet/aspnet:10.0 AS base
 
 USER root
 
-# Dependências nativas do Linux exigidas pelo OpenCvSharp (C++)
+# Dependências nativas C++ e multimídia do Linux para o OpenCV no Debian 12
 RUN apt-get update && apt-get install -y \
     libgl1 \
     libglib2.0-0 \
@@ -15,6 +15,8 @@ RUN apt-get update && apt-get install -y \
     libxcb-dri3-0 \
     libfontconfig1 \
     libgtk-3-0 \
+    libavcodec-extra \
+    ffmpeg \
     && rm -rf /var/lib/apt/lists/*
 
 USER $APP_UID
@@ -23,7 +25,6 @@ WORKDIR /app
 
 EXPOSE 8080
 EXPOSE 8081
-
 
 # ============================================================
 # 2. BUILD
@@ -94,8 +95,9 @@ WORKDIR /app
 
 COPY --from=publish /app/publish .
 
-# Verificação final
-RUN echo "===== OpenCvSharp na imagem final =====" && \
-    find /app -iname "libOpenCvSharpExtern.so" -o -iname "*OpenCvSharp*"
+USER root
+# Garante que a DLL nativa seja encontrada mesmo se a busca do .NET falhar em subpastas
+RUN cp /app/runtimes/linux-x64/native/libOpenCvSharpExtern.so /app/ 2>/dev/null || true
+USER $APP_UID
 
 ENTRYPOINT ["dotnet", "LabelWise.Api.dll"]
