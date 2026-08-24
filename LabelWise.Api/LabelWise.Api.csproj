@@ -28,20 +28,17 @@
   <!-- ================================================================ -->
   <ItemGroup>
 
-    <PackageReference Include="Google_GenerativeAI"
-                      Version="3.6.7" />
+    <PackageReference Include="Google_GenerativeAI" Version="3.6.7" />
 
-    <PackageReference Include="Microsoft.ApplicationInsights.AspNetCore"
-                      Version="3.1.0" />
+    <PackageReference Include="Microsoft.ApplicationInsights.AspNetCore" Version="3.1.0" />
 
-    <PackageReference Include="Microsoft.VisualStudio.Azure.Containers.Tools.Targets"
-                      Version="1.23.0" />
+    <PackageReference Include="Microsoft.VisualStudio.Azure.Containers.Tools.Targets" Version="1.23.0" />
 
-    <PackageReference Include="Swashbuckle.AspNetCore"
-                      Version="7.3.0" />
+    <PackageReference Include="OpenCvSharp4" Version="4.10.0.20240616" />
 
-    <PackageReference Include="Microsoft.AspNetCore.Authentication.JwtBearer"
-                      Version="10.0.0" />
+    <PackageReference Include="Swashbuckle.AspNetCore" Version="7.3.0" />
+
+    <PackageReference Include="Microsoft.AspNetCore.Authentication.JwtBearer" Version="10.0.0" />
 
   </ItemGroup>
 
@@ -51,8 +48,7 @@
   <!-- ================================================================ -->
   <ItemGroup Condition="'$(OS)' == 'Windows_NT'">
 
-    <PackageReference Include="OpenCvSharp4.runtime.win"
-                      Version="4.13.0.20260627" />
+    <PackageReference Include="OpenCvSharp4.runtime.win" Version="4.10.0.20240616" />
 
   </ItemGroup>
 
@@ -62,8 +58,7 @@
   <!-- ================================================================ -->
   <ItemGroup Condition="'$(OS)' != 'Windows_NT'">
 
-    <PackageReference Include="OpenCvSharp4.official.runtime.linux-x64"
-                      Version="4.13.0.20260627" />
+    <PackageReference Include="OpenCvSharp4.official.runtime.linux-x64" Version="4.13.0.20260627" />
 
   </ItemGroup>
 
@@ -73,8 +68,7 @@
   <!-- ================================================================ -->
   <ItemGroup>
 
-    <Content Include="tessdata\*.traineddata"
-             Condition="Exists('tessdata')">
+    <Content Include="tessdata\*.traineddata" Condition="Exists('tessdata')">
 
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
 
@@ -87,32 +81,22 @@
   <!-- ================================================================ -->
   <!-- GARANTE DIRETÓRIO TESSDATA                                        -->
   <!-- ================================================================ -->
-  <Target Name="EnsureTessdataDirectory"
-          BeforeTargets="Build">
+  <Target Name="EnsureTessdataDirectory" BeforeTargets="Build">
 
-    <Message Text="Verificando diretório tessdata..."
-             Importance="high" />
+    <Message Text="Verificando diretório tessdata..." Importance="high" />
 
-    <MakeDir
-      Directories="$(ProjectDir)tessdata"
-      Condition="!Exists('$(ProjectDir)tessdata')" />
+    <MakeDir Directories="$(ProjectDir)tessdata" Condition="!Exists('$(ProjectDir)tessdata')" />
 
-    <Message
-      Text="Diretório tessdata garantido em: $(ProjectDir)tessdata"
-      Importance="high"
-      Condition="Exists('$(ProjectDir)tessdata')" />
+    <Message Text="Diretório tessdata garantido em: $(ProjectDir)tessdata" Importance="high" Condition="Exists('$(ProjectDir)tessdata')" />
 
-    <Warning
-      Text="ATENÇÃO: Diretório tessdata criado mas vazio. O OCR não funcionará até que os arquivos .traineddata sejam adicionados."
-      Condition="Exists('$(ProjectDir)tessdata') AND !Exists('$(ProjectDir)tessdata\por.traineddata')" />
+    <Warning Text="ATENÇÃO: Diretório tessdata criado mas vazio. O OCR não funcionará até que os arquivos .traineddata sejam adicionados." Condition="Exists('$(ProjectDir)tessdata') AND !Exists('$(ProjectDir)tessdata\por.traineddata')" />
 
   </Target>
 
   <!-- ================================================================ -->
   <!-- LISTA ARQUIVOS TESSDATA APÓS BUILD                                -->
   <!-- ================================================================ -->
-  <Target Name="ListTessdataFiles"
-          AfterTargets="Build">
+  <Target Name="ListTessdataFiles" AfterTargets="Build">
 
     <ItemGroup>
 
@@ -120,14 +104,9 @@
 
     </ItemGroup>
 
-    <Message
-      Text="Arquivos tessdata copiados: @(TessdataFiles->'%(Filename)%(Extension)')"
-      Importance="high"
-      Condition="'@(TessdataFiles)' != ''" />
+    <Message Text="Arquivos tessdata copiados: @(TessdataFiles->'%(Filename)%(Extension)')" Importance="high" Condition="'@(TessdataFiles)' != ''" />
 
-    <Warning
-      Text="ATENÇÃO: Nenhum arquivo .traineddata encontrado em tessdata. OCR não funcionará!"
-      Condition="'@(TessdataFiles)' == ''" />
+    <Warning Text="ATENÇÃO: Nenhum arquivo .traineddata encontrado em tessdata. OCR não funcionará!" Condition="'@(TessdataFiles)' == ''" />
 
   </Target>
 
@@ -136,8 +115,7 @@
   <!-- ================================================================ -->
   <ProjectExtensions>
     <VisualStudio>
-      <UserProperties
-        appsettings_1json__JsonSchema="https://www.schemastore.org/assetlinks.json" />
+      <UserProperties appsettings_1json__JsonSchema="https://www.schemastore.org/assetlinks.json" />
     </VisualStudio>
   </ProjectExtensions>
 

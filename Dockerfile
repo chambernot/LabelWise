@@ -5,9 +5,15 @@ FROM mcr.microsoft.com/dotnet/aspnet:10.0 AS base
 
 USER root
 
-# Dependências básicas para o runtime Linux do OpenCvSharp
+# Dependências nativas do Linux exigidas pelo OpenCvSharp (C++)
 RUN apt-get update && apt-get install -y \
+    libgl1 \
     libglib2.0-0 \
+    libdrm2 \
+    libgdiplus \
+    libx11-xcb1 \
+    libxcb-dri3-0 \
+    libfontconfig1 \
     libgtk-3-0 \
     && rm -rf /var/lib/apt/lists/*
 
