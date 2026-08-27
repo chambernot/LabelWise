@@ -147,6 +147,7 @@ try
     // Aplicação
     builder.Services.AddScoped<ConditionEvaluationService>();
     builder.Services.AddScoped<PreGradingService>();
+    builder.Services.AddHttpClient<IPokemonPriceService, PokemonTcgPriceService>();
     // --- INJEÇÃO DA IA E MOTOR DE RÓTULOS ---
     var geminiApiKey = builder.Configuration["GeminiApiKey"]
                        ?? throw new InvalidOperationException("A chave 'GeminiApiKey' não foi encontrada no appsettings.json.");

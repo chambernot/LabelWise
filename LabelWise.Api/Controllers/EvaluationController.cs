@@ -1,5 +1,6 @@
 ﻿using LabelWise.Api.Dtos;
 using LabelWise.Api.Models;
+using LabelWise.Application.Interfaces;
 using LabelWise.Application.Services;
 using Microsoft.AspNetCore.Mvc;
 
@@ -11,11 +12,16 @@ public class EvaluationController : ControllerBase
 {
     private readonly ConditionEvaluationService _evaluationService;
     private readonly PreGradingService _preGradingService;
+    private readonly IPokemonPriceService _priceService;
 
-    public EvaluationController(ConditionEvaluationService evaluationService, PreGradingService preGradingService)
+    public EvaluationController(
+        ConditionEvaluationService evaluationService,
+        PreGradingService preGradingService,
+        IPokemonPriceService priceService)
     {
         _evaluationService = evaluationService;
         _preGradingService = preGradingService;
+        _priceService = priceService;
     }
 
     [HttpPost("pre-grade")]
@@ -35,12 +41,24 @@ public class EvaluationController : ControllerBase
             using var backAngledStream = request.BackAngled.OpenReadStream();
 
             var result = await _preGradingService.SimulateGradingAsync(
-                request.Id, // Usa o Id extraído automaticamente da rota pelo DTO
+                request.Id,
                 request.CurrentRawValue,
                 frontStraightStream,
                 frontAngledStream,
                 backStraightStream,
                 backAngledStream);
+
+            // Se o valor não veio preenchido no DTO (ou veio 0), busca automaticamente na API de preços
+            if (result != null && (result.CurrentRawValue == 0 || request.CurrentRawValue == 0))
+            {
+                var cardNumber = ExtractCardNumber(result.CardName);
+                var marketPrice = await _priceService.GetCardMarketPriceAsync(result.CardName, cardNumber);
+
+                if (marketPrice > 0)
+                {
+                    result.UpdateCurrentRawValue(marketPrice);
+                }
+            }
 
             return Ok(new
             {
@@ -87,5 +105,14 @@ public class EvaluationController : ControllerBase
         {
             return BadRequest(new { Error = ex.Message });
         }
+    }
+
+    private static string ExtractCardNumber(string cardName)
+    {
+        if (string.IsNullOrWhiteSpace(cardName) || !cardName.Contains('-'))
+            return string.Empty;
+
+        var parts = cardName.Split('-');
+        return parts.Length > 1 ? parts[1].Trim() : string.Empty;
     }
 }

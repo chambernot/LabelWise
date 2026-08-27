@@ -48,4 +48,10 @@ public class PreGradingResult
         VerdictMessage = verdictMessage;
         CurrentRawValue = currentRawValue;
     }
+
+    // Adicione este método para permitir atualização controlada do valor
+    public void UpdateCurrentRawValue(decimal newPrice)
+    {
+        CurrentRawValue = newPrice;
+    }
 }

@@ -99,7 +99,7 @@ Retorne EXATAMENTE este JSON:
 
         _model = configuration["Model"] ?? "gemini-1.5-flash";
         _httpClient.Timeout = TimeSpan.FromSeconds(90);
-    }
+    }   
     public async Task<VisionConditionResult> AnalyzeCardConditionAsync(Stream frontImage, Stream backImage)
     {
         await Task.Delay(500);
