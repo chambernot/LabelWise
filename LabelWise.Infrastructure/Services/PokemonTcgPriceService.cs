@@ -2,6 +2,7 @@
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
 using System.Text.Json;
+using System.Text.RegularExpressions;
 
 namespace LabelWise.Infrastructure.Services;
 
@@ -11,9 +12,9 @@ public class PokemonTcgPriceService : IPokemonPriceService
     private readonly ILogger<PokemonTcgPriceService> _logger;
 
     public PokemonTcgPriceService(
-    HttpClient httpClient,
-    IConfiguration configuration,
-    ILogger<PokemonTcgPriceService> logger)
+        HttpClient httpClient,
+        IConfiguration configuration,
+        ILogger<PokemonTcgPriceService> logger)
     {
         _httpClient = httpClient;
         _logger = logger;
@@ -24,7 +25,6 @@ public class PokemonTcgPriceService : IPokemonPriceService
 
         _httpClient.BaseAddress = new Uri("https://api.pokemontcg.io/v2/");
 
-        // Cabeçalhos essenciais para contornar a rejeição SSL do Cloudflare
         _httpClient.DefaultRequestHeaders.Clear();
         _httpClient.DefaultRequestHeaders.Add("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36");
         _httpClient.DefaultRequestHeaders.Add("Accept", "application/json");
@@ -44,18 +44,26 @@ public class PokemonTcgPriceService : IPokemonPriceService
             if (string.IsNullOrWhiteSpace(cleanName))
                 return 0m;
 
-            // 1. Monta a busca Lucene limpa sem caracteres corrompidos
-            string query = string.IsNullOrWhiteSpace(cleanNumber)
+            // 1. Monta a expressão Lucene pura
+            string rawQuery = string.IsNullOrWhiteSpace(cleanNumber)
                 ? $"name:\"{cleanName}\""
                 : $"name:\"{cleanName}\" number:{cleanNumber}";
 
-            var response = await _httpClient.GetAsync($"cards?q={query}");
+            // 2. CODIFICAÇÃO COMPLETA: Garante %22 para aspas e %20 para espaços
+            string encodedQuery = Uri.EscapeDataString(rawQuery);
+            string requestUrl = $"https://api.pokemontcg.io/v2/cards?q={encodedQuery}";
 
-            // 2. Fallback: Se retornar erro do servidor (500) ou não encontrar, tenta buscar apenas pelo nome
+            var response = await _httpClient.GetAsync(requestUrl);
+
+            // 3. Fallback: Se a busca com número falhar, tenta apenas pelo nome codificado
             if (!response.IsSuccessStatusCode)
             {
-                _logger.LogWarning("[PokemonTcgPrice] ⚠️ Tentativa inicial falhou ({Status}). Executando fallback pelo nome...", response.StatusCode);
-                response = await _httpClient.GetAsync($"cards?q=name:\"{cleanName}\"");
+                _logger.LogWarning("[PokemonTcgPrice] ⚠️ Busca inicial falhou ({Status}). Tentando fallback por nome...", response.StatusCode);
+
+                string fallbackQuery = Uri.EscapeDataString($"name:\"{cleanName}\"");
+                string fallbackUrl = $"https://api.pokemontcg.io/v2/cards?q={fallbackQuery}";
+
+                response = await _httpClient.GetAsync(fallbackUrl);
 
                 if (!response.IsSuccessStatusCode) return 0m;
             }
@@ -64,13 +72,13 @@ public class PokemonTcgPriceService : IPokemonPriceService
 
             if (!doc.RootElement.TryGetProperty("data", out var data) || data.GetArrayLength() == 0)
             {
-                _logger.LogWarning("[PokemonTcgPrice] ⚠️ Nenhuma carta encontrada para: Name='{Name}'", cleanName);
+                _logger.LogWarning("[PokemonTcgPrice] ⚠️ Nenhuma carta encontrada para: Name='{Name}' Number='{Number}'", cleanName, cleanNumber);
                 return 0m;
             }
 
             var card = data[0];
 
-            // 3. Busca preço no TCGPlayer (USD)
+            // 4. Busca preço no TCGPlayer (USD)
             if (card.TryGetProperty("tcgplayer", out var tcgPlayer) &&
                 tcgPlayer.TryGetProperty("prices", out var prices))
             {
@@ -85,7 +93,7 @@ public class PokemonTcgPriceService : IPokemonPriceService
                 }
             }
 
-            // 4. Fallback para Cardmarket
+            // 5. Fallback para Cardmarket
             if (card.TryGetProperty("cardmarket", out var cardmarket) &&
                 cardmarket.TryGetProperty("prices", out var cmPrices))
             {
@@ -110,7 +118,17 @@ public class PokemonTcgPriceService : IPokemonPriceService
         string name = rawName ?? string.Empty;
         string number = rawNumber ?? string.Empty;
 
-        // Se o nome contiver o número (ex: "Pikachu (Secret Rare) - 115/114")
+        // Extrai o número do nome se vier junto (ex: "Pikachu 115/114" ou "Pikachu 115")
+        if (string.IsNullOrWhiteSpace(number))
+        {
+            var match = Regex.Match(name, @"^(.*?)\s+([A-Za-z0-9]+(?:/[A-Za-z0-9]+)?)$");
+            if (match.Success)
+            {
+                name = match.Groups[1].Value;
+                number = match.Groups[2].Value;
+            }
+        }
+
         if (name.Contains('-'))
         {
             var parts = name.Split('-');
@@ -121,22 +139,18 @@ public class PokemonTcgPriceService : IPokemonPriceService
             }
         }
 
-        // Remove sufixos como "(Secret Rare)" do nome
         if (name.Contains('('))
         {
             name = name.Split('(')[0];
         }
 
-        // Se number for no formato "115/114", extrai apenas o numerador "115"
         if (number.Contains('/'))
         {
             number = number.Split('/')[0];
         }
 
-        // Remove caracteres especiais, parênteses e espaços do número (mantém apenas letras e dígitos)
         number = new string(number.Where(char.IsLetterOrDigit).ToArray());
 
-        // Se o número for inválido ou for um texto longo (ex: "SecretRare"), limpa para buscar apenas pelo nome
         if (number.Length > 6)
         {
             number = string.Empty;
