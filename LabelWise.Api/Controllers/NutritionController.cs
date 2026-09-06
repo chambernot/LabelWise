@@ -4,6 +4,7 @@ using LabelWise.Application.DTOs.Nutrition;
 using LabelWise.Application.DTOs.OpenFoodFacts;
 using LabelWise.Application.Interfaces;
 using LabelWise.Application.Models.Nutrition;
+using LabelWise.Application.Services.Nutrition;
 using LabelWise.Infrastructure.Helpers;
 using LabelWise.Infrastructure.Services;
 using Microsoft.AspNetCore.Authorization;
@@ -21,6 +22,7 @@ namespace LabelWise.Api.Controllers;
 [ApiController]
 [Route("api/nutrition")]
 [Authorize]
+[AllowAnonymous] // ◄◄ Libera o acesso para testes sem precisar de token JWT
 public class NutritionController : ControllerBase
 {
     private readonly IAppAccessService               _appAccessService;
@@ -30,6 +32,7 @@ public class NutritionController : ControllerBase
     private readonly INutritionImageAnalyzer          _visionAnalyzer;
     private readonly IIntelligentAnalysisScoreService _scoreService;
     private readonly ILogger<NutritionController>    _logger;
+    private readonly INutritionService _nutritionService;
 
     public NutritionController(
         IAppAccessService appAccessService,
@@ -38,7 +41,7 @@ public class NutritionController : ControllerBase
         IOpenFoodFactsService openFoodFacts,
         INutritionImageAnalyzer visionAnalyzer,
         IIntelligentAnalysisScoreService scoreService,
-        ILogger<NutritionController> logger)
+        ILogger<NutritionController> logger, INutritionService nutritionService)
     {
         _appAccessService = appAccessService ?? throw new ArgumentNullException(nameof(appAccessService));
         _orchestrator     = orchestrator     ?? throw new ArgumentNullException(nameof(orchestrator));
@@ -47,7 +50,81 @@ public class NutritionController : ControllerBase
         _visionAnalyzer   = visionAnalyzer   ?? throw new ArgumentNullException(nameof(visionAnalyzer));
         _scoreService     = scoreService     ?? throw new ArgumentNullException(nameof(scoreService));
         _logger           = logger           ?? throw new ArgumentNullException(nameof(logger));
+        _nutritionService = nutritionService;
     }
+
+
+    [HttpPost("log-meal")]
+    public async Task<IActionResult> LogMeal([FromBody] ParseMealRequestDto request)
+    {
+        if (request == null || string.IsNullOrWhiteSpace(request.UserId))
+        {
+            return BadRequest(new { success = false, message = "Payload inválido. O UserId é obrigatório." });
+        }
+
+        // A validação de data/hora local garante que o registro entre no dia correto do fuso do usuário
+        if (request.LocalTime == default)
+        {
+            request = request with { LocalTime = System.DateTime.UtcNow };
+        }
+
+        var result = await _nutritionService.ProcessMealEntryAsync(request);
+
+        // Retorna status 200, mas sinaliza para o frontend/WhatsApp que o fluxo exige uma interação
+        if (result.RequiresUserClarification)
+        {
+            return Ok(new
+            {
+                success = false,
+                actionRequired = true,
+                message = result.ClarificationQuestion,
+                data = result
+            });
+        }
+
+        return Ok(new { success = true, actionRequired = false, data = result });
+    }
+
+    [HttpGet("meals/{userId}")]
+    public async Task<IActionResult> GetDailyMeals(string userId, [FromQuery] DateTime? date)
+    {
+        var targetDate = date ?? DateTime.UtcNow;
+        var meals = await _nutritionService.GetDailyMealsAsync(userId, targetDate);
+        return Ok(new { success = true, data = meals });
+    }
+
+    [HttpDelete("meals/{id}")]
+    public async Task<IActionResult> DeleteMeal(string id)
+    {
+        if (string.IsNullOrWhiteSpace(id))
+        {
+            return BadRequest(new { success = false, message = "O ID do registro é obrigatório." });
+        }
+
+        await _nutritionService.DeleteMealAsync(id);
+        return Ok(new { success = true, message = "Registro de refeição removido com sucesso." });
+    }
+
+    [HttpPost("goals")]
+    public async Task<IActionResult> SetGoal([FromBody] SetNutritionGoalDto request)
+    {
+        if (request == null || string.IsNullOrWhiteSpace(request.UserId))
+        {
+            return BadRequest(new { success = false, message = "UserId e os dados de meta são obrigatórios." });
+        }
+
+        await _nutritionService.SetUserGoalAsync(request);
+
+        return Ok(new { success = true, message = "Meta diária salva com sucesso." });
+    }
+
+    [HttpGet("daily-status/{userId}")]
+public async Task<IActionResult> GetDailyStatus(string userId, [FromQuery] DateTime? date)
+{
+    var targetDate = date ?? System.DateTime.UtcNow;
+    var result = await _nutritionService.GetDailyStatusAndSuggestionAsync(userId, targetDate);
+    return Ok(new { success = true, data = result });
+}
 
     /// <summary>
     /// Analisa uma imagem de produto alimentício e retorna avaliação nutricional unificada.

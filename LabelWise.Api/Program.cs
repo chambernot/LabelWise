@@ -1,7 +1,10 @@
 using LabelWise.Api.Swagger;
 using LabelWise.Application;
 using LabelWise.Application.Interfaces;
+using LabelWise.Application.Interfaces.AI;
+using LabelWise.Application.Interfaces.Persistence;
 using LabelWise.Application.Services;
+using LabelWise.Application.Services.Nutrition;
 using LabelWise.Infrastructure.AI;
 using LabelWise.Infrastructure.Extensions;
 using LabelWise.Infrastructure.Persistence.Mongo;
@@ -143,6 +146,18 @@ try
     builder.Services.AddScoped<IVisionAnalysisService, GeminiVisionAnalysisService>();
 
     builder.Services.AddScoped<ICardMarketPricingService, CardMarketPricingService>();
+
+    // Repositórios (Infrastructure)
+    builder.Services.AddScoped<INutritionRepository, NutritionRepository>();
+
+    // Serviços de IA (Infrastructure)
+    builder.Services.AddScoped<INutritionAgentService, NutritionAgentService>();
+
+    // Regras de Negócio (Application)
+    builder.Services.AddScoped<INutritionService, NutritionService>();
+    // Adicione esta linha no seu Program.cs junto aos outros registros de serviços:
+    builder.Services.AddHttpClient<IWhatsAppSenderService, WhatsAppSenderService>();
+    builder.Services.AddHttpClient<IMetaMediaService, MetaMediaService>();
 
     // Aplicação
     builder.Services.AddScoped<ConditionEvaluationService>();
