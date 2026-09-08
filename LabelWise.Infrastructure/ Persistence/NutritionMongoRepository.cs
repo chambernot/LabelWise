@@ -116,11 +116,12 @@ namespace LabelWise.Infrastructure.Repositories
 
         public async Task<DailyNutritionGoal> ObterMetaDiariaAsync(string userId, DateTime data)
         {
-            var targetDate = data.Date;
-
-            // Expressão LINQ direta, seguindo a mesma sintaxe do seu ExisteEmailAsync
-            return await _dailyGoals.Find(x => x.UserId == userId && x.TargetDate == targetDate)
-                                    .FirstOrDefaultAsync();
+            // Removemos a verificação estrita de TargetDate == targetDate.
+            // Agora buscamos o plano ativo mais recente cadastrado para este usuário.
+            return await _dailyGoals
+                .Find(x => x.UserId == userId)
+                .SortByDescending(x => x.TargetDate) // Pega sempre a dieta mais recente da nutricionista
+                .FirstOrDefaultAsync();
         }
     }
 }
