@@ -30,7 +30,7 @@ namespace LabelWise.Infrastructure.Repositories
         public NutritionRepository(IMongoDatabase database)
         {
             _mealLogs = database.GetCollection<MealLog>("Nutrition_MealLogs");
-            _dailyGoals = database.GetCollection<DailyNutritionGoal>("Nutrition_DailyGoals");
+            _dailyGoals = database.GetCollection<DailyNutritionGoal>("DailyGoals");
             _patients = database.GetCollection<PatientDto>("Nutrition_Patients");
             _pendingClarifications = database.GetCollection<MealClarificationContext>("Nutrition_PendingClarifications");
         }

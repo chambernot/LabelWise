@@ -233,6 +233,8 @@ try
 
     app.UseCors("DefaultCorsPolicy");
     // Arquivos públicos, como a Política de Privacidade
+
+    app.UseDefaultFiles();
     app.UseStaticFiles();
 
 

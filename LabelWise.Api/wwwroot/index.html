@@ -1,0 +1,537 @@
+﻿<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>LabelWise - Portal da Nutricionista</title>
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js" defer></script>
+</head>
+<body class="bg-gray-50 font-sans antialiased" x-data="nutriApp()">
+
+    <!-- TELA DE LOGIN -->
+    <div x-show="!isLoggedIn" class="min-h-screen flex items-center justify-center px-4">
+        <div class="max-w-md w-full bg-white rounded-2xl shadow-xl p-8 border border-gray-100">
+            <div class="text-center mb-8">
+                <h1 class="text-2xl font-bold text-gray-900">LabelWise 🥗</h1>
+                <p class="text-sm text-gray-500 mt-1">Portal de Gestão Nutricional</p>
+            </div>
+            <form @submit.prevent="login">
+                <div class="mb-4">
+                    <label class="block text-xs font-semibold uppercase text-gray-600 mb-2">Sua Chave de Acesso (API Key)</label>
+                    <input type="password" x-model="apiKeyInput" required
+                           class="w-full px-4 py-3 rounded-xl border border-gray-200 focus:ring-2 focus:ring-emerald-500 focus:outline-none text-sm"
+                           placeholder="Ex: nutri_key_carla123">
+                </div>
+                <button type="submit"
+                        class="w-full bg-emerald-600 hover:bg-emerald-700 text-white font-semibold py-3 rounded-xl transition duration-200 shadow-lg shadow-emerald-600/20">
+                    Entrar no Painel
+                </button>
+            </form>
+            <div x-show="loginError" x-text="loginErrorMessage" class="mt-4 p-3 bg-red-50 text-red-700 rounded-xl text-xs text-center font-medium"></div>
+            <p class="text-xs text-center text-gray-400 mt-6">Acesso restrito a profissionais cadastrados.</p>
+        </div>
+    </div>
+
+    <!-- PAINEL PRINCIPAL -->
+    <div x-show="isLoggedIn" class="min-h-screen flex flex-col">
+        <!-- Header -->
+        <header class="bg-white border-b border-gray-200 sticky top-0 z-50">
+            <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between">
+                <div class="flex items-center space-x-3">
+                    <span class="text-xl font-black text-emerald-600">LabelWise</span>
+                    <span class="bg-emerald-50 text-emerald-700 text-xs px-2.5 py-1 rounded-full font-medium" x-text="nutriName"></span>
+                </div>
+                <button @click="logout" class="text-sm font-medium text-gray-500 hover:text-red-600 transition">
+                    Sair da Conta
+                </button>
+            </div>
+        </header>
+
+        <!-- Conteúdo Principal -->
+        <main class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8 flex-1 w-full grid grid-cols-1 lg:grid-cols-3 gap-8">
+
+            <!-- Coluna Esquerda: Formulário de Prescrição com Inteligência Artificial (Texto, Imagem ou PDF) -->
+            <div class="lg:col-span-1 bg-white rounded-2xl shadow-sm border border-gray-200 p-6 h-fit">
+                <h2 class="text-lg font-bold text-gray-900 mb-1">Prescrever Dieta</h2>
+                <p class="text-xs text-gray-500 mb-6">Cadastre manualmente ou use a IA por texto, foto ou PDF.</p>
+
+                <!-- BLOCO DE EXTRAÇÃO INTELIGENTE POR IA (TEXTO + ARQUIVO) -->
+                <div class="mb-6 p-4 bg-emerald-50/60 rounded-xl border border-emerald-100">
+                    <label class="block text-xs font-bold uppercase text-emerald-800 mb-1">✨ Extração Inteligente (IA)</label>
+                    <p class="text-[11px] text-gray-500 mb-2">Cole o texto da dieta ou faça upload de uma foto/PDF do cardápio.</p>
+
+                    <!-- Campo de Texto Opcional -->
+                    <textarea x-model="aiRawText" rows="2" placeholder="Instruções ou observações adicionais..."
+                              class="w-full px-3 py-2 rounded-lg border border-emerald-200 text-xs focus:ring-2 focus:ring-emerald-500 focus:outline-none bg-white mb-2"></textarea>
+
+                    <!-- Input de Arquivo (Imagem ou PDF) -->
+                    <div class="mb-3">
+                        <label class="block text-[10px] font-bold uppercase text-emerald-700 mb-1">Anexar Foto ou PDF da Dieta</label>
+                        <input type="file" @change="handleFileSelect" accept="image/*,.pdf"
+                               class="w-full text-xs text-gray-500 file:mr-3 file:py-1.5 file:px-3 file:rounded-lg file:border-0 file:text-xs file:font-semibold file:bg-emerald-100 file:text-emerald-800 hover:file:bg-emerald-200 cursor-pointer">
+                        <span x-show="selectedFileName" class="block text-[10px] text-emerald-600 mt-1 font-medium truncate" x-text="'Arquivo selecionado: ' + selectedFileName"></span>
+                    </div>
+
+                    <button type="button" @click="extractWithAI" :disabled="isExtracting"
+                            class="w-full bg-emerald-700 hover:bg-emerald-800 text-white font-semibold py-2 rounded-lg transition duration-200 text-xs shadow-sm flex items-center justify-center space-x-2">
+                        <span x-show="!isExtracting">🤖 Analisar com Gemini IA</span>
+                        <span x-show="isExtracting">Processando documento...</span>
+                    </button>
+                </div>
+
+                <form @submit.prevent="saveDiet" class="space-y-4">
+                    <div>
+                        <label class="block text-xs font-semibold uppercase text-gray-600 mb-1">Telefone do Paciente (WhatsApp)</label>
+                        <input type="text" x-model="form.patientPhone" required placeholder="5511988887777"
+                               class="w-full px-3 py-2 rounded-lg border border-gray-200 text-sm focus:ring-2 focus:ring-emerald-500 focus:outline-none">
+                    </div>
+
+                    <div class="grid grid-cols-2 gap-3">
+                        <div>
+                            <label class="block text-xs font-semibold uppercase text-gray-600 mb-1">Calorias (Kcal)</label>
+                            <input type="number" x-model="form.calories" required placeholder="1800"
+                                   class="w-full px-3 py-2 rounded-lg border border-gray-200 text-sm focus:ring-2 focus:ring-emerald-500 focus:outline-none">
+                        </div>
+                        <div>
+                            <label class="block text-xs font-semibold uppercase text-gray-600 mb-1">Proteína (g)</label>
+                            <input type="number" step="0.1" x-model="form.protein" required placeholder="130"
+                                   class="w-full px-3 py-2 rounded-lg border border-gray-200 text-sm focus:ring-2 focus:ring-emerald-500 focus:outline-none">
+                        </div>
+                    </div>
+
+                    <div class="grid grid-cols-2 gap-3">
+                        <div>
+                            <label class="block text-xs font-semibold uppercase text-gray-600 mb-1">Carboidratos (g)</label>
+                            <input type="number" step="0.1" x-model="form.carbs" required placeholder="180"
+                                   class="w-full px-3 py-2 rounded-lg border border-gray-200 text-sm focus:ring-2 focus:ring-emerald-500 focus:outline-none">
+                        </div>
+                        <div>
+                            <label class="block text-xs font-semibold uppercase text-gray-600 mb-1">Gorduras (g)</label>
+                            <input type="number" step="0.1" x-model="form.fat" required placeholder="50"
+                                   class="w-full px-3 py-2 rounded-lg border border-gray-200 text-sm focus:ring-2 focus:ring-emerald-500 focus:outline-none">
+                        </div>
+                    </div>
+
+                    <div>
+                        <label class="block text-xs font-semibold uppercase text-gray-600 mb-1">Restrições Alimentares</label>
+                        <input type="text" x-model="form.dietaryRestrictions" placeholder="Ex: Sem lactose, Vegetariano"
+                               class="w-full px-3 py-2 rounded-lg border border-gray-200 text-sm focus:ring-2 focus:ring-emerald-500 focus:outline-none">
+                    </div>
+
+                    <div>
+                        <label class="block text-xs font-semibold uppercase text-gray-600 mb-1">Cardápio Detalhado / Observações</label>
+                        <textarea x-model="form.prescribedMealPlan" rows="3" placeholder="Café: Ovos e Pão..."
+                                  class="w-full px-3 py-2 rounded-lg border border-gray-200 text-sm focus:ring-2 focus:ring-emerald-500 focus:outline-none"></textarea>
+                    </div>
+
+                    <button type="submit"
+                            class="w-full bg-emerald-600 hover:bg-emerald-700 text-white font-medium py-2.5 rounded-xl transition duration-200 text-sm shadow-md shadow-emerald-600/10">
+                        Salvar Dieta do Paciente
+                    </button>
+                </form>
+
+                <div x-show="feedbackMessage" x-text="feedbackMessage"
+                     :class="feedbackError ? 'bg-red-50 text-red-700 border-red-200' : 'bg-emerald-50 text-emerald-700 border-emerald-200'"
+                     class="mt-4 p-3 rounded-xl border text-xs text-center font-medium"></div>
+            </div>
+
+            <!-- Coluna Direita: Dashboard e Tabela de Pacientes -->
+            <div class="lg:col-span-2 space-y-6">
+                <!-- Cards de Resumo -->
+                <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                    <div class="bg-white p-5 rounded-2xl shadow-sm border border-gray-200 flex items-center justify-between">
+                        <div>
+                            <span class="text-xs font-semibold uppercase text-gray-400">Pacientes Monitorados</span>
+                            <p class="text-2xl font-black text-gray-900 mt-1" x-text="patients.length">0</p>
+                        </div>
+                        <div class="bg-emerald-50 text-emerald-600 p-3 rounded-xl font-bold">👥</div>
+                    </div>
+                    <div class="bg-white p-5 rounded-2xl shadow-sm border border-gray-200 flex items-center justify-between">
+                        <div>
+                            <span class="text-xs font-semibold uppercase text-gray-400">Status do Sistema</span>
+                            <p class="text-sm font-bold text-emerald-600 mt-2 flex items-center">
+                                <span class="w-2 h-2 rounded-full bg-emerald-500 inline-block mr-2 animate-pulse"></span>
+                                Webhook Ativo
+                            </p>
+                        </div>
+                        <div class="bg-emerald-50 text-emerald-600 p-3 rounded-xl font-bold">🟢</div>
+                    </div>
+                </div>
+
+                <!-- Tabela de Pacientes -->
+                <div class="bg-white rounded-2xl shadow-sm border border-gray-200 overflow-hidden">
+                    <div class="p-6 border-b border-gray-100 flex items-center justify-between">
+                        <div>
+                            <h2 class="text-lg font-bold text-gray-900">Seus Pacientes Ativos</h2>
+                            <p class="text-xs text-gray-500">Acompanhe o consumo e metas dos pacientes.</p>
+                        </div>
+                        <button @click="loadPatients" class="text-xs bg-gray-100 hover:bg-gray-200 text-gray-700 px-3 py-1.5 rounded-lg font-medium transition">
+                            Atualizar Lista
+                        </button>
+                    </div>
+
+                    <div class="overflow-x-auto">
+                        <table class="w-full text-left border-collapse">
+                            <thead>
+                                <tr class="bg-gray-50/50 text-[11px] uppercase font-bold text-gray-400 tracking-wider">
+                                    <th class="py-3 px-6">Paciente (WhatsApp)</th>
+                                    <th class="py-3 px-6">Meta Diária</th>
+                                    <th class="py-3 px-6">Macronutrientes</th>
+                                    <th class="py-3 px-6 text-right">Ações</th>
+                                </tr>
+                            </thead>
+                            <tbody class="divide-y divide-gray-100 text-sm">
+                                <template x-for="patient in patients" :key="patient.id">
+                                    <tr class="hover:bg-gray-50/50 transition">
+                                        <td class="py-4 px-6 font-semibold text-gray-800" x-text="patient.userId"></td>
+                                        <td class="py-4 px-6">
+                                            <span class="bg-emerald-50 text-emerald-700 px-2.5 py-1 rounded-full text-xs font-bold" x-text="patient.targetCalories + ' kcal'"></span>
+                                        </td>
+                                        <td class="py-4 px-6 text-xs text-gray-600">
+                                            <span x-text="'P: ' + patient.targetProteinG + 'g | '"></span>
+                                            <span x-text="'C: ' + patient.targetCarbsG + 'g | '"></span>
+                                            <span x-text="'G: ' + patient.targetFatG + 'g'"></span>
+                                        </td>
+                                        <td class="py-4 px-6 text-right space-x-2">
+                                            <button @click="viewLogs(patient.userId)" class="text-blue-600 hover:text-blue-800 font-medium text-xs bg-blue-50 hover:bg-blue-100 px-3 py-1.5 rounded-lg transition">
+                                                Ver Consumo
+                                            </button>
+                                            <button @click="editPatient(patient)" class="text-emerald-600 hover:text-emerald-800 font-medium text-xs bg-emerald-50 hover:bg-emerald-100 px-3 py-1.5 rounded-lg transition">
+                                                Editar Dieta
+                                            </button>
+                                        </td>
+                                    </tr>
+                                </template>
+                                <template x-if="patients.length === 0">
+                                    <tr>
+                                        <td colspan="4" class="py-8 text-center text-xs text-gray-400">
+                                            Nenhum paciente cadastrado ainda.
+                                        </td>
+                                    </tr>
+                                </template>
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+        </main>
+    </div>
+
+    <!-- MODAL DE HISTÓRICO DE CONSUMO AVANÇADO -->
+    <div x-show="showModal" class="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm px-4" x-cloak>
+        <div class="bg-white rounded-2xl max-w-3xl w-full p-6 shadow-2xl border border-gray-100 max-h-[90vh] flex flex-col">
+            <div class="flex items-center justify-between pb-4 border-b border-gray-100">
+                <div>
+                    <h3 class="text-lg font-bold text-gray-900">Dashboard de Consumo do Paciente</h3>
+                    <p class="text-xs text-gray-500" x-text="'WhatsApp: ' + selectedPatientPhone"></p>
+                </div>
+                <button @click="showModal = false" class="text-gray-400 hover:text-gray-600 font-bold text-lg">✕</button>
+            </div>
+
+            <div class="py-4 grid grid-cols-1 sm:grid-cols-3 gap-4 border-b border-gray-100 bg-gray-50/50 p-4 rounded-xl mt-2">
+                <div>
+                    <label class="block text-[11px] font-semibold uppercase text-gray-500 mb-1">Período de Análise</label>
+                    <select x-model="selectedPeriod" @change="fetchLogs()" class="w-full bg-white px-3 py-2 rounded-lg border border-gray-200 text-xs focus:ring-2 focus:ring-emerald-500 focus:outline-none">
+                        <option value="7">Últimos 7 dias</option>
+                        <option value="30">Últimos 30 dias (Mês)</option>
+                        <option value="90">Últimos 3 meses</option>
+                    </select>
+                </div>
+                <div class="bg-white p-3 rounded-lg border border-gray-100 shadow-sm">
+                    <span class="text-[10px] font-bold uppercase text-gray-400">Meta Diária Prescrita</span>
+                    <p class="text-sm font-extrabold text-gray-800 mt-0.5" x-text="targetCalories + ' kcal'"></p>
+                </div>
+                <div class="bg-white p-3 rounded-lg border border-gray-100 shadow-sm">
+                    <span class="text-[10px] font-bold uppercase text-gray-400">Total de Registros</span>
+                    <p class="text-sm font-extrabold text-emerald-600 mt-0.5" x-text="selectedPatientLogs.length + ' refeições'"></p>
+                </div>
+            </div>
+
+            <div class="py-4 overflow-y-auto flex-1 space-y-6">
+                <template x-for="(group, dateStr) in groupedLogs" :key="dateStr">
+                    <div class="border border-gray-100 rounded-xl overflow-hidden shadow-xs">
+                        <div class="bg-gray-100/70 px-4 py-2.5 flex items-center justify-between border-b border-gray-100">
+                            <span class="text-xs font-bold text-gray-700" x-text="formatDateTitle(dateStr)"></span>
+                            <span class="text-xs font-extrabold text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded-md" x-text="calculateDayTotal(group) + ' kcal consumidas'"></span>
+                        </div>
+                        <div class="divide-y divide-gray-50 bg-white">
+                            <template x-for="log in group" :key="log.id">
+                                <div class="p-3.5 px-4 flex items-center justify-between hover:bg-gray-50/50 transition">
+                                    <div>
+                                        <div class="flex items-center space-x-2">
+                                            <span class="bg-emerald-100 text-emerald-800 text-[10px] font-bold px-2 py-0.5 rounded" x-text="log.mealType"></span>
+                                            <h4 class="text-xs font-bold text-gray-800" x-text="log.dishName"></h4>
+                                        </div>
+                                        <p class="text-[10px] text-gray-400 mt-0.5" x-text="new Date(log.loggedAt).toLocaleTimeString('pt-BR', {hour: '2-digit', minute:'2-digit'})"></p>
+                                    </div>
+                                    <div class="text-right">
+                                        <span class="text-xs font-extrabold text-gray-800" x-text="log.calories + ' kcal'"></span>
+                                        <p class="text-[10px] text-gray-400" x-text="'P:' + log.proteinG + 'g | C:' + log.carbsG + 'g | G:' + log.fatG + 'g'"></p>
+                                    </div>
+                                </div>
+                            </template>
+                        </div>
+                    </div>
+                </template>
+
+                <template x-if="Object.keys(groupedLogs).length === 0">
+                    <div class="text-center py-12">
+                        <p class="text-xs text-gray-400">Nenhuma refeição registrada pelo paciente no período selecionado.</p>
+                    </div>
+                </template>
+            </div>
+
+            <div class="pt-4 border-t border-gray-100 text-right">
+                <button @click="showModal = false" class="bg-gray-100 hover:bg-gray-200 text-gray-700 text-xs font-semibold px-4 py-2 rounded-xl transition">
+                    Fechar Painel
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Script de Integração -->
+    <script>
+        function nutriApp() {
+            return {
+                isLoggedIn: false,
+                apiKey: '',
+                apiKeyInput: '',
+                nutriName: 'Painel Clínico',
+                loginError: false,
+                loginErrorMessage: '',
+                feedbackMessage: '',
+                feedbackError: false,
+                isExtracting: false,
+                aiRawText: '',
+                selectedFileBase64: null,
+                selectedFileName: '',
+                patients: [],
+                showModal: false,
+                selectedPatientPhone: '',
+                selectedPatientLogs: [],
+                targetCalories: 2000,
+                selectedPeriod: '30',
+                form: {
+                    patientPhone: '',
+                    nutritionistId: 'nutri_web_portal',
+                    calories: 2000,
+                    protein: 150,
+                    carbs: 200,
+                    fat: 60,
+                    dietaryRestrictions: '',
+                    prescribedMealPlan: ''
+                },
+                async init() {
+                    const savedKey = localStorage.getItem('nutri_api_key');
+                    if (savedKey) {
+                        this.apiKey = savedKey;
+                        await this.verifyAndLogin(savedKey, false);
+                    }
+                },
+                async login() {
+                    if (!this.apiKeyInput.trim()) return;
+                    await this.verifyAndLogin(this.apiKeyInput.trim(), true);
+                },
+                async verifyAndLogin(key, showErrors) {
+                    try {
+                        const response = await fetch('/api/nutritionist/verify-key', {
+                            method: 'GET',
+                            headers: { 'X-Nutri-Key': key }
+                        });
+                        const result = await response.json();
+
+                        if (response.ok && result.success) {
+                            this.apiKey = key;
+                            this.nutriName = result.name || 'Nutricionista';
+                            localStorage.setItem('nutri_api_key', this.apiKey);
+                            this.isLoggedIn = true;
+                            this.apiKeyInput = '';
+                            this.loginError = false;
+                            this.loadPatients();
+                        } else {
+                            if (showErrors) {
+                                this.loginError = true;
+                                this.loginErrorMessage = 'Chave de acesso inválida ou inativa.';
+                            } else {
+                                this.logout();
+                            }
+                        }
+                    } catch (err) {
+                        if (showErrors) {
+                            this.loginError = true;
+                            this.loginErrorMessage = 'Erro de conexão com o servidor.';
+                        }
+                    }
+                },
+                logout() {
+                    localStorage.removeItem('nutri_api_key');
+                    this.isLoggedIn = false;
+                    this.apiKey = '';
+                    this.patients = [];
+                },
+                async loadPatients() {
+                    try {
+                        const response = await fetch('/api/nutritionist/patients', {
+                            method: 'GET',
+                            headers: { 'X-Nutri-Key': this.apiKey }
+                        });
+                        const result = await response.json();
+                        if (response.ok && result.success) {
+                            this.patients = result.data || [];
+                        }
+                    } catch (err) {
+                        console.error('Erro ao carregar pacientes', err);
+                    }
+                },
+                handleFileSelect(event) {
+                    const file = event.target.files[0];
+                    if (!file) return;
+
+                    this.selectedFileName = file.name;
+                    const reader = new FileReader();
+                    reader.onload = (e) => {
+                        // Salva apenas os dados base64 puros (removendo o prefixo data:*/*;base64,)
+                        const base64String = e.target.result.split(',')[1];
+                        this.selectedFileBase64 = base64String;
+                    };
+                    reader.readAsDataURL(file);
+                },
+                async extractWithAI() {
+                    if (!this.aiRawText.trim() && !this.selectedFileBase64) {
+                        alert('Por favor, digite um texto ou selecione uma imagem/PDF para a IA analisar.');
+                        return;
+                    }
+
+                    this.isExtracting = true;
+                    this.feedbackMessage = '🤖 O Gemini está analisando o documento/texto...';
+                    this.feedbackError = false;
+
+                    try {
+                        const response = await fetch('/api/nutritionist/extract', {
+                            method: 'POST',
+                            headers: {
+                                'Content-Type': 'application/json',
+                                'X-Nutri-Key': this.apiKey
+                            },
+                            body: JSON.stringify({
+                                textInput: this.aiRawText || 'Analise o documento anexado.',
+                                base64Image: this.selectedFileBase64
+                            })
+                        });
+
+                        const result = await response.json();
+
+                        if (response.ok && result.success && result.data) {
+                            const data = result.data;
+                            this.form.calories = data.targetCalories || this.form.calories;
+                            this.form.protein = data.targetProteinG || this.form.protein;
+                            this.form.carbs = data.targetCarbsG || this.form.carbs;
+                            this.form.fat = data.targetFatG || this.form.fat;
+                            this.form.dietaryRestrictions = data.dietaryRestrictions || '';
+                            this.form.prescribedMealPlan = data.prescribedMealPlan || '';
+
+                            this.feedbackMessage = '✨ Dieta extraída com sucesso pelo Gemini! Revise os campos e salve.';
+                            this.feedbackError = false;
+                        } else {
+                            this.feedbackMessage = '❌ Erro ao extrair dados com IA.';
+                            this.feedbackError = true;
+                        }
+                    } catch (err) {
+                        this.feedbackMessage = '❌ Erro de conexão ao tentar processar com IA.';
+                        this.feedbackError = true;
+                    } finally {
+                        this.isExtracting = false;
+                    }
+                },
+                async viewLogs(phone) {
+                    this.selectedPatientPhone = phone;
+                    this.showModal = true;
+                    await this.fetchLogs();
+                },
+                async fetchLogs() {
+                    if (!this.selectedPatientPhone) return;
+
+                    const days = parseInt(this.selectedPeriod);
+                    const startDate = new Date();
+                    startDate.setDate(startDate.getDate() - days);
+                    const startStr = startDate.toISOString().split('T')[0];
+
+                    try {
+                        const response = await fetch(`/api/nutritionist/patient-logs/${this.selectedPatientPhone}?startDate=${startStr}`, {
+                            method: 'GET',
+                            headers: { 'X-Nutri-Key': this.apiKey }
+                        });
+                        const result = await response.json();
+                        if (response.ok && result.success) {
+                            this.selectedPatientLogs = result.data || [];
+                            this.targetCalories = result.targetCalories || 2000;
+                        }
+                    } catch (err) {
+                        console.error('Erro ao buscar logs do paciente', err);
+                    }
+                },
+                get groupedLogs() {
+                    const groups = {};
+                    this.selectedPatientLogs.forEach(log => {
+                        const dateKey = log.loggedAt.split('T')[0];
+                        if (!groups[dateKey]) {
+                            groups[dateKey] = [];
+                        }
+                        groups[dateKey].push(log);
+                    });
+                    return groups;
+                },
+                calculateDayTotal(logs) {
+                    return logs.reduce((sum, item) => sum + (item.calories || 0), 0);
+                },
+                formatDateTitle(dateStr) {
+                    const parts = dateStr.split('-');
+                    if (parts.length !== 3) return dateStr;
+                    return `${parts[2]}/${parts[1]}/${parts[0]}`;
+                },
+                async saveDiet() {
+                    this.feedbackMessage = 'Salvando dieta...';
+                    this.feedbackError = false;
+
+                    try {
+                        const response = await fetch('/api/nutritionist/import-diet', {
+                            method: 'POST',
+                            headers: {
+                                'Content-Type': 'application/json',
+                                'X-Nutri-Key': this.apiKey
+                            },
+                            body: JSON.stringify(this.form)
+                        });
+
+                        const result = await response.json();
+
+                        if (response.ok) {
+                            this.feedbackMessage = '✅ Dieta salva e sincronizada com sucesso!';
+                            this.feedbackError = false;
+                            this.loadPatients();
+                        } else {
+                            this.feedbackMessage = '❌ Erro: ' + (result.message || 'Falha ao salvar');
+                            this.feedbackError = true;
+                        }
+                    } catch (err) {
+                        this.feedbackMessage = '❌ Erro de conexão com o servidor.';
+                        this.feedbackError = true;
+                    }
+                },
+                editPatient(p) {
+                    this.form.patientPhone = p.userId;
+                    this.form.calories = p.targetCalories;
+                    this.form.protein = p.targetProteinG;
+                    this.form.carbs = p.targetCarbsG;
+                    this.form.fat = p.targetFatG;
+                    this.form.dietaryRestrictions = p.dietaryRestrictions || '';
+                    this.form.prescribedMealPlan = p.prescribedMealPlan || '';
+                    window.scrollTo({ top: 0, behavior: 'smooth' });
+                }
+            }
+        }
+    </script>
+</body>
+</html>

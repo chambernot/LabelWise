@@ -36,6 +36,161 @@ public class NutritionistPortalController : ControllerBase
     }
 
     /// <summary>
+    /// Valida se a API Key informada no login é real e ativa.
+    /// </summary>
+    [HttpGet("verify-key")]
+    public async Task<IActionResult> VerifyKey([FromHeader(Name = "X-Nutri-Key")] string key)
+    {
+        if (string.IsNullOrWhiteSpace(key))
+        {
+            return Unauthorized(new { success = false, message = "Chave obrigatória." });
+        }
+
+        // 1. Valida contra a chave padrão de configuração
+        if (key == _nutriKey)
+        {
+            return Ok(new { success = true, name = "Nutricionista Principal" });
+        }
+
+        // 2. Valida contra o MongoDB (nutricionistas cadastradas)
+        try
+        {
+            var collection = _database.GetCollection<Nutritionist>("Nutritionists");
+            var nutri = await collection.Find(x => x.ApiKey == key && x.IsActive).FirstOrDefaultAsync();
+
+            if (nutri != null)
+            {
+                return Ok(new { success = true, name = nutri.Name });
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Erro ao verificar API Key.");
+        }
+
+        return Unauthorized(new { success = false, message = "Chave de acesso inválida ou inativa." });
+    }
+
+    /// <summary>
+    /// Retorna o histórico de refeições de um paciente filtrado por período para avaliação mensal/diária.
+    /// </summary>
+    [HttpGet("patient-logs/{phone}")]
+    public async Task<IActionResult> GetPatientLogs(
+        [FromHeader(Name = "X-Nutri-Key")] string key,
+        string phone,
+        [FromQuery] string? startDate = null,
+        [FromQuery] string? endDate = null)
+    {
+        bool isValid = (key == _nutriKey);
+        if (!isValid)
+        {
+            var nutriCollection = _database.GetCollection<Nutritionist>("Nutritionists");
+            var nutri = await nutriCollection.Find(x => x.ApiKey == key && x.IsActive).FirstOrDefaultAsync();
+            isValid = (nutri != null);
+        }
+
+        if (!isValid)
+        {
+            return Unauthorized(new { success = false, message = "Chave de acesso inválida." });
+        }
+
+        try
+        {
+            var logsCollection = _database.GetCollection<MealLog>("Nutrition_MealLogs");
+
+            // Construção segura dos filtros do MongoDB
+            var builder = Builders<MealLog>.Filter;
+            var filter = builder.Eq(x => x.UserId, phone);
+
+            // Filtro de data inicial (Padrão: últimos 30 dias se não informado)
+            if (DateTime.TryParse(startDate, out var start))
+            {
+                filter = builder.And(filter, builder.Gte(x => x.LoggedAt, start.Date));
+            }
+            else
+            {
+                var defaultStart = DateTime.UtcNow.AddDays(-30).Date;
+                filter = builder.And(filter, builder.Gte(x => x.LoggedAt, defaultStart));
+            }
+
+            // Filtro de data final (se informada)
+            if (DateTime.TryParse(endDate, out var end))
+            {
+                filter = builder.And(filter, builder.Lt(x => x.LoggedAt, end.Date.AddDays(1)));
+            }
+
+            var logs = await logsCollection
+                .Find(filter)
+                .SortByDescending(x => x.LoggedAt)
+                .ToListAsync();
+
+            // Busca a meta atual do paciente para exibição no dashboard de consumo
+            var goalsCollection = _database.GetCollection<DailyNutritionGoal>("DailyGoals");
+            var goal = await goalsCollection
+                .Find(x => x.UserId == phone)
+                .SortByDescending(x => x.TargetDate)
+                .FirstOrDefaultAsync();
+
+            return Ok(new
+            {
+                success = true,
+                data = logs,
+                targetCalories = goal?.TargetCalories ?? 2000,
+                targetProtein = goal?.TargetProteinG ?? 150,
+                targetCarbs = goal?.TargetCarbsG ?? 200,
+                targetFat = goal?.TargetFatG ?? 60
+            });
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Erro ao buscar histórico de consumo do paciente {Phone}", phone);
+            return StatusCode(500, new { success = false, message = "Erro interno ao buscar histórico." });
+        }
+    }
+
+
+    /// <summary>
+    /// Lista todos os pacientes/metas cadastradas para visualização no dashboard.
+    /// </summary>
+    [HttpGet("patients")]
+    public async Task<IActionResult> GetPatients([FromHeader(Name = "X-Nutri-Key")] string key)
+    {
+        if (string.IsNullOrWhiteSpace(key))
+        {
+            return Unauthorized(new { success = false, message = "Chave obrigatória." });
+        }
+
+        // Valida se a chave é válida (padrão ou cadastrada no banco)
+        bool isValid = (key == _nutriKey);
+        if (!isValid)
+        {
+            var nutriCollection = _database.GetCollection<Nutritionist>("Nutritionists");
+            var nutri = await nutriCollection.Find(x => x.ApiKey == key && x.IsActive).FirstOrDefaultAsync();
+            isValid = (nutri != null);
+        }
+
+        if (!isValid)
+        {
+            return Unauthorized(new { success = false, message = "Chave de acesso inválida." });
+        }
+
+        try
+        {
+            // Retorna todas as metas/pacientes ordenadas pela mais recente
+            var patients = await _goalsCollection
+                .Find(_ => true)
+                .SortByDescending(x => x.TargetDate)
+                .ToListAsync();
+
+            return Ok(new { success = true, data = patients });
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Erro ao listar pacientes no portal.");
+            return StatusCode(500, new { success = false, message = "Erro interno ao buscar pacientes." });
+        }
+    }
+    /// <summary>
     /// CADASTRO DE NUTRICIONISTA: Cria um novo perfil profissional e gera sua API Key exclusiva.
     /// </summary>
     [HttpPost("register")]
