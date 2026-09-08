@@ -48,12 +48,7 @@ namespace LabelWise.Infrastructure.Repositories
             return telefones.Where(t => !string.IsNullOrWhiteSpace(t)).ToList();
         }
 
-        // Métodos a serem adicionados:
-        public async Task SalvarClarificacaoPendenteAsync(MealClarificationContext context)
-        {
-            var filter = Builders<MealClarificationContext>.Filter.Eq(x => x.UserId, context.UserId);
-            await _pendingClarifications.ReplaceOneAsync(filter, context, new ReplaceOptions { IsUpsert = true });
-        }
+        
 
         public async Task<MealClarificationContext?> ObterClarificacaoPendenteAsync(string userId)
         {
@@ -114,13 +109,19 @@ namespace LabelWise.Infrastructure.Repositories
             await _mealLogs.InsertOneAsync(mealLog);
         }
 
-        public async Task<DailyNutritionGoal> ObterMetaDiariaAsync(string userId, DateTime data)
+        // 1. Salva a clarificação de forma limpa (deleta a anterior do usuário e insere a nova)
+        public async Task SalvarClarificacaoPendenteAsync(MealClarificationContext context)
         {
-            // Removemos a verificação estrita de TargetDate == targetDate.
-            // Agora buscamos o plano ativo mais recente cadastrado para este usuário.
+            await _pendingClarifications.DeleteManyAsync(x => x.UserId == context.UserId);
+            await _pendingClarifications.InsertOneAsync(context);
+        }
+
+        // 2. Garante o retorno anulável exigido pela interface INutritionRepository
+        public async Task<DailyNutritionGoal?> ObterMetaDiariaAsync(string userId, DateTime data)
+        {
             return await _dailyGoals
                 .Find(x => x.UserId == userId)
-                .SortByDescending(x => x.TargetDate) // Pega sempre a dieta mais recente da nutricionista
+                .SortByDescending(x => x.TargetDate)
                 .FirstOrDefaultAsync();
         }
     }
