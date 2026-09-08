@@ -11,4 +11,6 @@ public interface INutritionAgentService
             MacroSummaryDto remainingBalance,
             string nextMealType,
             List<string>? pratosJaConsumidos = null);
+
+    Task<ExtractDietGoalResponseDto> ExtractDietGoalsFromDocumentAsync(ExtractDietGoalRequestDto request);
 }

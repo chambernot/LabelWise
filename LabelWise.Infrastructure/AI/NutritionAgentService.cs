@@ -86,6 +86,30 @@ ESTRUTURA DE SAÍDA OBRIGATÓRIA (JSON PURO)
   ""clarificationQuestion"": string
 }";
 
+    private const string DietReaderSystemPrompt = @"Você é um Assistente Clínico Especialista em Nutrição e Extração de Dados.
+Sua função é analisar prescrições dietéticas (fotos de cardápios, PDFs convertidos em texto ou anotações livres) e extrair:
+1. Os ALVOS NUTRICIONAIS DIÁRIOS TOTAIS do paciente.
+2. O PLANO DE REFEIÇÕES DETALHADO (cardápio prescrito formatado de forma limpa, dividindo por refeições como Café da Manhã, Almoço, Lanche, Jantar, etc.).
+Retorne APENAS um JSON válido, sem texto fora dele, sem blocos markdown (```json).
+
+REGRAS:
+1. Se a dieta não informar as calorias totais, calcule somando as refeições ou estimando (Prot*4 + Carb*4 + Gord*9).
+2. Se a dieta não informar os macronutrientes totais, some as quantidades de todas as refeições do plano diário.
+3. Identifique restrições alimentares (ex: ""Sem lactose"", ""Intolerante a glúten"", ""Vegetariano"").
+4. Identifique alimentos favoritos ou observações relevantes se houver.
+5. Formate o campo ""prescribedMealPlan"" com o cardápio detalhado completo estruturado por refeições.
+
+FORMATO DE SAÍDA OBRIGATÓRIO:
+{
+  ""targetCalories"": number (inteiro),
+  ""targetProteinG"": number (decimal),
+  ""targetCarbsG"": number (decimal),
+  ""targetFatG"": number (decimal),
+  ""dietaryRestrictions"": ""string ou null"",
+  ""favoriteFoods"": ""string ou null"",
+  ""prescribedMealPlan"": ""string ou null""
+}";
+
     public NutritionAgentService(
         IHttpClientFactory httpClientFactory,
         IConfiguration configuration,
@@ -102,7 +126,7 @@ ESTRUTURA DE SAÍDA OBRIGATÓRIA (JSON PURO)
             ?? "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions";
 
         _geminiModel = GetConfigValue(configuration, "Model", "Model")
-            ?? "gemini-1.5-flash";
+            ?? "gemini-3.1-flash-lite";
 
         // Resgate das chaves da OpenAI (Fallback)
         _openAiApiKey = configuration["OpenAiVision:ApiKey"]
@@ -243,6 +267,71 @@ Gere 3 opções realistas e práticas alinhadas a esse saldo e ao histórico de 
                 true,
                 "Desculpe, nossos serviços de IA estão instáveis no momento. Poderia tentar enviar a foto ou texto novamente em instantes?"
             );
+        }
+    }
+
+    public async Task<ExtractDietGoalResponseDto> ExtractDietGoalsFromDocumentAsync(ExtractDietGoalRequestDto request)
+    {
+        try
+        {
+            _logger.LogInformation("[NutritionAgentService] 📋 Iniciando extração de metas de dieta a partir de documento/foto...");
+
+            var userContentList = new List<object>
+            {
+                new { type = "text", text = "Extraia os alvos nutricionais diários, restrições e preferências desta dieta e retorne estritamente no formato JSON exigido." }
+            };
+
+            if (!string.IsNullOrWhiteSpace(request.TextInput))
+            {
+                userContentList.Add(new { type = "text", text = $"CONTEÚDO DA DIETA: {request.TextInput}" });
+            }
+
+            if (!string.IsNullOrWhiteSpace(request.Base64Image))
+            {
+                var imageBase64 = request.Base64Image.Contains(",")
+                    ? request.Base64Image
+                    : $"data:image/jpeg;base64,{request.Base64Image}";
+
+                userContentList.Add(new
+                {
+                    type = "image_url",
+                    image_url = new { url = imageBase64, detail = "high" }
+                });
+            }
+
+            var requestBody = new
+            {
+                model = _geminiModel,
+                temperature = 0.1,
+                max_tokens = 1500,
+                response_format = new { type = "json_object" },
+                messages = new object[]
+                {
+                    new { role = "system", content = DietReaderSystemPrompt },
+                    new { role = "user", content = userContentList.ToArray() }
+                }
+            };
+
+            var responseString = await ExecuteWithFailoverAsync(
+                _geminiEndpoint, _geminiApiKey, _geminiModel, "Gemini",
+                _openAiEndpoint, _openAiApiKey, _openAiModel, "OpenAiVision",
+                requestBody);
+
+            var jsonContent = ExtractJsonFromResponse(responseString);
+            var options = new JsonSerializerOptions { PropertyNameCaseInsensitive = true };
+
+            var result = JsonSerializer.Deserialize<ExtractDietGoalResponseDto>(jsonContent, options);
+            if (result == null)
+            {
+                throw new Exception("Falha ao desserializar o resultado da extração de dieta.");
+            }
+
+            return result;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "[NutritionAgentService] ❌ Erro ao extrair metas de dieta do documento.");
+            throw;
         }
     }
 

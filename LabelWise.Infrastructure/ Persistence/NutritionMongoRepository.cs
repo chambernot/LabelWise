@@ -35,8 +35,20 @@ namespace LabelWise.Infrastructure.Repositories
             _pendingClarifications = database.GetCollection<MealClarificationContext>("Nutrition_PendingClarifications");
         }
 
-        
-// Métodos a serem adicionados:
+        public async Task<List<string>> ObterTelefonesAtivosAsync()
+        {
+            // O nome _dailyGoalsCollection precisa ser exatamente o nome 
+            // da variável que você usa no repositório para acessar a coleção do banco.
+            using var cursor = await _dailyGoals.DistinctAsync(
+                x => x.UserId,
+                MongoDB.Driver.Builders<DailyNutritionGoal>.Filter.Empty);
+
+            var telefones = await cursor.ToListAsync();
+
+            return telefones.Where(t => !string.IsNullOrWhiteSpace(t)).ToList();
+        }
+
+        // Métodos a serem adicionados:
         public async Task SalvarClarificacaoPendenteAsync(MealClarificationContext context)
         {
             var filter = Builders<MealClarificationContext>.Filter.Eq(x => x.UserId, context.UserId);

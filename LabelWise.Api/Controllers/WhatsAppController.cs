@@ -39,6 +39,7 @@ namespace LabelWise.Api.Controllers
             IWhatsAppSenderService whatsAppSender,
             IMetaMediaService metaMediaService,
             INutritionRepository nutritionRepository,
+            
             IHttpClientFactory httpClientFactory,
             IConfiguration configuration,
             ILogger<WhatsAppController> logger)
@@ -125,19 +126,15 @@ namespace LabelWise.Api.Controllers
                 {
                     _logger.LogInformation("[WhatsAppController] 🔄 Resposta de clarificação detectada para o usuário {Phone}", senderPhone);
 
-                    // Mescla o texto anterior + pergunta da IA + resposta atual do usuário
                     textoFinalParaIa = $"[Descrição anterior: {contextoPendente.OriginalTextInput}] " +
                                        $"[Pergunta de dúvida feita: {contextoPendente.ClarificationQuestion}] " +
                                        $"[Resposta complementar do usuário: {textoDigitado}]";
 
-                    // Se o usuário não mandou nova imagem, reaproveita a foto enviada na mensagem anterior
                     imagemFinalParaIa ??= contextoPendente.OriginalBase64Image;
-
-                    // Remove a pendência do banco para não acumular
                     await _nutritionRepository.RemoverClarificacaoPendenteAsync(senderPhone);
                 }
 
-                // 3. Envia para o serviço de nutrição (que processa e persiste a refeição)
+                // 3. Envia para o serviço de nutrição
                 var request = new ParseMealRequestDto(
                     senderPhone,
                     TextInput: textoFinalParaIa,
@@ -147,17 +144,14 @@ namespace LabelWise.Api.Controllers
                 );
 
                 var result = await _nutritionService.ProcessMealEntryAsync(request);
-
                 DailyStatusResponseDto? statusDoDia = null;
 
-                // Identifica se ocorreu erro técnico/instabilidade nos serviços de IA
                 bool isSystemError = result.ClarificationQuestion != null &&
                                      result.ClarificationQuestion.Contains("serviços de IA estão instáveis", StringComparison.OrdinalIgnoreCase);
 
                 // 4. Tratamento de pendência ou obtenção de status consolidado com sugestões
                 if (result.RequiresUserClarification && !isSystemError)
                 {
-                    // Salva na collection de pendências APENAS se for uma dúvida de clarificação real da IA
                     var novaClarificacao = new MealClarificationContext(
                         userId: senderPhone,
                         originalTextInput: textoFinalParaIa,
@@ -169,7 +163,6 @@ namespace LabelWise.Api.Controllers
                 }
                 else if (result.TotalMeal != null && !isSystemError)
                 {
-                    // Obtém o consumo acumulado do dia e as 3 sugestões proativas geradas pela IA
                     var dataHojeBr = DateTime.UtcNow.AddHours(-3);
                     statusDoDia = await _nutritionService.GetDailyStatusAndSuggestionAsync(senderPhone, dataHojeBr);
                 }
@@ -201,8 +194,65 @@ namespace LabelWise.Api.Controllers
             }
         }
 
+        // Remova o IUserRepository das variáveis globais e do construtor!
+
+        [HttpPost("send-daily-reminders")]
+        public async Task<IActionResult> SendDailyReminders([FromHeader(Name = "X-Cron-Secret")] string secret)
+        {
+            var expectedSecret = _configuration["CronSecret"];
+            if (string.IsNullOrEmpty(secret) || secret != expectedSecret)
+            {
+                _logger.LogWarning("⚠️ Tentativa de acesso não autorizada ao Cron Job de lembretes.");
+                return Unauthorized(new { success = false, message = "Acesso negado." });
+            }
+
+            try
+            {
+                var horaBrasilia = DateTime.UtcNow.AddHours(-3).Hour;
+                string mealTime = "café da manhã";
+
+                if (horaBrasilia >= 11 && horaBrasilia < 16) mealTime = "almoço";
+                else if (horaBrasilia >= 16 && horaBrasilia < 24) mealTime = "jantar";
+
+                // Busca apenas os telefones (UserIds) direto do repositório de nutrição
+                var telefones = await _nutritionRepository.ObterTelefonesAtivosAsync();
+
+                int enviados = 0, falhas = 0;
+
+                foreach (var telefone in telefones)
+                {
+                    try
+                    {
+                        // Como não temos o nome na tabela, podemos usar um termo genérico ou "Paciente" 
+                        // caso o template da Meta exija a variável {{1}}
+                        bool sucesso = await _whatsAppSender.SendTemplateReminderAsync(
+                            telefone,
+                            "Paciente", // Pode ajustar conforme a variável do seu template
+                            mealTime
+                        );
+
+                        if (sucesso) enviados++;
+                        else falhas++;
+                    }
+                    catch (Exception ex)
+                    {
+                        falhas++;
+                        _logger.LogError(ex, "Erro ao enviar lembrete automático para o telefone {Phone}", telefone);
+                    }
+                }
+
+                _logger.LogInformation("✅ Disparo em lote concluído. {Enviados} enviados, {Falhas} falhas.", enviados, falhas);
+                return Ok(new { success = true, message = $"Rotina executada. Refeição cobrada: {mealTime}. Enviados: {enviados}, Falhas: {falhas}" });
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "❌ Erro crítico ao processar o disparo em lote de lembretes.");
+                return StatusCode(500, new { success = false, message = "Erro interno ao processar os lembretes." });
+            }
+        }
+
         /// <summary>
-        /// Dispara manualmente o template de lembrete ativo do WhatsApp.
+        /// Dispara manualmente o template de lembrete ativo do WhatsApp (Uso para testes individuais).
         /// </summary>
         [HttpPost("send-reminder")]
         public async Task<IActionResult> SendReminder(
@@ -225,7 +275,7 @@ namespace LabelWise.Api.Controllers
             return StatusCode(500, new
             {
                 success = false,
-                message = "Falha ao enviar o lembrete. Verifique os logs do sistema e confirme se o template 'lembrete_refeicao_diaria' já foi APROVADO no painel da Meta."
+                message = "Falha ao enviar o lembrete. Verifique os logs do sistema e confirme se o template 'lembrete_refeicao_dia' já foi APROVADO no painel da Meta."
             });
         }
 
@@ -312,7 +362,6 @@ namespace LabelWise.Api.Controllers
                        $"• *Carboidratos:* {statusDoDia.Consumed.CarbsG:F0}g / {statusDoDia.Target.CarbsG:F0}g\n" +
                        $"• *Gorduras:* {statusDoDia.Consumed.FatG:F0}g / {statusDoDia.Target.FatG:F0}g\n";
 
-                // Exibe as sugestões proativas geradas pela IA caso ainda restem calorias no dia
                 if (faltamCal > 100 && statusDoDia.Suggestions != null && statusDoDia.Suggestions.Any())
                 {
                     msg += "\n💡 *SUGESTÕES PARA A PRÓXIMA REFEIÇÃO:*\n";
