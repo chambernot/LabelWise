@@ -39,7 +39,6 @@ namespace LabelWise.Api.Controllers
             IWhatsAppSenderService whatsAppSender,
             IMetaMediaService metaMediaService,
             INutritionRepository nutritionRepository,
-            
             IHttpClientFactory httpClientFactory,
             IConfiguration configuration,
             ILogger<WhatsAppController> logger)
@@ -105,8 +104,11 @@ namespace LabelWise.Api.Controllers
                 {
                     await _whatsAppSender.SendTextMessageAsync(senderPhone, "🎙️ Ouvindo o seu áudio e transcrevendo...");
                     var audioBytes = await _metaMediaService.DownloadMediaAsBytesAsync(messagingEvent.Audio.Id);
-                    textoDigitado = await TranscreverAudioComWhisperAsync(audioBytes);
-                    _logger.LogInformation("[WhatsAppController] 🎧 Áudio transcrito para {Phone}: {Text}", senderPhone, textoDigitado);
+
+                    // Transcrevendo via Gemini
+                    textoDigitado = await TranscreverAudioComGeminiAsync(audioBytes);
+
+                    _logger.LogInformation("[WhatsAppController] 🎧 Áudio transcrito via Gemini para {Phone}: {Text}", senderPhone, textoDigitado);
                 }
                 else
                 {
@@ -194,8 +196,6 @@ namespace LabelWise.Api.Controllers
             }
         }
 
-        // Remova o IUserRepository das variáveis globais e do construtor!
-
         [HttpPost("send-daily-reminders")]
         public async Task<IActionResult> SendDailyReminders([FromHeader(Name = "X-Cron-Secret")] string secret)
         {
@@ -214,7 +214,6 @@ namespace LabelWise.Api.Controllers
                 if (horaBrasilia >= 11 && horaBrasilia < 16) mealTime = "almoço";
                 else if (horaBrasilia >= 16 && horaBrasilia < 24) mealTime = "jantar";
 
-                // Busca apenas os telefones (UserIds) direto do repositório de nutrição
                 var telefones = await _nutritionRepository.ObterTelefonesAtivosAsync();
 
                 int enviados = 0, falhas = 0;
@@ -223,11 +222,9 @@ namespace LabelWise.Api.Controllers
                 {
                     try
                     {
-                        // Como não temos o nome na tabela, podemos usar um termo genérico ou "Paciente" 
-                        // caso o template da Meta exija a variável {{1}}
                         bool sucesso = await _whatsAppSender.SendTemplateReminderAsync(
                             telefone,
-                            "Paciente", // Pode ajustar conforme a variável do seu template
+                            "Paciente",
                             mealTime
                         );
 
@@ -251,9 +248,6 @@ namespace LabelWise.Api.Controllers
             }
         }
 
-        /// <summary>
-        /// Dispara manualmente o template de lembrete ativo do WhatsApp (Uso para testes individuais).
-        /// </summary>
         [HttpPost("send-reminder")]
         public async Task<IActionResult> SendReminder(
             [FromQuery] string phone,
@@ -279,43 +273,74 @@ namespace LabelWise.Api.Controllers
             });
         }
 
-        private async Task<string> TranscreverAudioComWhisperAsync(byte[] audioBytes)
+        private async Task<string> TranscreverAudioComGeminiAsync(byte[] audioBytes)
         {
-            var apiKey = _configuration["OpenAiVision:ApiKey"] ?? _configuration["OpenAI:ApiKey"];
+            var apiKey = _configuration["GeminiApiKey"] ?? _configuration["Gemini:ApiKey"];
             if (string.IsNullOrEmpty(apiKey))
             {
-                throw new InvalidOperationException("Chave da API OpenAI não configurada para o serviço de Whisper.");
+                throw new InvalidOperationException("Chave da API Gemini não configurada para a transcrição de áudio.");
             }
+
+            var endpoint = _configuration["Gemini:Endpoint"] ?? "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions";
+            var model = _configuration["Model"] ?? "gemini-3.1-flash-lite";
 
             var client = _httpClientFactory.CreateClient();
             client.Timeout = TimeSpan.FromSeconds(30);
 
-            using var form = new MultipartFormDataContent();
+            var base64Audio = Convert.ToBase64String(audioBytes);
+            var dataUri = $"data:audio/ogg;base64,{base64Audio}";
 
-            var audioContent = new ByteArrayContent(audioBytes);
-            audioContent.Headers.ContentType = new MediaTypeHeaderValue("audio/ogg");
-            form.Add(audioContent, "file", "audio.ogg");
-
-            form.Add(new StringContent("whisper-1"), "model");
-            form.Add(new StringContent("pt"), "language");
-
-            using var request = new HttpRequestMessage(HttpMethod.Post, "https://api.openai.com/v1/audio/transcriptions")
+            var requestBody = new
             {
-                Content = form
+                model = model,
+                temperature = 0.0,
+                messages = new object[]
+                {
+                    new
+                    {
+                        role = "system",
+                        content = "Você é um transcritor de áudio profissional. Sua única tarefa é transcrever fielmente o áudio enviado em português do Brasil para texto. Retorne APENAS o texto transcrito, sem introduções, sem aspas, sem formatações extras e sem comentários."
+                    },
+                    new
+                    {
+                        role = "user",
+                        content = new object[]
+                        {
+                            new { type = "text", text = "Por favor, transcreva o áudio a seguir:" },
+                            new { type = "image_url", image_url = new { url = dataUri } }
+                        }
+                    }
+                }
             };
-            request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", apiKey);
 
-            var response = await client.SendAsync(request);
+            var content = new StringContent(
+                JsonSerializer.Serialize(requestBody),
+                Encoding.UTF8,
+                "application/json");
+
+            using var requestMessage = new HttpRequestMessage(HttpMethod.Post, endpoint)
+            {
+                Content = content
+            };
+            requestMessage.Headers.Authorization = new AuthenticationHeaderValue("Bearer", apiKey);
+
+            var response = await client.SendAsync(requestMessage);
             if (!response.IsSuccessStatusCode)
             {
                 var errorBody = await response.Content.ReadAsStringAsync();
-                throw new HttpRequestException($"Erro na transcrição Whisper ({response.StatusCode}): {errorBody}");
+                throw new HttpRequestException($"Erro na transcrição via Gemini ({response.StatusCode}): {errorBody}");
             }
 
             var jsonResponse = await response.Content.ReadAsStringAsync();
             using var doc = JsonDocument.Parse(jsonResponse);
 
-            return doc.RootElement.GetProperty("text").GetString() ?? string.Empty;
+            var transcription = doc.RootElement
+                .GetProperty("choices")[0]
+                .GetProperty("message")
+                .GetProperty("content")
+                .GetString() ?? string.Empty;
+
+            return transcription.Trim();
         }
 
         private string FormatarRespostaParaWhatsApp(
