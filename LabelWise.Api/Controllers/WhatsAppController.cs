@@ -86,6 +86,25 @@ namespace LabelWise.Api.Controllers
                     return Ok();
                 }
 
+                // =========================================================================
+                // 🛡️ BARREIRA DE SEGURANÇA (ANTI-CUSTO)
+                // Verifica se o número do remetente possui uma dieta/meta cadastrada no banco.
+                // Se não tiver, responde educadamente e encerra aqui sem chamar o Gemini.
+                // =========================================================================
+                var metaCadastrada = await _nutritionRepository.ObterMetaDiariaAsync(senderPhone, DateTime.UtcNow);
+                if (metaCadastrada == null)
+                {
+                    _logger.LogWarning("[WhatsApp Security] ⛔ Mensagem bloqueada de número não cadastrado: {Phone}", senderPhone);
+
+                    await _whatsAppSender.SendTextMessageAsync(
+                        senderPhone,
+                        "Olá! Este canal do LabelWise é de uso exclusivo para pacientes com acompanhamento nutricional ativo na clínica. Por favor, entre em contato com sua nutricionista para liberar o seu acesso. 🥗"
+                    );
+
+                    return Ok();
+                }
+                // =========================================================================
+
                 string? textoDigitado = null;
                 string? imagemBase64 = null;
 
@@ -348,7 +367,7 @@ namespace LabelWise.Api.Controllers
             DailyStatusResponseDto? statusDoDia)
         {
             bool isSystemError = aiResult.ClarificationQuestion != null &&
-                                 aiResult.ClarificationQuestion.Contains("serviços de IA estão instáveis", StringComparison.OrdinalIgnoreCase);
+                               aiResult.ClarificationQuestion.Contains("serviços de IA estão instáveis", StringComparison.OrdinalIgnoreCase);
 
             if (isSystemError)
             {
