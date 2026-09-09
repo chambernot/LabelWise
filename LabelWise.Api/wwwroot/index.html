@@ -54,7 +54,7 @@
 
             <!-- Coluna Esquerda: Formulário de Prescrição com Inteligência Artificial (Texto, Imagem ou PDF) -->
             <div class="lg:col-span-1 bg-white rounded-2xl shadow-sm border border-gray-200 p-6 h-fit">
-                <h2 class="text-lg font-bold text-gray-900 mb-1">Prescrever Dieta</h2>
+                <h2 class="text-lg font-bold text-gray-900 mb-1" x-text="isEditing ? 'Editar Dieta do Paciente' : 'Prescrever Dieta'"></h2>
                 <p class="text-xs text-gray-500 mb-6">Cadastre manualmente ou use a IA por texto, foto ou PDF.</p>
 
                 <!-- BLOCO DE EXTRAÇÃO INTELIGENTE POR IA (TEXTO + ARQUIVO) -->
@@ -127,8 +127,8 @@
                     </div>
 
                     <button type="submit"
-                            class="w-full bg-emerald-600 hover:bg-emerald-700 text-white font-medium py-2.5 rounded-xl transition duration-200 text-sm shadow-md shadow-emerald-600/10">
-                        Salvar Dieta do Paciente
+                            class="w-full bg-emerald-600 hover:bg-emerald-700 text-white font-medium py-2.5 rounded-xl transition duration-200 text-sm shadow-md shadow-emerald-600/10"
+                            x-text="isEditing ? 'Atualizar Dieta do Paciente' : 'Salvar Dieta do Paciente'">
                     </button>
                 </form>
 
@@ -200,6 +200,9 @@
                                             </button>
                                             <button @click="editPatient(patient)" class="text-emerald-600 hover:text-emerald-800 font-medium text-xs bg-emerald-50 hover:bg-emerald-100 px-3 py-1.5 rounded-lg transition">
                                                 Editar Dieta
+                                            </button>
+                                            <button @click="deletePatient(patient.userId)" class="text-red-600 hover:text-red-800 font-medium text-xs bg-red-50 hover:bg-red-100 px-3 py-1.5 rounded-lg transition">
+                                                Excluir
                                             </button>
                                         </td>
                                     </tr>
@@ -296,6 +299,7 @@
         function nutriApp() {
             return {
                 isLoggedIn: false,
+                isEditing: false, // Controle de estado: novo cadastro vs edição
                 apiKey: '',
                 apiKeyInput: '',
                 nutriName: 'Painel Clínico',
@@ -345,7 +349,11 @@
                         if (response.ok && result.success) {
                             this.apiKey = key;
                             this.nutriName = result.name || 'Nutricionista';
+
                             localStorage.setItem('nutri_api_key', this.apiKey);
+                            localStorage.setItem('nutri_id', result.nutritionistId || '');
+                            this.form.nutritionistId = result.nutritionistId || 'nutri_web_portal';
+
                             this.isLoggedIn = true;
                             this.apiKeyInput = '';
                             this.loginError = false;
@@ -367,6 +375,7 @@
                 },
                 logout() {
                     localStorage.removeItem('nutri_api_key');
+                    localStorage.removeItem('nutri_id');
                     this.isLoggedIn = false;
                     this.apiKey = '';
                     this.patients = [];
@@ -392,7 +401,6 @@
                     this.selectedFileName = file.name;
                     const reader = new FileReader();
                     reader.onload = (e) => {
-                        // Salva apenas os dados base64 puros (removendo o prefixo data:*/*;base64,)
                         const base64String = e.target.result.split(',')[1];
                         this.selectedFileBase64 = base64String;
                     };
@@ -492,6 +500,22 @@
                     return `${parts[2]}/${parts[1]}/${parts[0]}`;
                 },
                 async saveDiet() {
+                    if (!this.form.patientPhone.trim()) {
+                        this.feedbackMessage = '❌ O telefone do paciente é obrigatório.';
+                        this.feedbackError = true;
+                        return;
+                    }
+
+                    // Se NÃO estiver no modo de edição, barra duplicidade de forma estrita
+                    if (!this.isEditing) {
+                        const pacienteExistente = this.patients.find(p => p.userId === this.form.patientPhone);
+                        if (pacienteExistente) {
+                            this.feedbackMessage = `❌ O número ${this.form.patientPhone} já está cadastrado. Use o botão "Editar Dieta" na tabela para alterá-lo.`;
+                            this.feedbackError = true;
+                            return;
+                        }
+                    }
+
                     this.feedbackMessage = 'Salvando dieta...';
                     this.feedbackError = false;
 
@@ -508,9 +532,25 @@
                         const result = await response.json();
 
                         if (response.ok) {
-                            this.feedbackMessage = '✅ Dieta salva e sincronizada com sucesso!';
+                            this.feedbackMessage = this.isEditing ? '✅ Dieta atualizada com sucesso!' : '✅ Dieta salva e cadastrada com sucesso!';
                             this.feedbackError = false;
                             this.loadPatients();
+
+                            // 🧹 LIMPEZA COMPLETA DA TELA E RESET DO ESTADO DE EDIÇÃO
+                            this.isEditing = false;
+                            this.form.patientPhone = '';
+                            this.form.calories = 2000;
+                            this.form.protein = 150;
+                            this.form.carbs = 200;
+                            this.form.fat = 60;
+                            this.form.dietaryRestrictions = '';
+                            this.form.prescribedMealPlan = '';
+                            this.aiRawText = '';
+                            this.selectedFileBase64 = null;
+                            this.selectedFileName = '';
+
+                            const fileInput = document.querySelector('input[type="file"]');
+                            if (fileInput) fileInput.value = '';
                         } else {
                             this.feedbackMessage = '❌ Erro: ' + (result.message || 'Falha ao salvar');
                             this.feedbackError = true;
@@ -521,6 +561,7 @@
                     }
                 },
                 editPatient(p) {
+                    this.isEditing = true; // Ativa o modo de edição
                     this.form.patientPhone = p.userId;
                     this.form.calories = p.targetCalories;
                     this.form.protein = p.targetProteinG;
@@ -529,6 +570,29 @@
                     this.form.dietaryRestrictions = p.dietaryRestrictions || '';
                     this.form.prescribedMealPlan = p.prescribedMealPlan || '';
                     window.scrollTo({ top: 0, behavior: 'smooth' });
+                },
+                async deletePatient(phone) {
+                    if (!confirm(`Tem certeza que deseja excluir o paciente ${phone}?\n\nIsso removerá a dieta dele e bloqueará o acesso ao bot do WhatsApp.`)) {
+                        return;
+                    }
+
+                    try {
+                        const response = await fetch(`/api/nutritionist/patient/${phone}`, {
+                            method: 'DELETE',
+                            headers: { 'X-Nutri-Key': this.apiKey }
+                        });
+                        const result = await response.json();
+
+                        if (response.ok && result.success) {
+                            alert('✅ Paciente excluído com sucesso!');
+                            this.loadPatients();
+                        } else {
+                            alert('❌ Erro ao excluir: ' + (result.message || 'Falha na operação'));
+                        }
+                    } catch (err) {
+                        console.error('Erro ao excluir paciente', err);
+                        alert('❌ Erro de conexão com o servidor.');
+                    }
                 }
             }
         }

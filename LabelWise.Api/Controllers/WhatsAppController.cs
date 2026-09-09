@@ -98,7 +98,7 @@ namespace LabelWise.Api.Controllers
 
                     await _whatsAppSender.SendTextMessageAsync(
                         senderPhone,
-                        "Olá! Este canal do LabelWise é de uso exclusivo para pacientes com acompanhamento nutricional ativo na clínica. Por favor, entre em contato com sua nutricionista para liberar o seu acesso. 🥗"
+                        "Olá! Este canal do Nutrição Certa é de uso exclusivo para pacientes com acompanhamento nutricional ativo na clínica. Por favor, entre em contato com sua nutricionista para liberar o seu acesso. 🥗"
                     );
 
                     return Ok();

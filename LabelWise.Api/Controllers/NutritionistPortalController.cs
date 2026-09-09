@@ -36,6 +36,29 @@ public class NutritionistPortalController : ControllerBase
     }
 
     /// <summary>
+    /// Método auxiliar centralizado para validar se a chave é a padrão ou se existe ativa no MongoDB.
+    /// </summary>
+    private async Task<bool> ValidarChaveAsync(string key)
+    {
+        if (string.IsNullOrWhiteSpace(key)) return false;
+
+        // Permite a chave padrão configurada no appsettings/Render
+        if (key == _nutriKey) return true;
+
+        // Valida se existe no banco de dados na collection "Nutritionists"
+        try
+        {
+            var nutriCollection = _database.GetCollection<Nutritionist>("Nutritionists");
+            var nutri = await nutriCollection.Find(x => x.ApiKey == key && x.IsActive).FirstOrDefaultAsync();
+            return nutri != null;
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
+    /// <summary>
     /// Valida se a API Key informada no login é real e ativa.
     /// </summary>
     [HttpGet("verify-key")]
@@ -43,32 +66,26 @@ public class NutritionistPortalController : ControllerBase
     {
         if (string.IsNullOrWhiteSpace(key))
         {
-            return Unauthorized(new { success = false, message = "Chave obrigatória." });
+            return Unauthorized(new { success = false, message = "Chave não informada." });
         }
 
-        // 1. Valida contra a chave padrão de configuração
+        // Se for a chave padrão do sistema
         if (key == _nutriKey)
         {
-            return Ok(new { success = true, name = "Nutricionista Principal" });
+            return Ok(new { success = true, name = "Administradora (Padrão)", nutritionistId = "default_nutri_id" });
         }
 
-        // 2. Valida contra o MongoDB (nutricionistas cadastradas)
-        try
+        var nutriCollection = _database.GetCollection<Nutritionist>("Nutritionists");
+        var nutricionista = await nutriCollection
+            .Find(x => x.ApiKey == key && x.IsActive)
+            .FirstOrDefaultAsync();
+
+        if (nutricionista == null)
         {
-            var collection = _database.GetCollection<Nutritionist>("Nutritionists");
-            var nutri = await collection.Find(x => x.ApiKey == key && x.IsActive).FirstOrDefaultAsync();
-
-            if (nutri != null)
-            {
-                return Ok(new { success = true, name = nutri.Name });
-            }
-        }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "Erro ao verificar API Key.");
+            return Unauthorized(new { success = false, message = "Chave de acesso inválida ou inativa." });
         }
 
-        return Unauthorized(new { success = false, message = "Chave de acesso inválida ou inativa." });
+        return Ok(new { success = true, name = nutricionista.Name, nutritionistId = nutricionista.Id });
     }
 
     /// <summary>
@@ -81,15 +98,7 @@ public class NutritionistPortalController : ControllerBase
         [FromQuery] string? startDate = null,
         [FromQuery] string? endDate = null)
     {
-        bool isValid = (key == _nutriKey);
-        if (!isValid)
-        {
-            var nutriCollection = _database.GetCollection<Nutritionist>("Nutritionists");
-            var nutri = await nutriCollection.Find(x => x.ApiKey == key && x.IsActive).FirstOrDefaultAsync();
-            isValid = (nutri != null);
-        }
-
-        if (!isValid)
+        if (!await ValidarChaveAsync(key))
         {
             return Unauthorized(new { success = false, message = "Chave de acesso inválida." });
         }
@@ -98,11 +107,9 @@ public class NutritionistPortalController : ControllerBase
         {
             var logsCollection = _database.GetCollection<MealLog>("Nutrition_MealLogs");
 
-            // Construção segura dos filtros do MongoDB
             var builder = Builders<MealLog>.Filter;
             var filter = builder.Eq(x => x.UserId, phone);
 
-            // Filtro de data inicial (Padrão: últimos 30 dias se não informado)
             if (DateTime.TryParse(startDate, out var start))
             {
                 filter = builder.And(filter, builder.Gte(x => x.LoggedAt, start.Date));
@@ -113,7 +120,6 @@ public class NutritionistPortalController : ControllerBase
                 filter = builder.And(filter, builder.Gte(x => x.LoggedAt, defaultStart));
             }
 
-            // Filtro de data final (se informada)
             if (DateTime.TryParse(endDate, out var end))
             {
                 filter = builder.And(filter, builder.Lt(x => x.LoggedAt, end.Date.AddDays(1)));
@@ -124,7 +130,6 @@ public class NutritionistPortalController : ControllerBase
                 .SortByDescending(x => x.LoggedAt)
                 .ToListAsync();
 
-            // Busca a meta atual do paciente para exibição no dashboard de consumo
             var goalsCollection = _database.GetCollection<DailyNutritionGoal>("DailyGoals");
             var goal = await goalsCollection
                 .Find(x => x.UserId == phone)
@@ -148,6 +153,34 @@ public class NutritionistPortalController : ControllerBase
         }
     }
 
+    /// <summary>
+    /// Exclui o paciente e revoga o acesso dele ao bot do WhatsApp.
+    /// </summary>
+    [HttpDelete("patient/{phone}")]
+    public async Task<IActionResult> DeletePatient(
+        [FromHeader(Name = "X-Nutri-Key")] string key,
+        string phone)
+    {
+        if (!await ValidarChaveAsync(key))
+        {
+            return Unauthorized(new { success = false, message = "Chave de acesso inválida." });
+        }
+
+        try
+        {
+            await _goalsCollection.DeleteManyAsync(x => x.UserId == phone);
+
+            var logsCollection = _database.GetCollection<MealLog>("Nutrition_MealLogs");
+            await logsCollection.DeleteManyAsync(x => x.UserId == phone);
+
+            return Ok(new { success = true, message = "Paciente excluído com sucesso." });
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Erro ao excluir o paciente {Phone}", phone);
+            return StatusCode(500, new { success = false, message = "Erro interno ao excluir paciente." });
+        }
+    }
 
     /// <summary>
     /// Lista todos os pacientes/metas cadastradas para visualização no dashboard.
@@ -155,28 +188,13 @@ public class NutritionistPortalController : ControllerBase
     [HttpGet("patients")]
     public async Task<IActionResult> GetPatients([FromHeader(Name = "X-Nutri-Key")] string key)
     {
-        if (string.IsNullOrWhiteSpace(key))
-        {
-            return Unauthorized(new { success = false, message = "Chave obrigatória." });
-        }
-
-        // Valida se a chave é válida (padrão ou cadastrada no banco)
-        bool isValid = (key == _nutriKey);
-        if (!isValid)
-        {
-            var nutriCollection = _database.GetCollection<Nutritionist>("Nutritionists");
-            var nutri = await nutriCollection.Find(x => x.ApiKey == key && x.IsActive).FirstOrDefaultAsync();
-            isValid = (nutri != null);
-        }
-
-        if (!isValid)
+        if (!await ValidarChaveAsync(key))
         {
             return Unauthorized(new { success = false, message = "Chave de acesso inválida." });
         }
 
         try
         {
-            // Retorna todas as metas/pacientes ordenadas pela mais recente
             var patients = await _goalsCollection
                 .Find(_ => true)
                 .SortByDescending(x => x.TargetDate)
@@ -190,6 +208,7 @@ public class NutritionistPortalController : ControllerBase
             return StatusCode(500, new { success = false, message = "Erro interno ao buscar pacientes." });
         }
     }
+
     /// <summary>
     /// CADASTRO DE NUTRICIONISTA: Cria um novo perfil profissional e gera sua API Key exclusiva.
     /// </summary>
@@ -243,7 +262,7 @@ public class NutritionistPortalController : ControllerBase
         [FromHeader(Name = "X-Nutri-Key")] string key,
         [FromBody] ExtractDietGoalRequestDto request)
     {
-        if (key != _nutriKey)
+        if (!await ValidarChaveAsync(key))
         {
             return Unauthorized(new { success = false, message = "Chave de acesso da nutricionista inválida." });
         }
@@ -269,7 +288,7 @@ public class NutritionistPortalController : ControllerBase
         [FromHeader(Name = "X-Nutri-Key")] string key,
         [FromBody] ConfirmDietRequestDto dto)
     {
-        if (key != _nutriKey)
+        if (!await ValidarChaveAsync(key))
         {
             return Unauthorized(new { success = false, message = "Chave de acesso da nutricionista inválida." });
         }
@@ -298,7 +317,7 @@ public class NutritionistPortalController : ControllerBase
                     nutritionistId: dto.NutritionistId,
                     dietaryRestrictions: dto.DietaryRestrictions,
                     favoriteFoods: dto.FavoriteFoods,
-                    prescribedMealPlan: dto.PrescribedMealPlan // Passando o cardápio
+                    prescribedMealPlan: dto.PrescribedMealPlan
                 );
 
                 await _goalsCollection.InsertOneAsync(novaMeta);
@@ -320,10 +339,10 @@ public class NutritionistPortalController : ControllerBase
     /// </summary>
     [HttpPost("import-diet")]
     public async Task<IActionResult> ImportarDietaPaciente(
-        [FromHeader(Name = "X-Nutri-Key")] string nutriKey,
+        [FromHeader(Name = "X-Nutri-Key")] string key,
         [FromBody] ImportDietDto dto)
     {
-        if (nutriKey != _nutriKey)
+        if (!await ValidarChaveAsync(key))
         {
             return Unauthorized(new { success = false, message = "Chave de acesso da nutricionista inválida." });
         }
@@ -352,7 +371,7 @@ public class NutritionistPortalController : ControllerBase
                     nutritionistId: dto.NutritionistId,
                     dietaryRestrictions: dto.DietaryRestrictions,
                     favoriteFoods: dto.FavoriteFoods,
-                    prescribedMealPlan: dto.PrescribedMealPlan // Passando o cardápio
+                    prescribedMealPlan: dto.PrescribedMealPlan
                 );
 
                 await _goalsCollection.InsertOneAsync(novaMeta);
@@ -386,7 +405,7 @@ public record ConfirmDietRequestDto(
     decimal Fat,
     string? DietaryRestrictions,
     string? FavoriteFoods,
-    string? PrescribedMealPlan // NOVO
+    string? PrescribedMealPlan
 );
 
 public record ImportDietDto(
@@ -398,5 +417,5 @@ public record ImportDietDto(
     decimal Fat,
     string? DietaryRestrictions,
     string? FavoriteFoods,
-    string? PrescribedMealPlan // NOVO
+    string? PrescribedMealPlan
 );
