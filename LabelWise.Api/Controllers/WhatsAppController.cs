@@ -440,7 +440,7 @@ namespace LabelWise.Api.Controllers
     public class MetaMessage
     {
         public string? From { get; set; }
-        public string? Type { get; set; }
+        public string? Type { get; set; } 
         public MetaText? Text { get; set; }
         public MetaMedia? Image { get; set; }
         public MetaMedia? Audio { get; set; }
