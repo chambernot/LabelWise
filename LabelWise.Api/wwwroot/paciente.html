@@ -1,0 +1,188 @@
+﻿<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>LabelWise - Meu Plano Nutricional</title>
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js" defer></script>
+</head>
+<body class="bg-gray-50 font-sans antialiased text-gray-800" x-data="patientApp()">
+
+    <!-- Header Fixo -->
+    <header class="bg-white border-b border-gray-100 sticky top-0 z-50">
+        <div class="max-w-md mx-auto px-4 h-16 flex items-center justify-between">
+            <div class="flex items-center space-x-2">
+                <span class="text-lg font-black text-emerald-600">LabelWise 🥗</span>
+            </div>
+            <span class="text-xs bg-emerald-50 text-emerald-700 font-semibold px-3 py-1 rounded-full">Acompanhamento Ativo</span>
+        </div>
+    </header>
+
+    <!-- Conteúdo Principal -->
+    <main class="max-w-md mx-auto px-4 py-6 space-y-6 pb-12">
+
+        <!-- Estado de Carregamento -->
+        <div x-show="loading" class="text-center py-20">
+            <div class="inline-block animate-spin rounded-full h-8 w-8 border-4 border-emerald-500 border-t-transparent"></div>
+            <p class="text-xs text-gray-400 mt-3">Carregando seu plano alimentar...</p>
+        </div>
+
+        <!-- Estado de Erro / Não encontrado -->
+        <div x-show="error" class="bg-red-50 border border-red-100 p-6 rounded-2xl text-center" x-cloak>
+            <p class="text-sm font-bold text-red-700" x-text="errorMessage"></p>
+            <p class="text-xs text-gray-500 mt-1">Entre em contato com sua nutricionista para liberar seu acesso.</p>
+        </div>
+
+        <!-- Dashboard do Paciente -->
+        <div x-show="!loading && !error" class="space-y-6" x-cloak>
+
+            <!-- Card de Resumo de Calorias (Progresso de Hoje) -->
+            <div class="bg-gradient-to-br from-emerald-600 to-teal-700 text-white rounded-3xl p-6 shadow-xl shadow-emerald-600/20">
+                <div class="flex justify-between items-start">
+                    <div>
+                        <span class="text-xs font-medium uppercase tracking-wider text-emerald-100">Balanço Calórico de Hoje</span>
+                        <h2 class="text-3xl font-black mt-1">
+                            <span x-text="data.consumed.calories"></span> <span class="text-base font-normal text-emerald-100">/ <span x-text="data.targetCalories"></span> kcal</span>
+                        </h2>
+                    </div>
+                    <div class="bg-white/20 p-2.5 rounded-2xl text-xl">🔥</div>
+                </div>
+
+                <!-- Barra de Progresso de Calorias -->
+                <div class="mt-5 w-full bg-black/20 rounded-full h-2.5 overflow-hidden">
+                    <div class="bg-white h-2.5 rounded-full transition-all duration-500" :style="'width: ' + Math.min(100, (data.consumed.calories / data.targetCalories) * 100) + '%'"></div>
+                </div>
+                <p class="text-[11px] text-emerald-100 mt-2 text-right" x-text="caloricStatusText"></p>
+            </div>
+
+            <!-- Cards de Macronutrientes -->
+            <div class="grid grid-cols-3 gap-3">
+                <!-- Proteínas -->
+                <div class="bg-white p-4 rounded-2xl border border-gray-100 shadow-sm text-center">
+                    <span class="text-[10px] font-bold uppercase text-gray-400">Proteínas</span>
+                    <p class="text-sm font-black text-gray-800 mt-1"><span x-text="Math.round(data.consumed.protein)"></span>g</p>
+                    <p class="text-[10px] text-emerald-600 font-semibold mt-0.5">Meta: <span x-text="data.targetProtein"></span>g</p>
+                </div>
+                <!-- Carboidratos -->
+                <div class="bg-white p-4 rounded-2xl border border-gray-100 shadow-sm text-center">
+                    <span class="text-[10px] font-bold uppercase text-gray-400">Carboidratos</span>
+                    <p class="text-sm font-black text-gray-800 mt-1"><span x-text="Math.round(data.consumed.carbs)"></span>g</p>
+                    <p class="text-[10px] text-emerald-600 font-semibold mt-0.5">Meta: <span x-text="data.targetCarbs"></span>g</p>
+                </div>
+                <!-- Gorduras -->
+                <div class="bg-white p-4 rounded-2xl border border-gray-100 shadow-sm text-center">
+                    <span class="text-[10px] font-bold uppercase text-gray-400">Gorduras</span>
+                    <p class="text-sm font-black text-gray-800 mt-1"><span x-text="Math.round(data.consumed.fat)"></span>g</p>
+                    <p class="text-[10px] text-emerald-600 font-semibold mt-0.5">Meta: <span x-text="data.targetFat"></span>g</p>
+                </div>
+            </div>
+
+            <!-- Card de Cardápio Prescrito -->
+            <div class="bg-white rounded-3xl p-6 border border-gray-100 shadow-sm space-y-3">
+                <div class="flex items-center space-x-2">
+                    <span class="text-base">📋</span>
+                    <h3 class="font-bold text-gray-900 text-sm">Seu Cardápio e Orientações</h3>
+                </div>
+                <div class="text-xs text-gray-600 leading-relaxed whitespace-pre-line bg-gray-50/70 p-4 rounded-2xl border border-gray-100"
+                     x-text="data.prescribedMealPlan || 'Nenhum cardápio textual cadastrado. Siga as orientações da sua nutricionista.'">
+                </div>
+            </div>
+
+            <!-- Restrições Alimentares (Se houver) -->
+            <div x-show="data.dietaryRestrictions" class="bg-amber-50 rounded-2xl p-4 border border-amber-100 text-xs text-amber-800 flex items-start space-x-3" x-cloak>
+                <span class="text-base">⚠️</span>
+                <div>
+                    <span class="font-bold block mb-0.5">Restrições Alimentares</span>
+                    <span x-text="data.dietaryRestrictions"></span>
+                </div>
+            </div>
+
+            <!-- Refeições Registradas Hoje -->
+            <div class="bg-white rounded-3xl p-6 border border-gray-100 shadow-sm space-y-4">
+                <h3 class="font-bold text-gray-900 text-sm">Refeições Registradas Hoje</h3>
+
+                <div class="divide-y divide-gray-50">
+                    <template x-for="log in data.recentLogs" :key="log.id">
+                        <div class="py-3 flex items-center justify-between">
+                            <div>
+                                <div class="flex items-center space-x-2">
+                                    <span class="bg-emerald-50 text-emerald-700 text-[10px] font-bold px-2 py-0.5 rounded" x-text="log.mealType"></span>
+                                    <h4 class="text-xs font-bold text-gray-800" x-text="log.dishName"></h4>
+                                </div>
+                                <p class="text-[10px] text-gray-400 mt-0.5" x-text="new Date(log.loggedAt).toLocaleTimeString('pt-BR', {hour: '2-digit', minute:'2-digit'})"></p>
+                            </div>
+                            <div class="text-right">
+                                <span class="text-xs font-black text-gray-800" x-text="log.calories + ' kcal'"></span>
+                                <p class="text-[9px] text-gray-400" x-text="'P:' + Math.round(log.proteinG) + 'g | C:' + Math.round(log.carbsG) + 'g'"></p>
+                            </div>
+                        </div>
+                    </template>
+                </div>
+
+                <template x-if="!data.recentLogs || data.recentLogs.length === 0">
+                    <p class="text-xs text-center text-gray-400 py-4">Nenhuma refeição registrada hoje. Envie foto ou áudio no WhatsApp para registrar!</p>
+                </template>
+            </div>
+
+        </div>
+
+    </main>
+
+    <!-- Script de Integração -->
+    <script>
+        function patientApp() {
+            return {
+                loading: true,
+                error: false,
+                errorMessage: '',
+                data: {
+                    consumed: { calories: 0, protein: 0, carbs: 0, fat: 0 },
+                    targetCalories: 2000,
+                    targetProtein: 150,
+                    targetCarbs: 200,
+                    targetFat: 60,
+                    prescribedMealPlan: '',
+                    dietaryRestrictions: '',
+                    recentLogs: []
+                },
+                async init() {
+                    const urlParams = new URLSearchParams(window.location.search);
+                    const phone = urlParams.get('phone');
+
+                    if (!phone) {
+                        this.loading = false;
+                        this.error = true;
+                        this.errorMessage = 'Link inválido. Informe o número de telefone correto.';
+                        return;
+                    }
+
+                    try {
+                        const response = await fetch(`/api/patient/dashboard/${phone}`);
+                        const result = await response.json();
+
+                        if (response.ok && result.success) {
+                            this.data = result.data;
+                        } else {
+                            this.error = true;
+                            this.errorMessage = result.message || 'Erro ao carregar os dados.';
+                        }
+                    } catch (err) {
+                        this.error = true;
+                        this.errorMessage = 'Erro de conexão com o servidor.';
+                    } finally {
+                        this.loading = false;
+                    }
+                },
+                get caloricStatusText() {
+                    const diff = this.data.targetCalories - this.data.consumed.calories;
+                    if (diff > 0) return `Faltam ${diff} kcal para sua meta`;
+                    if (diff === 0) return `Meta calórica atingida com precisão!`;
+                    return `Você ultrapassou ${Math.abs(diff)} kcal da meta`;
+                }
+            }
+        }
+    </script>
+</body>
+</html>

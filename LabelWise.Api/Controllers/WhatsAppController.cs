@@ -112,6 +112,30 @@ namespace LabelWise.Api.Controllers
                 if (messageType == "text")
                 {
                     textoDigitado = messagingEvent?.Text?.Body;
+
+                    // =========================================================================
+                    // ✨ INTERCEPTADOR DO LINK MÁGICO DE DIETA
+                    // Se o paciente pedir a dieta, enviamos o link web interativo instantaneamente
+                    // =========================================================================
+                    if (!string.IsNullOrWhiteSpace(textoDigitado))
+                    {
+                        var textoLimpo = textoDigitado.Trim().ToLowerInvariant();
+                        if (textoLimpo == "minha dieta" || textoLimpo == "cardápio" || textoLimpo == "cardapio" || textoLimpo == "menu" || textoLimpo == "dieta")
+                        {
+                            var baseUrl = $"{Request.Scheme}://{Request.Host}";
+                            var magicLink = $"{baseUrl}/paciente.html?phone={senderPhone}";
+
+                            var respostaLink = "🥗 *Seu Plano Alimentar Interativo está pronto!*\n\n" +
+                                               "Toque no link abaixo para ver o seu progresso de calorias de hoje, os macronutrientes e o seu cardápio completo:\n\n" +
+                                               $"👉 {magicLink}\n\n" +
+                                               "_Dica: Salve essa página nos favoritos do seu celular para consultar sempre que precisar!_ ✨";
+
+                            await _whatsAppSender.SendTextMessageAsync(senderPhone, respostaLink);
+                            _logger.LogInformation("[WhatsApp] Link Mágico enviado para o paciente {Phone}", senderPhone);
+
+                            return Ok(); // Encerra aqui sem chamar o Gemini
+                        }
+                    }
                 }
                 else if (messageType == "image" && messagingEvent?.Image?.Id != null)
                 {
@@ -440,7 +464,7 @@ namespace LabelWise.Api.Controllers
     public class MetaMessage
     {
         public string? From { get; set; }
-        public string? Type { get; set; } 
+        public string? Type { get; set; }
         public MetaText? Text { get; set; }
         public MetaMedia? Image { get; set; }
         public MetaMedia? Audio { get; set; }
