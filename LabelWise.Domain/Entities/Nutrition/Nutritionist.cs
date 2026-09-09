@@ -4,6 +4,7 @@ namespace LabelWise.Domain.Entities.Nutrition;
 
 public class Nutritionist
 {
+    public int MaxPatients { get; set; } = 30; // Valor padrão de fábrica para novos cadastros
     public string Id { get; private set; }
     public string Name { get; private set; }
     public string Email { get; private set; }

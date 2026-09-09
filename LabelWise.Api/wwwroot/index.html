@@ -52,21 +52,19 @@
         <!-- Conteúdo Principal -->
         <main class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8 flex-1 w-full grid grid-cols-1 lg:grid-cols-3 gap-8">
 
-            <!-- Coluna Esquerda: Formulário de Prescrição com Inteligência Artificial (Texto, Imagem ou PDF) -->
+            <!-- Coluna Esquerda: Formulário de Prescrição com Inteligência Artificial -->
             <div class="lg:col-span-1 bg-white rounded-2xl shadow-sm border border-gray-200 p-6 h-fit">
                 <h2 class="text-lg font-bold text-gray-900 mb-1" x-text="isEditing ? 'Editar Dieta do Paciente' : 'Prescrever Dieta'"></h2>
                 <p class="text-xs text-gray-500 mb-6">Cadastre manualmente ou use a IA por texto, foto ou PDF.</p>
 
-                <!-- BLOCO DE EXTRAÇÃO INTELIGENTE POR IA (TEXTO + ARQUIVO) -->
+                <!-- BLOCO DE EXTRAÇÃO INTELIGENTE POR IA -->
                 <div class="mb-6 p-4 bg-emerald-50/60 rounded-xl border border-emerald-100">
                     <label class="block text-xs font-bold uppercase text-emerald-800 mb-1">✨ Extração Inteligente (IA)</label>
                     <p class="text-[11px] text-gray-500 mb-2">Cole o texto da dieta ou faça upload de uma foto/PDF do cardápio.</p>
 
-                    <!-- Campo de Texto Opcional -->
                     <textarea x-model="aiRawText" rows="2" placeholder="Instruções ou observações adicionais..."
                               class="w-full px-3 py-2 rounded-lg border border-emerald-200 text-xs focus:ring-2 focus:ring-emerald-500 focus:outline-none bg-white mb-2"></textarea>
 
-                    <!-- Input de Arquivo (Imagem ou PDF) -->
                     <div class="mb-3">
                         <label class="block text-[10px] font-bold uppercase text-emerald-700 mb-1">Anexar Foto ou PDF da Dieta</label>
                         <input type="file" @change="handleFileSelect" accept="image/*,.pdf"
@@ -139,12 +137,15 @@
 
             <!-- Coluna Direita: Dashboard e Tabela de Pacientes -->
             <div class="lg:col-span-2 space-y-6">
-                <!-- Cards de Resumo -->
+                <!-- Cards de Resumo com o Limite do Plano -->
                 <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
                     <div class="bg-white p-5 rounded-2xl shadow-sm border border-gray-200 flex items-center justify-between">
                         <div>
-                            <span class="text-xs font-semibold uppercase text-gray-400">Pacientes Monitorados</span>
-                            <p class="text-2xl font-black text-gray-900 mt-1" x-text="patients.length">0</p>
+                            <span class="text-xs font-semibold uppercase text-gray-400">Pacientes do Plano</span>
+                            <p class="text-2xl font-black text-gray-900 mt-1">
+                                <span x-text="patients.length">0</span>
+                                <span class="text-sm font-medium text-gray-400" x-text="'/ ' + maxPatients"></span>
+                            </p>
                         </div>
                         <div class="bg-emerald-50 text-emerald-600 p-3 rounded-xl font-bold">👥</div>
                     </div>
@@ -299,10 +300,11 @@
         function nutriApp() {
             return {
                 isLoggedIn: false,
-                isEditing: false, // Controle de estado: novo cadastro vs edição
+                isEditing: false,
                 apiKey: '',
                 apiKeyInput: '',
                 nutriName: 'Painel Clínico',
+                maxPatients: 30, // 👈 Limite padrão do plano carregado do backend
                 loginError: false,
                 loginErrorMessage: '',
                 feedbackMessage: '',
@@ -349,6 +351,7 @@
                         if (response.ok && result.success) {
                             this.apiKey = key;
                             this.nutriName = result.name || 'Nutricionista';
+                            this.maxPatients = result.maxPatients || 30; // 👈 Atualiza o limite com o valor real do plano
 
                             localStorage.setItem('nutri_api_key', this.apiKey);
                             localStorage.setItem('nutri_id', result.nutritionistId || '');
@@ -506,7 +509,6 @@
                         return;
                     }
 
-                    // Se NÃO estiver no modo de edição, barra duplicidade de forma estrita
                     if (!this.isEditing) {
                         const pacienteExistente = this.patients.find(p => p.userId === this.form.patientPhone);
                         if (pacienteExistente) {
@@ -536,7 +538,6 @@
                             this.feedbackError = false;
                             this.loadPatients();
 
-                            // 🧹 LIMPEZA COMPLETA DA TELA E RESET DO ESTADO DE EDIÇÃO
                             this.isEditing = false;
                             this.form.patientPhone = '';
                             this.form.calories = 2000;
@@ -552,7 +553,7 @@
                             const fileInput = document.querySelector('input[type="file"]');
                             if (fileInput) fileInput.value = '';
                         } else {
-                            this.feedbackMessage = '❌ Erro: ' + (result.message || 'Falha ao salvar');
+                            this.feedbackMessage = '❌ ' + (result.message || 'Falha ao salvar');
                             this.feedbackError = true;
                         }
                     } catch (err) {
@@ -561,7 +562,7 @@
                     }
                 },
                 editPatient(p) {
-                    this.isEditing = true; // Ativa o modo de edição
+                    this.isEditing = true;
                     this.form.patientPhone = p.userId;
                     this.form.calories = p.targetCalories;
                     this.form.protein = p.targetProteinG;
