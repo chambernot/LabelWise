@@ -1,6 +1,7 @@
 ﻿using LabelWise.Application.Interfaces;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
+using System;
 using System.Net.Http;
 using System.Net.Http.Headers;
 using System.Text;
@@ -15,36 +16,28 @@ namespace LabelWise.Infrastructure.Services
         private readonly ILogger<WhatsAppSenderService> _logger;
         private readonly string _accessToken;
         private readonly string _phoneNumberId;
-        private readonly IConfiguration _configuration;
-
-        private readonly IHttpClientFactory _httpClientFactory;
 
         public WhatsAppSenderService(HttpClient httpClient, IConfiguration config, ILogger<WhatsAppSenderService> logger)
         {
             _httpClient = httpClient;
             _logger = logger;
 
-            // Pega as chaves, mas garante que não há espaços vazios copiados sem querer
+            // Pega as chaves com segurança e remove espaços em branco
             _accessToken = (config["MetaWhatsApp:AccessToken"] ?? string.Empty).Trim();
             _phoneNumberId = (config["MetaWhatsApp:PhoneNumberId"] ?? string.Empty).Trim();
         }
-
 
         public async Task<bool> SendTemplateReminderAsync(string toPhone, string userName, string mealTime)
         {
             try
             {
-                var phoneNumberId = _configuration["MetaWhatsApp:PhoneNumberId"];
-                var accessToken = _configuration["MetaWhatsApp:AccessToken"];
-
-                if (string.IsNullOrWhiteSpace(phoneNumberId) || string.IsNullOrWhiteSpace(accessToken))
+                if (string.IsNullOrWhiteSpace(_phoneNumberId) || string.IsNullOrWhiteSpace(_accessToken))
                 {
-                    _logger.LogError("[WhatsAppSenderService] ❌ PhoneNumberId ou AccessToken não configurado.");
+                    _logger.LogError("[WhatsAppSenderService] ❌ PhoneNumberId ou AccessToken não configurado nas variáveis de ambiente.");
                     return false;
                 }
 
-                var client = _httpClientFactory.CreateClient();
-                client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", accessToken);
+                var endpoint = $"https://graph.facebook.com/v20.0/{_phoneNumberId}/messages";
 
                 // Payload no formato esperado pela Meta para envio de templates
                 var payload = new
@@ -71,10 +64,12 @@ namespace LabelWise.Infrastructure.Services
                     }
                 };
 
-                var jsonContent = new StringContent(JsonSerializer.Serialize(payload), Encoding.UTF8, "application/json");
+                var request = new HttpRequestMessage(HttpMethod.Post, endpoint);
+                request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", _accessToken);
+                request.Content = new StringContent(JsonSerializer.Serialize(payload), Encoding.UTF8, "application/json");
 
-                // Dispara para a Graph API da Meta
-                var response = await client.PostAsync($"https://graph.facebook.com/v20.0/{phoneNumberId}/messages", jsonContent);
+                // Dispara para a Graph API da Meta usando o HttpClient injetado
+                var response = await _httpClient.SendAsync(request);
 
                 if (response.IsSuccessStatusCode)
                 {
@@ -100,12 +95,11 @@ namespace LabelWise.Infrastructure.Services
             var payload = new
             {
                 messaging_product = "whatsapp",
-                to = phone, // Certifique-se de que o telefone não tenha o '+' aqui
+                to = phone,
                 type = "text",
                 text = new { body = message }
             };
 
-            // Monta a requisição isolada (evita cache de token antigo do .NET)
             var request = new HttpRequestMessage(HttpMethod.Post, endpoint);
             request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", _accessToken);
             request.Content = new StringContent(JsonSerializer.Serialize(payload), Encoding.UTF8, "application/json");
