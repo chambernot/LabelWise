@@ -47,7 +47,7 @@ namespace LabelWise.Infrastructure.Services
                     type = "template",
                     template = new
                     {
-                        name = "lembrete_refeicao_diaria",
+                        name = "lembrete_diario_nutri",
                         language = new { code = "pt_BR" },
                         components = new[]
                         {
