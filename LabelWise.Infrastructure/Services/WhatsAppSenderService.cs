@@ -70,10 +70,10 @@ namespace LabelWise.Infrastructure.Services
 
                 // Dispara para a Graph API da Meta usando o HttpClient injetado
                 var response = await _httpClient.SendAsync(request);
-
+                var responseBody = await response.Content.ReadAsStringAsync();
                 if (response.IsSuccessStatusCode)
                 {
-                    _logger.LogInformation("[WhatsAppSenderService] 🚀 Template de lembrete enviado com sucesso para {Phone}", toPhone);
+                    _logger.LogInformation("[WhatsAppSenderService] 🚀 Template enviado com sucesso para {Phone}. Resposta Meta: {Body}", toPhone, responseBody);
                     return true;
                 }
 
