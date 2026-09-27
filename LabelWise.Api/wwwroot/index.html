@@ -35,7 +35,7 @@
     </div>
 
     <!-- PAINEL PRINCIPAL -->
-    <div x-show="isLoggedIn" class="min-h-screen flex flex-col">
+    <div x-show="isLoggedIn" class="min-h-screen flex flex-col" style="display: none;">
         <!-- Header -->
         <header class="bg-white border-b border-gray-200 sticky top-0 z-50">
             <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between">
@@ -50,173 +50,240 @@
         </header>
 
         <!-- Conteúdo Principal -->
-        <main class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8 flex-1 w-full grid grid-cols-1 lg:grid-cols-3 gap-8">
+        <main class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6 flex-1 w-full">
 
-            <!-- Coluna Esquerda: Formulário de Prescrição com Inteligência Artificial -->
-            <div class="lg:col-span-1 bg-white rounded-2xl shadow-sm border border-gray-200 p-6 h-fit">
-                <h2 class="text-lg font-bold text-gray-900 mb-1" x-text="isEditing ? 'Editar Dieta do Paciente' : 'Prescrever Dieta'"></h2>
-                <p class="text-xs text-gray-500 mb-6">Cadastre manualmente ou use a IA por texto, foto ou PDF.</p>
-
-                <!-- BLOCO DE EXTRAÇÃO INTELIGENTE POR IA -->
-                <div class="mb-6 p-4 bg-emerald-50/60 rounded-xl border border-emerald-100">
-                    <label class="block text-xs font-bold uppercase text-emerald-800 mb-1">✨ Extração Inteligente (IA)</label>
-                    <p class="text-[11px] text-gray-500 mb-2">Cole o texto da dieta ou faça upload de uma foto/PDF do cardápio.</p>
-
-                    <textarea x-model="aiRawText" rows="2" placeholder="Instruções ou observações adicionais..."
-                              class="w-full px-3 py-2 rounded-lg border border-emerald-200 text-xs focus:ring-2 focus:ring-emerald-500 focus:outline-none bg-white mb-2"></textarea>
-
-                    <div class="mb-3">
-                        <label class="block text-[10px] font-bold uppercase text-emerald-700 mb-1">Anexar Foto ou PDF da Dieta</label>
-                        <input type="file" @change="handleFileSelect" accept="image/*,.pdf"
-                               class="w-full text-xs text-gray-500 file:mr-3 file:py-1.5 file:px-3 file:rounded-lg file:border-0 file:text-xs file:font-semibold file:bg-emerald-100 file:text-emerald-800 hover:file:bg-emerald-200 cursor-pointer">
-                        <span x-show="selectedFileName" class="block text-[10px] text-emerald-600 mt-1 font-medium truncate" x-text="'Arquivo selecionado: ' + selectedFileName"></span>
-                    </div>
-
-                    <button type="button" @click="extractWithAI" :disabled="isExtracting"
-                            class="w-full bg-emerald-700 hover:bg-emerald-800 text-white font-semibold py-2 rounded-lg transition duration-200 text-xs shadow-sm flex items-center justify-center space-x-2">
-                        <span x-show="!isExtracting">🤖 Analisar com Gemini IA</span>
-                        <span x-show="isExtracting">Processando documento...</span>
-                    </button>
-                </div>
-
-                <form @submit.prevent="saveDiet" class="space-y-4">
-                    <div>
-                        <label class="block text-xs font-semibold uppercase text-gray-600 mb-1">Telefone do Paciente (WhatsApp)</label>
-                        <input type="text" x-model="form.patientPhone" required placeholder="5511988887777"
-                               class="w-full px-3 py-2 rounded-lg border border-gray-200 text-sm focus:ring-2 focus:ring-emerald-500 focus:outline-none">
-                    </div>
-
-                    <div class="grid grid-cols-2 gap-3">
-                        <div>
-                            <label class="block text-xs font-semibold uppercase text-gray-600 mb-1">Calorias (Kcal)</label>
-                            <input type="number" x-model="form.calories" required placeholder="1800"
-                                   class="w-full px-3 py-2 rounded-lg border border-gray-200 text-sm focus:ring-2 focus:ring-emerald-500 focus:outline-none">
-                        </div>
-                        <div>
-                            <label class="block text-xs font-semibold uppercase text-gray-600 mb-1">Proteína (g)</label>
-                            <input type="number" step="0.1" x-model="form.protein" required placeholder="130"
-                                   class="w-full px-3 py-2 rounded-lg border border-gray-200 text-sm focus:ring-2 focus:ring-emerald-500 focus:outline-none">
-                        </div>
-                    </div>
-
-                    <div class="grid grid-cols-2 gap-3">
-                        <div>
-                            <label class="block text-xs font-semibold uppercase text-gray-600 mb-1">Carboidratos (g)</label>
-                            <input type="number" step="0.1" x-model="form.carbs" required placeholder="180"
-                                   class="w-full px-3 py-2 rounded-lg border border-gray-200 text-sm focus:ring-2 focus:ring-emerald-500 focus:outline-none">
-                        </div>
-                        <div>
-                            <label class="block text-xs font-semibold uppercase text-gray-600 mb-1">Gorduras (g)</label>
-                            <input type="number" step="0.1" x-model="form.fat" required placeholder="50"
-                                   class="w-full px-3 py-2 rounded-lg border border-gray-200 text-sm focus:ring-2 focus:ring-emerald-500 focus:outline-none">
-                        </div>
-                    </div>
-
-                    <div>
-                        <label class="block text-xs font-semibold uppercase text-gray-600 mb-1">Restrições Alimentares</label>
-                        <input type="text" x-model="form.dietaryRestrictions" placeholder="Ex: Sem lactose, Vegetariano"
-                               class="w-full px-3 py-2 rounded-lg border border-gray-200 text-sm focus:ring-2 focus:ring-emerald-500 focus:outline-none">
-                    </div>
-
-                    <div>
-                        <label class="block text-xs font-semibold uppercase text-gray-600 mb-1">Cardápio Detalhado / Observações</label>
-                        <textarea x-model="form.prescribedMealPlan" rows="3" placeholder="Café: Ovos e Pão..."
-                                  class="w-full px-3 py-2 rounded-lg border border-gray-200 text-sm focus:ring-2 focus:ring-emerald-500 focus:outline-none"></textarea>
-                    </div>
-
-                    <button type="submit"
-                            class="w-full bg-emerald-600 hover:bg-emerald-700 text-white font-medium py-2.5 rounded-xl transition duration-200 text-sm shadow-md shadow-emerald-600/10"
-                            x-text="isEditing ? 'Atualizar Dieta do Paciente' : 'Salvar Dieta do Paciente'">
-                    </button>
-                </form>
-
-                <div x-show="feedbackMessage" x-text="feedbackMessage"
-                     :class="feedbackError ? 'bg-red-50 text-red-700 border-red-200' : 'bg-emerald-50 text-emerald-700 border-emerald-200'"
-                     class="mt-4 p-3 rounded-xl border text-xs text-center font-medium"></div>
+            <!-- ABAS MOBILE (Aparece apenas em telas pequenas) -->
+            <div class="lg:hidden flex p-1 bg-gray-200/50 rounded-xl mb-6">
+                <button @click="mobileTab = 'list'"
+                        :class="mobileTab === 'list' ? 'bg-white shadow-sm text-gray-900' : 'text-gray-500'"
+                        class="flex-1 py-2 text-sm font-bold rounded-lg transition duration-200">
+                    👥 Pacientes
+                </button>
+                <button @click="mobileTab = 'form'"
+                        :class="mobileTab === 'form' ? 'bg-white shadow-sm text-gray-900' : 'text-gray-500'"
+                        class="flex-1 py-2 text-sm font-bold rounded-lg transition duration-200">
+                    📋 Nova Dieta
+                </button>
             </div>
 
-            <!-- Coluna Direita: Dashboard e Tabela de Pacientes -->
-            <div class="lg:col-span-2 space-y-6">
-                <!-- Cards de Resumo com o Limite do Plano -->
-                <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                    <div class="bg-white p-5 rounded-2xl shadow-sm border border-gray-200 flex items-center justify-between">
-                        <div>
-                            <span class="text-xs font-semibold uppercase text-gray-400">Pacientes do Plano</span>
-                            <p class="text-2xl font-black text-gray-900 mt-1">
-                                <span x-text="patients.length">0</span>
-                                <span class="text-sm font-medium text-gray-400" x-text="'/ ' + maxPatients"></span>
-                            </p>
-                        </div>
-                        <div class="bg-emerald-50 text-emerald-600 p-3 rounded-xl font-bold">👥</div>
-                    </div>
-                    <div class="bg-white p-5 rounded-2xl shadow-sm border border-gray-200 flex items-center justify-between">
-                        <div>
-                            <span class="text-xs font-semibold uppercase text-gray-400">Status do Sistema</span>
-                            <p class="text-sm font-bold text-emerald-600 mt-2 flex items-center">
-                                <span class="w-2 h-2 rounded-full bg-emerald-500 inline-block mr-2 animate-pulse"></span>
-                                Webhook Ativo
-                            </p>
-                        </div>
-                        <div class="bg-emerald-50 text-emerald-600 p-3 rounded-xl font-bold">🟢</div>
-                    </div>
-                </div>
+            <!-- GRID PRINCIPAL -->
+            <div class="grid grid-cols-1 lg:grid-cols-3 gap-8">
 
-                <!-- Tabela de Pacientes -->
-                <div class="bg-white rounded-2xl shadow-sm border border-gray-200 overflow-hidden">
-                    <div class="p-6 border-b border-gray-100 flex items-center justify-between">
-                        <div>
-                            <h2 class="text-lg font-bold text-gray-900">Seus Pacientes Ativos</h2>
-                            <p class="text-xs text-gray-500">Acompanhe o consumo e metas dos pacientes.</p>
+                <!-- Coluna Esquerda: Formulário (Oculta no mobile se a aba não for 'form') -->
+                <div class="lg:col-span-1 bg-white rounded-2xl shadow-sm border border-gray-200 p-6 h-fit"
+                     :class="mobileTab === 'form' ? 'block' : 'hidden lg:block'">
+
+                    <h2 class="text-lg font-bold text-gray-900 mb-1" x-text="isEditing ? 'Editar Dieta do Paciente' : 'Prescrever Dieta'"></h2>
+                    <p class="text-xs text-gray-500 mb-6">Cadastre manualmente ou use a IA por texto, foto ou PDF.</p>
+
+                    <!-- BLOCO DE EXTRAÇÃO INTELIGENTE POR IA -->
+                    <div class="mb-6 p-4 bg-emerald-50/60 rounded-xl border border-emerald-100">
+                        <label class="block text-xs font-bold uppercase text-emerald-800 mb-1">✨ Extração Inteligente (IA)</label>
+                        <p class="text-[11px] text-gray-500 mb-2">Cole o texto da dieta ou faça upload de uma foto/PDF do cardápio.</p>
+
+                        <textarea x-model="aiRawText" rows="2" placeholder="Instruções ou observações adicionais..."
+                                  class="w-full px-3 py-2 rounded-lg border border-emerald-200 text-xs focus:ring-2 focus:ring-emerald-500 focus:outline-none bg-white mb-2"></textarea>
+
+                        <div class="mb-3">
+                            <label class="block text-[10px] font-bold uppercase text-emerald-700 mb-1">Anexar Foto ou PDF da Dieta</label>
+                            <input type="file" @change="handleFileSelect" accept="image/*,.pdf"
+                                   class="w-full text-xs text-gray-500 file:mr-3 file:py-1.5 file:px-3 file:rounded-lg file:border-0 file:text-xs file:font-semibold file:bg-emerald-100 file:text-emerald-800 hover:file:bg-emerald-200 cursor-pointer">
+                            <span x-show="selectedFileName" class="block text-[10px] text-emerald-600 mt-1 font-medium truncate" x-text="'Arquivo selecionado: ' + selectedFileName"></span>
                         </div>
-                        <button @click="loadPatients" class="text-xs bg-gray-100 hover:bg-gray-200 text-gray-700 px-3 py-1.5 rounded-lg font-medium transition">
-                            Atualizar Lista
+
+                        <button type="button" @click="extractWithAI" :disabled="isExtracting"
+                                class="w-full bg-emerald-700 hover:bg-emerald-800 text-white font-semibold py-2 rounded-lg transition duration-200 text-xs shadow-sm flex items-center justify-center space-x-2">
+                            <span x-show="!isExtracting">🤖 Analisar com Gemini IA</span>
+                            <span x-show="isExtracting">Processando documento...</span>
                         </button>
                     </div>
 
-                    <div class="overflow-x-auto">
-                        <table class="w-full text-left border-collapse">
-                            <thead>
-                                <tr class="bg-gray-50/50 text-[11px] uppercase font-bold text-gray-400 tracking-wider">
-                                    <th class="py-3 px-6">Paciente (WhatsApp)</th>
-                                    <th class="py-3 px-6">Meta Diária</th>
-                                    <th class="py-3 px-6">Macronutrientes</th>
-                                    <th class="py-3 px-6 text-right">Ações</th>
-                                </tr>
-                            </thead>
-                            <tbody class="divide-y divide-gray-100 text-sm">
-                                <template x-for="patient in patients" :key="patient.id">
-                                    <tr class="hover:bg-gray-50/50 transition">
-                                        <td class="py-4 px-6 font-semibold text-gray-800" x-text="patient.userId"></td>
-                                        <td class="py-4 px-6">
-                                            <span class="bg-emerald-50 text-emerald-700 px-2.5 py-1 rounded-full text-xs font-bold" x-text="patient.targetCalories + ' kcal'"></span>
-                                        </td>
-                                        <td class="py-4 px-6 text-xs text-gray-600">
-                                            <span x-text="'P: ' + patient.targetProteinG + 'g | '"></span>
-                                            <span x-text="'C: ' + patient.targetCarbsG + 'g | '"></span>
-                                            <span x-text="'G: ' + patient.targetFatG + 'g'"></span>
-                                        </td>
-                                        <td class="py-4 px-6 text-right space-x-2">
-                                            <button @click="viewLogs(patient.userId)" class="text-blue-600 hover:text-blue-800 font-medium text-xs bg-blue-50 hover:bg-blue-100 px-3 py-1.5 rounded-lg transition">
-                                                Ver Consumo
-                                            </button>
-                                            <button @click="editPatient(patient)" class="text-emerald-600 hover:text-emerald-800 font-medium text-xs bg-emerald-50 hover:bg-emerald-100 px-3 py-1.5 rounded-lg transition">
-                                                Editar Dieta
-                                            </button>
-                                            <button @click="deletePatient(patient.userId)" class="text-red-600 hover:text-red-800 font-medium text-xs bg-red-50 hover:bg-red-100 px-3 py-1.5 rounded-lg transition">
-                                                Excluir
-                                            </button>
-                                        </td>
+                    <form @submit.prevent="saveDiet" class="space-y-4">
+                        <div>
+                            <label class="block text-xs font-semibold uppercase text-gray-600 mb-1">Telefone do Paciente (WhatsApp)</label>
+                            <input type="text" x-model="form.patientPhone" required placeholder="5511988887777"
+                                   class="w-full px-3 py-2 rounded-lg border border-gray-200 text-sm focus:ring-2 focus:ring-emerald-500 focus:outline-none">
+                        </div>
+
+                        <div class="grid grid-cols-2 gap-3">
+                            <div>
+                                <label class="block text-xs font-semibold uppercase text-gray-600 mb-1">Calorias (Kcal)</label>
+                                <input type="number" x-model="form.calories" required placeholder="1800"
+                                       class="w-full px-3 py-2 rounded-lg border border-gray-200 text-sm focus:ring-2 focus:ring-emerald-500 focus:outline-none">
+                            </div>
+                            <div>
+                                <label class="block text-xs font-semibold uppercase text-gray-600 mb-1">Proteína (g)</label>
+                                <input type="number" step="0.1" x-model="form.protein" required placeholder="130"
+                                       class="w-full px-3 py-2 rounded-lg border border-gray-200 text-sm focus:ring-2 focus:ring-emerald-500 focus:outline-none">
+                            </div>
+                        </div>
+
+                        <div class="grid grid-cols-2 gap-3">
+                            <div>
+                                <label class="block text-xs font-semibold uppercase text-gray-600 mb-1">Carboidratos (g)</label>
+                                <input type="number" step="0.1" x-model="form.carbs" required placeholder="180"
+                                       class="w-full px-3 py-2 rounded-lg border border-gray-200 text-sm focus:ring-2 focus:ring-emerald-500 focus:outline-none">
+                            </div>
+                            <div>
+                                <label class="block text-xs font-semibold uppercase text-gray-600 mb-1">Gorduras (g)</label>
+                                <input type="number" step="0.1" x-model="form.fat" required placeholder="50"
+                                       class="w-full px-3 py-2 rounded-lg border border-gray-200 text-sm focus:ring-2 focus:ring-emerald-500 focus:outline-none">
+                            </div>
+                        </div>
+
+                        <div>
+                            <label class="block text-xs font-semibold uppercase text-gray-600 mb-1">Restrições Alimentares</label>
+                            <input type="text" x-model="form.dietaryRestrictions" placeholder="Ex: Sem lactose, Vegetariano"
+                                   class="w-full px-3 py-2 rounded-lg border border-gray-200 text-sm focus:ring-2 focus:ring-emerald-500 focus:outline-none">
+                        </div>
+
+                        <div>
+                            <label class="block text-xs font-semibold uppercase text-gray-600 mb-1">Cardápio Detalhado / Observações</label>
+                            <textarea x-model="form.prescribedMealPlan" rows="3" placeholder="Café: Ovos e Pão..."
+                                      class="w-full px-3 py-2 rounded-lg border border-gray-200 text-sm focus:ring-2 focus:ring-emerald-500 focus:outline-none"></textarea>
+                        </div>
+
+                        <button type="submit"
+                                class="w-full bg-emerald-600 hover:bg-emerald-700 text-white font-medium py-2.5 rounded-xl transition duration-200 text-sm shadow-md shadow-emerald-600/10"
+                                x-text="isEditing ? 'Atualizar Dieta do Paciente' : 'Salvar Dieta do Paciente'">
+                        </button>
+
+                        <button type="button" x-show="isEditing" @click="cancelEdit"
+                                class="w-full bg-gray-100 hover:bg-gray-200 text-gray-700 font-medium py-2 rounded-xl transition duration-200 text-sm mt-2">
+                            Cancelar Edição
+                        </button>
+                    </form>
+
+                    <div x-show="feedbackMessage" x-text="feedbackMessage"
+                         :class="feedbackError ? 'bg-red-50 text-red-700 border-red-200' : 'bg-emerald-50 text-emerald-700 border-emerald-200'"
+                         class="mt-4 p-3 rounded-xl border text-xs text-center font-medium"></div>
+                </div>
+
+                <!-- Coluna Direita: Dashboard e Tabela (Oculta no mobile se a aba não for 'list') -->
+                <div class="lg:col-span-2 space-y-6"
+                     :class="mobileTab === 'list' ? 'block' : 'hidden lg:block'">
+
+                    <!-- Cards de Resumo -->
+                    <div class="grid grid-cols-2 gap-4">
+                        <div class="bg-white p-4 sm:p-5 rounded-2xl shadow-sm border border-gray-200 flex flex-col justify-center">
+                            <span class="text-[10px] sm:text-xs font-semibold uppercase text-gray-400">Pacientes Cadastrados</span>
+                            <div class="flex items-center justify-between mt-1">
+                                <p class="text-2xl font-black text-gray-900">
+                                    <span x-text="patients.length">0</span>
+                                    <span class="text-sm font-medium text-gray-400" x-text="'/ ' + maxPatients"></span>
+                                </p>
+                                <div class="bg-emerald-50 text-emerald-600 p-2 rounded-lg font-bold">👥</div>
+                            </div>
+                        </div>
+                        <div class="bg-white p-4 sm:p-5 rounded-2xl shadow-sm border border-gray-200 flex flex-col justify-center">
+                            <span class="text-[10px] sm:text-xs font-semibold uppercase text-gray-400">Status Automático</span>
+                            <div class="flex items-center justify-between mt-1">
+                                <p class="text-sm font-bold text-emerald-600 flex items-center">
+                                    <span class="w-2 h-2 rounded-full bg-emerald-500 inline-block mr-2 animate-pulse"></span>
+                                    Bot Ativo
+                                </p>
+                                <div class="bg-emerald-50 text-emerald-600 p-2 rounded-lg font-bold">💬</div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Lista de Pacientes -->
+                    <div class="bg-white rounded-2xl shadow-sm border border-gray-200 overflow-hidden">
+
+                        <div class="p-4 sm:p-6 border-b border-gray-100 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+                            <div>
+                                <h2 class="text-lg font-bold text-gray-900">Seus Pacientes</h2>
+                                <p class="text-xs text-gray-500">Acompanhe a dieta e retenção da carteira.</p>
+                            </div>
+
+                            <!-- Barra de Pesquisa -->
+                            <div class="flex space-x-2">
+                                <input type="text" x-model="searchQuery" placeholder="Buscar telefone..."
+                                       class="px-3 py-2 rounded-lg border border-gray-200 text-xs focus:ring-2 focus:ring-emerald-500 focus:outline-none w-full sm:w-48">
+                                <button @click="loadPatients" class="text-xs bg-gray-100 hover:bg-gray-200 text-gray-700 px-3 py-2 rounded-lg font-medium transition flex-shrink-0">
+                                    🔄
+                                </button>
+                            </div>
+                        </div>
+
+                        <!-- CARDS PARA MOBILE (Aparece apenas em telas pequenas) -->
+                        <div class="block lg:hidden divide-y divide-gray-100 p-2">
+                            <template x-for="patient in filteredPatients" :key="patient.userId">
+                                <div class="p-4 bg-white hover:bg-gray-50 transition">
+                                    <div class="flex justify-between items-start mb-2">
+                                        <h3 class="font-bold text-gray-800 text-sm" x-text="patient.userId"></h3>
+                                        <!-- Botão WhatsApp Rapido -->
+                                        <a :href="'https://wa.me/' + patient.userId" target="_blank"
+                                           class="bg-green-100 hover:bg-green-200 text-green-700 p-1.5 rounded-full flex items-center justify-center transition">
+                                            <svg class="w-4 h-4" fill="currentColor" viewBox="0 0 24 24"><path d="M.057 24l1.687-6.163c-1.041-1.804-1.588-3.849-1.587-5.946.003-6.556 5.338-11.891 11.893-11.891 3.181.001 6.167 1.24 8.413 3.488 2.245 2.248 3.481 5.236 3.48 8.414-.003 6.557-5.338 11.892-11.893 11.892-1.99-.001-3.951-.5-5.688-1.448l-6.305 1.654zm6.597-3.807c1.676.995 3.276 1.591 5.392 1.592 5.448 0 9.89-4.443 9.893-9.892.002-5.462-4.415-9.89-9.881-9.892-5.452 0-9.887 4.434-9.889 9.884.001 2.225.651 3.891 1.746 5.634l-.999 3.648 3.738-.974zm11.387-5.464c-.074-.124-.272-.198-.57-.347-.297-.149-1.758-.868-2.031-.967-.272-.099-.47-.149-.669.149-.198.297-.768.967-.941 1.165-.173.198-.347.223-.644.074-.297-.149-1.255-.462-2.39-1.475-.883-.788-1.48-1.761-1.653-2.059-.173-.297-.018-.458.13-.606.134-.133.297-.347.446-.521.151-.172.2-.296.3-.495.099-.198.05-.372-.025-.521-.075-.148-.669-1.611-.916-2.206-.242-.579-.487-.501-.669-.51l-.57-.01c-.198 0-.52.074-.792.347-.272.297-1.04 1.016-1.04 2.479 0 1.463 1.065 2.876 1.213 3.074.149.198 2.095 3.2 5.076 4.487.709.306 1.263.489 1.694.626.712.226 1.36.194 1.872.118.571-.085 1.758-.719 2.006-1.413.248-.695.248-1.29.173-1.414z" /></svg>
+                                        </a>
+                                    </div>
+                                    <div class="flex space-x-2 mb-3">
+                                        <span class="bg-gray-100 text-gray-700 px-2 py-1 rounded text-[10px] font-bold" x-text="'🎯 ' + patient.targetCalories + ' kcal'"></span>
+                                        <span class="bg-gray-100 text-gray-600 px-2 py-1 rounded text-[10px]" x-text="'P:' + patient.targetProteinG + ' C:' + patient.targetCarbsG + ' G:' + patient.targetFatG"></span>
+                                    </div>
+                                    <div class="grid grid-cols-2 gap-2 mt-2">
+                                        <button @click="viewLogs(patient.userId)" class="w-full bg-blue-50 hover:bg-blue-100 text-blue-700 py-2 rounded-lg text-xs font-bold transition">📊 Consumo</button>
+                                        <button @click="editPatient(patient)" class="w-full bg-emerald-50 hover:bg-emerald-100 text-emerald-700 py-2 rounded-lg text-xs font-bold transition">✏️ Editar</button>
+                                    </div>
+                                </div>
+                            </template>
+                            <template x-if="filteredPatients.length === 0">
+                                <div class="text-center py-8 text-xs text-gray-400">Nenhum paciente encontrado.</div>
+                            </template>
+                        </div>
+
+                        <!-- TABELA PARA DESKTOP (Oculta no mobile) -->
+                        <div class="hidden lg:block overflow-x-auto">
+                            <table class="w-full text-left border-collapse">
+                                <thead>
+                                    <tr class="bg-gray-50/50 text-[11px] uppercase font-bold text-gray-400 tracking-wider border-b border-gray-100">
+                                        <th class="py-3 px-6">Paciente (WhatsApp)</th>
+                                        <th class="py-3 px-6">Meta Diária</th>
+                                        <th class="py-3 px-6">Macronutrientes</th>
+                                        <th class="py-3 px-6 text-right">Ações</th>
                                     </tr>
-                                </template>
-                                <template x-if="patients.length === 0">
-                                    <tr>
-                                        <td colspan="4" class="py-8 text-center text-xs text-gray-400">
-                                            Nenhum paciente cadastrado ainda.
-                                        </td>
-                                    </tr>
-                                </template>
-                            </tbody>
-                        </table>
+                                </thead>
+                                <tbody class="divide-y divide-gray-100 text-sm">
+                                    <template x-for="patient in filteredPatients" :key="patient.userId">
+                                        <tr class="hover:bg-gray-50/50 transition">
+                                            <td class="py-4 px-6 font-semibold text-gray-800 flex items-center space-x-2">
+                                                <span x-text="patient.userId"></span>
+                                                <!-- Botão WhatsApp Rapido Desktop -->
+                                                <a :href="'https://wa.me/' + patient.userId" target="_blank" title="Chamar no WhatsApp"
+                                                   class="text-green-500 hover:text-green-600 transition">
+                                                    <svg class="w-4 h-4" fill="currentColor" viewBox="0 0 24 24"><path d="M.057 24l1.687-6.163c-1.041-1.804-1.588-3.849-1.587-5.946.003-6.556 5.338-11.891 11.893-11.891 3.181.001 6.167 1.24 8.413 3.488 2.245 2.248 3.481 5.236 3.48 8.414-.003 6.557-5.338 11.892-11.893 11.892-1.99-.001-3.951-.5-5.688-1.448l-6.305 1.654zm6.597-3.807c1.676.995 3.276 1.591 5.392 1.592 5.448 0 9.89-4.443 9.893-9.892.002-5.462-4.415-9.89-9.881-9.892-5.452 0-9.887 4.434-9.889 9.884.001 2.225.651 3.891 1.746 5.634l-.999 3.648 3.738-.974zm11.387-5.464c-.074-.124-.272-.198-.57-.347-.297-.149-1.758-.868-2.031-.967-.272-.099-.47-.149-.669.149-.198.297-.768.967-.941 1.165-.173.198-.347.223-.644.074-.297-.149-1.255-.462-2.39-1.475-.883-.788-1.48-1.761-1.653-2.059-.173-.297-.018-.458.13-.606.134-.133.297-.347.446-.521.151-.172.2-.296.3-.495.099-.198.05-.372-.025-.521-.075-.148-.669-1.611-.916-2.206-.242-.579-.487-.501-.669-.51l-.57-.01c-.198 0-.52.074-.792.347-.272.297-1.04 1.016-1.04 2.479 0 1.463 1.065 2.876 1.213 3.074.149.198 2.095 3.2 5.076 4.487.709.306 1.263.489 1.694.626.712.226 1.36.194 1.872.118.571-.085 1.758-.719 2.006-1.413.248-.695.248-1.29.173-1.414z" /></svg>
+                                                </a>
+                                            </td>
+                                            <td class="py-4 px-6">
+                                                <span class="bg-emerald-50 text-emerald-700 px-2.5 py-1 rounded-full text-xs font-bold" x-text="patient.targetCalories + ' kcal'"></span>
+                                            </td>
+                                            <td class="py-4 px-6 text-xs text-gray-600">
+                                                <span x-text="'P: ' + patient.targetProteinG + 'g | C: ' + patient.targetCarbsG + 'g | G: ' + patient.targetFatG + 'g'"></span>
+                                            </td>
+                                            <td class="py-4 px-6 text-right space-x-2">
+                                                <button @click="viewLogs(patient.userId)" class="text-blue-600 hover:text-blue-800 font-medium text-xs bg-blue-50 hover:bg-blue-100 px-3 py-1.5 rounded-lg transition">
+                                                    Ver Consumo
+                                                </button>
+                                                <button @click="editPatient(patient)" class="text-emerald-600 hover:text-emerald-800 font-medium text-xs bg-emerald-50 hover:bg-emerald-100 px-3 py-1.5 rounded-lg transition">
+                                                    Editar Dieta
+                                                </button>
+                                                <button @click="deletePatient(patient.userId)" class="text-red-600 hover:text-red-800 font-medium text-xs bg-red-50 hover:bg-red-100 px-3 py-1.5 rounded-lg transition">
+                                                    Excluir
+                                                </button>
+                                            </td>
+                                        </tr>
+                                    </template>
+                                    <template x-if="filteredPatients.length === 0">
+                                        <tr>
+                                            <td colspan="4" class="py-8 text-center text-xs text-gray-400">
+                                                Nenhum paciente encontrado.
+                                            </td>
+                                        </tr>
+                                    </template>
+                                </tbody>
+                            </table>
+                        </div>
                     </div>
                 </div>
             </div>
@@ -224,55 +291,69 @@
     </div>
 
     <!-- MODAL DE HISTÓRICO DE CONSUMO AVANÇADO -->
-    <div x-show="showModal" class="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm px-4" x-cloak>
-        <div class="bg-white rounded-2xl max-w-3xl w-full p-6 shadow-2xl border border-gray-100 max-h-[90vh] flex flex-col">
+    <div x-show="showModal" class="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm px-4" style="display: none;">
+        <div class="bg-white rounded-2xl max-w-3xl w-full p-5 sm:p-6 shadow-2xl border border-gray-100 max-h-[90vh] flex flex-col">
             <div class="flex items-center justify-between pb-4 border-b border-gray-100">
                 <div>
-                    <h3 class="text-lg font-bold text-gray-900">Dashboard de Consumo do Paciente</h3>
+                    <h3 class="text-lg font-bold text-gray-900">Dashboard de Consumo</h3>
                     <p class="text-xs text-gray-500" x-text="'WhatsApp: ' + selectedPatientPhone"></p>
                 </div>
-                <button @click="showModal = false" class="text-gray-400 hover:text-gray-600 font-bold text-lg">✕</button>
+                <button @click="showModal = false" class="text-gray-400 hover:text-gray-600 font-bold text-lg bg-gray-100 w-8 h-8 rounded-full flex items-center justify-center">✕</button>
             </div>
 
-            <div class="py-4 grid grid-cols-1 sm:grid-cols-3 gap-4 border-b border-gray-100 bg-gray-50/50 p-4 rounded-xl mt-2">
-                <div>
+            <div class="py-4 grid grid-cols-2 sm:grid-cols-3 gap-3 sm:gap-4 border-b border-gray-100 mt-2">
+                <div class="col-span-2 sm:col-span-1">
                     <label class="block text-[11px] font-semibold uppercase text-gray-500 mb-1">Período de Análise</label>
-                    <select x-model="selectedPeriod" @change="fetchLogs()" class="w-full bg-white px-3 py-2 rounded-lg border border-gray-200 text-xs focus:ring-2 focus:ring-emerald-500 focus:outline-none">
+                    <select x-model="selectedPeriod" @change="fetchLogs()" class="w-full bg-gray-50 px-3 py-2 rounded-lg border border-gray-200 text-xs focus:ring-2 focus:ring-emerald-500 focus:outline-none">
                         <option value="7">Últimos 7 dias</option>
-                        <option value="30">Últimos 30 dias (Mês)</option>
+                        <option value="30">Últimos 30 dias</option>
                         <option value="90">Últimos 3 meses</option>
                     </select>
                 </div>
-                <div class="bg-white p-3 rounded-lg border border-gray-100 shadow-sm">
-                    <span class="text-[10px] font-bold uppercase text-gray-400">Meta Diária Prescrita</span>
+                <div class="bg-gray-50 p-3 rounded-lg border border-gray-100 shadow-sm flex flex-col justify-center">
+                    <span class="text-[10px] font-bold uppercase text-gray-400">Meta Diária</span>
                     <p class="text-sm font-extrabold text-gray-800 mt-0.5" x-text="targetCalories + ' kcal'"></p>
                 </div>
-                <div class="bg-white p-3 rounded-lg border border-gray-100 shadow-sm">
-                    <span class="text-[10px] font-bold uppercase text-gray-400">Total de Registros</span>
-                    <p class="text-sm font-extrabold text-emerald-600 mt-0.5" x-text="selectedPatientLogs.length + ' refeições'"></p>
+                <div class="bg-emerald-50 p-3 rounded-lg border border-emerald-100 shadow-sm flex flex-col justify-center">
+                    <span class="text-[10px] font-bold uppercase text-emerald-600">Refeições Reg.</span>
+                    <p class="text-sm font-extrabold text-emerald-700 mt-0.5" x-text="selectedPatientLogs.length"></p>
                 </div>
             </div>
 
-            <div class="py-4 overflow-y-auto flex-1 space-y-6">
+            <div class="py-4 overflow-y-auto flex-1 space-y-4 pr-2">
                 <template x-for="(group, dateStr) in groupedLogs" :key="dateStr">
-                    <div class="border border-gray-100 rounded-xl overflow-hidden shadow-xs">
-                        <div class="bg-gray-100/70 px-4 py-2.5 flex items-center justify-between border-b border-gray-100">
-                            <span class="text-xs font-bold text-gray-700" x-text="formatDateTitle(dateStr)"></span>
-                            <span class="text-xs font-extrabold text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded-md" x-text="calculateDayTotal(group) + ' kcal consumidas'"></span>
+                    <div class="border border-gray-100 rounded-xl overflow-hidden shadow-sm">
+
+                        <!-- Cabeçalho do Dia c/ Barra de Progresso (Semáforo) -->
+                        <div class="bg-gray-50 px-4 py-3 border-b border-gray-100">
+                            <div class="flex items-center justify-between mb-2">
+                                <span class="text-xs font-bold text-gray-700" x-text="formatDateTitle(dateStr)"></span>
+                                <span class="text-xs font-extrabold px-2 py-0.5 rounded-md"
+                                      :class="calculateDayTotal(group) > targetCalories ? 'bg-red-100 text-red-700' : 'bg-emerald-100 text-emerald-700'"
+                                      x-text="calculateDayTotal(group) + ' kcal'"></span>
+                            </div>
+                            <!-- Barra visual -->
+                            <div class="w-full bg-gray-200 rounded-full h-1.5 overflow-hidden">
+                                <div class="h-1.5 rounded-full transition-all duration-500"
+                                     :class="calculateDayTotal(group) > targetCalories ? 'bg-red-500' : 'bg-emerald-500'"
+                                     :style="'width: ' + Math.min(100, (calculateDayTotal(group) / targetCalories) * 100) + '%'"></div>
+                            </div>
                         </div>
+
+                        <!-- Refeições do dia -->
                         <div class="divide-y divide-gray-50 bg-white">
                             <template x-for="log in group" :key="log.id">
-                                <div class="p-3.5 px-4 flex items-center justify-between hover:bg-gray-50/50 transition">
+                                <div class="p-3 px-4 flex justify-between hover:bg-gray-50/50 transition items-start">
                                     <div>
-                                        <div class="flex items-center space-x-2">
-                                            <span class="bg-emerald-100 text-emerald-800 text-[10px] font-bold px-2 py-0.5 rounded" x-text="log.mealType"></span>
-                                            <h4 class="text-xs font-bold text-gray-800" x-text="log.dishName"></h4>
+                                        <div class="flex items-center space-x-2 mb-1">
+                                            <span class="bg-gray-100 text-gray-700 text-[9px] uppercase font-bold px-1.5 py-0.5 rounded" x-text="log.mealType"></span>
+                                            <p class="text-[10px] text-gray-400" x-text="new Date(log.loggedAt).toLocaleTimeString('pt-BR', {hour: '2-digit', minute:'2-digit'})"></p>
                                         </div>
-                                        <p class="text-[10px] text-gray-400 mt-0.5" x-text="new Date(log.loggedAt).toLocaleTimeString('pt-BR', {hour: '2-digit', minute:'2-digit'})"></p>
+                                        <h4 class="text-xs font-bold text-gray-800 line-clamp-2" x-text="log.dishName"></h4>
                                     </div>
-                                    <div class="text-right">
+                                    <div class="text-right pl-2 shrink-0">
                                         <span class="text-xs font-extrabold text-gray-800" x-text="log.calories + ' kcal'"></span>
-                                        <p class="text-[10px] text-gray-400" x-text="'P:' + log.proteinG + 'g | C:' + log.carbsG + 'g | G:' + log.fatG + 'g'"></p>
+                                        <p class="text-[9px] text-gray-400 mt-0.5" x-text="'P:' + log.proteinG + ' C:' + log.carbsG + ' G:' + log.fatG"></p>
                                     </div>
                                 </div>
                             </template>
@@ -282,14 +363,14 @@
 
                 <template x-if="Object.keys(groupedLogs).length === 0">
                     <div class="text-center py-12">
-                        <p class="text-xs text-gray-400">Nenhuma refeição registrada pelo paciente no período selecionado.</p>
+                        <p class="text-xs text-gray-400">Nenhuma refeição registrada no período selecionado.</p>
                     </div>
                 </template>
             </div>
 
             <div class="pt-4 border-t border-gray-100 text-right">
-                <button @click="showModal = false" class="bg-gray-100 hover:bg-gray-200 text-gray-700 text-xs font-semibold px-4 py-2 rounded-xl transition">
-                    Fechar Painel
+                <button @click="showModal = false" class="bg-gray-900 hover:bg-gray-800 text-white text-xs font-bold px-6 py-2.5 rounded-xl transition w-full sm:w-auto">
+                    Fechar
                 </button>
             </div>
         </div>
@@ -304,7 +385,7 @@
                 apiKey: '',
                 apiKeyInput: '',
                 nutriName: 'Painel Clínico',
-                maxPatients: 30, // 👈 Limite padrão do plano carregado do backend
+                maxPatients: 30,
                 loginError: false,
                 loginErrorMessage: '',
                 feedbackMessage: '',
@@ -314,11 +395,16 @@
                 selectedFileBase64: null,
                 selectedFileName: '',
                 patients: [],
+
+                // Variáveis novas para UX e Mobile
+                mobileTab: 'list', // Alterna entre 'list' e 'form' no celular
+                searchQuery: '', // Barra de pesquisa
+
                 showModal: false,
                 selectedPatientPhone: '',
                 selectedPatientLogs: [],
                 targetCalories: 2000,
-                selectedPeriod: '30',
+                selectedPeriod: '7', // Mudado padrão para 7 dias (leitura mais rápida)
                 form: {
                     patientPhone: '',
                     nutritionistId: 'nutri_web_portal',
@@ -329,6 +415,33 @@
                     dietaryRestrictions: '',
                     prescribedMealPlan: ''
                 },
+
+                // Computed / Getters
+                get filteredPatients() {
+                    if (this.searchQuery.trim() === '') return this.patients;
+                    const query = this.searchQuery.toLowerCase();
+                    return this.patients.filter(p => p.userId.toLowerCase().includes(query));
+                },
+
+                get groupedLogs() {
+                    const groups = {};
+                    this.selectedPatientLogs.forEach(log => {
+                        const dateKey = log.loggedAt.split('T')[0];
+                        if (!groups[dateKey]) {
+                            groups[dateKey] = [];
+                        }
+                        groups[dateKey].push(log);
+                    });
+                    // Ordenar as datas da mais recente para a mais antiga
+                    return Object.keys(groups)
+                        .sort((a, b) => new Date(b) - new Date(a))
+                        .reduce((acc, key) => {
+                            acc[key] = groups[key];
+                            return acc;
+                        }, {});
+                },
+
+                // Métodos
                 async init() {
                     const savedKey = localStorage.getItem('nutri_api_key');
                     if (savedKey) {
@@ -336,10 +449,12 @@
                         await this.verifyAndLogin(savedKey, false);
                     }
                 },
+
                 async login() {
                     if (!this.apiKeyInput.trim()) return;
                     await this.verifyAndLogin(this.apiKeyInput.trim(), true);
                 },
+
                 async verifyAndLogin(key, showErrors) {
                     try {
                         const response = await fetch('/api/nutritionist/verify-key', {
@@ -351,7 +466,7 @@
                         if (response.ok && result.success) {
                             this.apiKey = key;
                             this.nutriName = result.name || 'Nutricionista';
-                            this.maxPatients = result.maxPatients || 30; // 👈 Atualiza o limite com o valor real do plano
+                            this.maxPatients = result.maxPatients || 30;
 
                             localStorage.setItem('nutri_api_key', this.apiKey);
                             localStorage.setItem('nutri_id', result.nutritionistId || '');
@@ -376,6 +491,7 @@
                         }
                     }
                 },
+
                 logout() {
                     localStorage.removeItem('nutri_api_key');
                     localStorage.removeItem('nutri_id');
@@ -383,6 +499,7 @@
                     this.apiKey = '';
                     this.patients = [];
                 },
+
                 async loadPatients() {
                     try {
                         const response = await fetch('/api/nutritionist/patients', {
@@ -397,6 +514,7 @@
                         console.error('Erro ao carregar pacientes', err);
                     }
                 },
+
                 handleFileSelect(event) {
                     const file = event.target.files[0];
                     if (!file) return;
@@ -404,11 +522,11 @@
                     this.selectedFileName = file.name;
                     const reader = new FileReader();
                     reader.onload = (e) => {
-                        const base64String = e.target.result.split(',')[1];
-                        this.selectedFileBase64 = base64String;
+                        this.selectedFileBase64 = e.target.result.split(',')[1];
                     };
                     reader.readAsDataURL(file);
                 },
+
                 async extractWithAI() {
                     if (!this.aiRawText.trim() && !this.selectedFileBase64) {
                         alert('Por favor, digite um texto ou selecione uma imagem/PDF para a IA analisar.');
@@ -456,11 +574,13 @@
                         this.isExtracting = false;
                     }
                 },
+
                 async viewLogs(phone) {
                     this.selectedPatientPhone = phone;
                     this.showModal = true;
                     await this.fetchLogs();
                 },
+
                 async fetchLogs() {
                     if (!this.selectedPatientPhone) return;
 
@@ -483,25 +603,25 @@
                         console.error('Erro ao buscar logs do paciente', err);
                     }
                 },
-                get groupedLogs() {
-                    const groups = {};
-                    this.selectedPatientLogs.forEach(log => {
-                        const dateKey = log.loggedAt.split('T')[0];
-                        if (!groups[dateKey]) {
-                            groups[dateKey] = [];
-                        }
-                        groups[dateKey].push(log);
-                    });
-                    return groups;
-                },
+
                 calculateDayTotal(logs) {
                     return logs.reduce((sum, item) => sum + (item.calories || 0), 0);
                 },
+
                 formatDateTitle(dateStr) {
                     const parts = dateStr.split('-');
                     if (parts.length !== 3) return dateStr;
-                    return `${parts[2]}/${parts[1]}/${parts[0]}`;
+
+                    const dateObj = new Date(parts[0], parts[1] - 1, parts[2]);
+                    const today = new Date();
+                    today.setHours(0, 0, 0, 0);
+
+                    if (dateObj.getTime() === today.getTime()) {
+                        return 'Hoje';
+                    }
+                    return `${parts[2]}/${parts[1]}`;
                 },
+
                 async saveDiet() {
                     if (!this.form.patientPhone.trim()) {
                         this.feedbackMessage = '❌ O telefone do paciente é obrigatório.';
@@ -512,7 +632,7 @@
                     if (!this.isEditing) {
                         const pacienteExistente = this.patients.find(p => p.userId === this.form.patientPhone);
                         if (pacienteExistente) {
-                            this.feedbackMessage = `❌ O número ${this.form.patientPhone} já está cadastrado. Use o botão "Editar Dieta" na tabela para alterá-lo.`;
+                            this.feedbackMessage = `❌ O número ${this.form.patientPhone} já está cadastrado. Use o botão de editar.`;
                             this.feedbackError = true;
                             return;
                         }
@@ -538,20 +658,8 @@
                             this.feedbackError = false;
                             this.loadPatients();
 
-                            this.isEditing = false;
-                            this.form.patientPhone = '';
-                            this.form.calories = 2000;
-                            this.form.protein = 150;
-                            this.form.carbs = 200;
-                            this.form.fat = 60;
-                            this.form.dietaryRestrictions = '';
-                            this.form.prescribedMealPlan = '';
-                            this.aiRawText = '';
-                            this.selectedFileBase64 = null;
-                            this.selectedFileName = '';
-
-                            const fileInput = document.querySelector('input[type="file"]');
-                            if (fileInput) fileInput.value = '';
+                            this.cancelEdit();
+                            this.mobileTab = 'list'; // Volta para a aba de lista no celular após salvar
                         } else {
                             this.feedbackMessage = '❌ ' + (result.message || 'Falha ao salvar');
                             this.feedbackError = true;
@@ -561,6 +669,7 @@
                         this.feedbackError = true;
                     }
                 },
+
                 editPatient(p) {
                     this.isEditing = true;
                     this.form.patientPhone = p.userId;
@@ -570,10 +679,32 @@
                     this.form.fat = p.targetFatG;
                     this.form.dietaryRestrictions = p.dietaryRestrictions || '';
                     this.form.prescribedMealPlan = p.prescribedMealPlan || '';
+
+                    this.mobileTab = 'form'; // Alterna para a aba do formulário no celular
+                    this.feedbackMessage = '';
                     window.scrollTo({ top: 0, behavior: 'smooth' });
                 },
+
+                cancelEdit() {
+                    this.isEditing = false;
+                    this.form.patientPhone = '';
+                    this.form.calories = 2000;
+                    this.form.protein = 150;
+                    this.form.carbs = 200;
+                    this.form.fat = 60;
+                    this.form.dietaryRestrictions = '';
+                    this.form.prescribedMealPlan = '';
+                    this.aiRawText = '';
+                    this.selectedFileBase64 = null;
+                    this.selectedFileName = '';
+                    this.feedbackMessage = '';
+
+                    const fileInput = document.querySelector('input[type="file"]');
+                    if (fileInput) fileInput.value = '';
+                },
+
                 async deletePatient(phone) {
-                    if (!confirm(`Tem certeza que deseja excluir o paciente ${phone}?\n\nIsso removerá a dieta dele e bloqueará o acesso ao bot do WhatsApp.`)) {
+                    if (!confirm(`Tem certeza que deseja excluir o paciente ${phone}?\n\nIsso removerá a dieta dele e bloqueará o acesso ao bot.`)) {
                         return;
                     }
 
