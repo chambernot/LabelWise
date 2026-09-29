@@ -81,8 +81,6 @@ namespace LabelWise.Infrastructure.Repositories
         {
             try
             {
-                // Conversão precisa considerando o fuso horário do Brasil (UTC-3)
-                // 00:00 no Brasil = 03:00 em UTC do mesmo dia
                 var inicioDiaLocal = data.Date;
                 var inicioDiaUtc = DateTime.SpecifyKind(inicioDiaLocal.AddHours(3), DateTimeKind.Utc);
                 var fimDiaUtc = inicioDiaUtc.AddDays(1).AddTicks(-1);
@@ -93,6 +91,52 @@ namespace LabelWise.Infrastructure.Repositories
             catch (Exception)
             {
                 return new List<MealLog>();
+            }
+        }
+
+        // 🚀 NOVO: Método que calcula a sequência de dias consecutivos (Streak)
+        public async Task<int> CalcularOfensivaStreakAsync(string userId)
+        {
+            try
+            {
+                var thirtyDaysAgoUtc = DateTime.UtcNow.AddDays(-30);
+                var logs = await _mealLogs
+                    .Find(x => x.UserId == userId && x.LoggedAt >= thirtyDaysAgoUtc)
+                    .ToListAsync();
+
+                if (!logs.Any()) return 0;
+
+                var loggedDays = logs
+                    .Select(x => x.LoggedAt.AddHours(-3).Date)
+                    .Distinct()
+                    .OrderByDescending(d => d)
+                    .ToList();
+
+                var todayBrazil = DateTime.UtcNow.AddHours(-3).Date;
+                int streak = 0;
+                var checkDate = todayBrazil;
+
+                // Tolerância: se ainda não registrou hoje, confere se registrou ontem para não quebrar à toa
+                if (!loggedDays.Contains(checkDate))
+                {
+                    checkDate = todayBrazil.AddDays(-1);
+                    if (!loggedDays.Contains(checkDate))
+                    {
+                        return 0;
+                    }
+                }
+
+                while (loggedDays.Contains(checkDate))
+                {
+                    streak++;
+                    checkDate = checkDate.AddDays(-1);
+                }
+
+                return streak;
+            }
+            catch
+            {
+                return 0;
             }
         }
 
@@ -111,14 +155,12 @@ namespace LabelWise.Infrastructure.Repositories
         {
             var targetDate = data.Date;
 
-            // Tenta buscar a meta específica para o dia exato
             var metaExata = await _dailyGoals
                 .Find(x => x.UserId == userId && x.TargetDate == targetDate)
                 .FirstOrDefaultAsync();
 
             if (metaExata != null) return metaExata;
 
-            // Fallback: se não houver meta cadastrada especificamente para hoje, pega a última cadastrada
             return await _dailyGoals
                 .Find(x => x.UserId == userId)
                 .SortByDescending(x => x.TargetDate)

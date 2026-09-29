@@ -22,4 +22,6 @@ public interface INutritionRepository
     Task InserirPacienteAsync(PatientDto paciente);
     Task<List<PatientDto>> ObterPacientesPorProfissionalAsync(string professionalId);
 
+    Task<int> CalcularOfensivaStreakAsync(string userId);
+
 }

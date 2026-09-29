@@ -1,32 +1,36 @@
 ﻿using System;
 using System.Collections.Generic;
 
-namespace LabelWise.Application.DTOs.Nutrition;
-
-public class DailyStatusResponseDto
+namespace LabelWise.Application.DTOs.Nutrition
 {
-    public string UserId { get; set; } = string.Empty;
-    public DateTime Date { get; set; }
-    public MacroSummaryDto Target { get; set; } = new(0, 0, 0, 0);
-    public MacroSummaryDto Consumed { get; set; } = new(0, 0, 0, 0);
-    public MacroSummaryDto Remaining { get; set; } = new(0, 0, 0, 0);
-    public List<string> Suggestions { get; set; } = new();
-
-    public DailyStatusResponseDto() { }
-
-    public DailyStatusResponseDto(
-        string userId,
-        DateTime date,
-        MacroSummaryDto target,
-        MacroSummaryDto consumed,
-        MacroSummaryDto remaining,
-        List<string> suggestions)
+    public class DailyStatusResponseDto
     {
-        UserId = userId;
-        Date = date;
-        Target = target;
-        Consumed = consumed;
-        Remaining = remaining;
-        Suggestions = suggestions;
+        public string UserId { get; set; } = string.Empty;
+        public DateTime Date { get; set; }
+        public MacroSummaryDto Target { get; set; } = new(0, 0, 0, 0);
+        public MacroSummaryDto Consumed { get; set; } = new(0, 0, 0, 0);
+        public MacroSummaryDto Remaining { get; set; } = new(0, 0, 0, 0);
+        public List<string> Suggestions { get; set; } = new();
+        public int StreakDays { get; set; } = 0; // 👈 Adicionado para o sistema de Streak
+
+        public DailyStatusResponseDto() { }
+
+        public DailyStatusResponseDto(
+            string userId,
+            DateTime date,
+            MacroSummaryDto target,
+            MacroSummaryDto consumed,
+            MacroSummaryDto remaining,
+            List<string> suggestions,
+            int streakDays = 0) // 👈 Adicionado no construtor
+        {
+            UserId = userId;
+            Date = date;
+            Target = target;
+            Consumed = consumed;
+            Remaining = remaining;
+            Suggestions = suggestions;
+            StreakDays = streakDays;
+        }
     }
 }

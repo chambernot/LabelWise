@@ -3,7 +3,6 @@ using LabelWise.Application.DTOs.Nutrition;
 using LabelWise.Application.Interfaces;
 using LabelWise.Application.Interfaces.Persistence;
 using LabelWise.Domain.Entities.Nutrition;
-using LabelWise.Infrastructure.Services;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Configuration;
@@ -53,7 +52,6 @@ namespace LabelWise.Api.Controllers
             _verifyToken = configuration["MetaWhatsApp:VerifyToken"] ?? "labelwise_verify_token_123";
         }
 
-        // Validação da URL exigida pela Meta (GET)
         [HttpGet("webhook")]
         public IActionResult VerifyWebhook(
             [FromQuery(Name = "hub.mode")] string mode,
@@ -86,11 +84,6 @@ namespace LabelWise.Api.Controllers
                     return Ok();
                 }
 
-                // =========================================================================
-                // 🛡️ BARREIRA DE SEGURANÇA (ANTI-CUSTO)
-                // Verifica se o número do remetente possui uma dieta/meta cadastrada no banco.
-                // Se não tiver, responde educadamente e encerra aqui sem chamar o Gemini.
-                // =========================================================================
                 var metaCadastrada = await _nutritionRepository.ObterMetaDiariaAsync(senderPhone, DateTime.UtcNow);
                 if (metaCadastrada == null)
                 {
@@ -103,20 +96,14 @@ namespace LabelWise.Api.Controllers
 
                     return Ok();
                 }
-                // =========================================================================
 
                 string? textoDigitado = null;
                 string? imagemBase64 = null;
 
-                // 1. Tratamento por tipo de mensagem
                 if (messageType == "text")
                 {
                     textoDigitado = messagingEvent?.Text?.Body;
 
-                    // =========================================================================
-                    // ✨ INTERCEPTADOR DO LINK MÁGICO DE DIETA
-                    // Se o paciente pedir a dieta, enviamos o link web interativo instantaneamente
-                    // =========================================================================
                     if (!string.IsNullOrWhiteSpace(textoDigitado))
                     {
                         var textoLimpo = textoDigitado.Trim().ToLowerInvariant();
@@ -133,7 +120,7 @@ namespace LabelWise.Api.Controllers
                             await _whatsAppSender.SendTextMessageAsync(senderPhone, respostaLink);
                             _logger.LogInformation("[WhatsApp] Link Mágico enviado para o paciente {Phone}", senderPhone);
 
-                            return Ok(); // Encerra aqui sem chamar o Gemini
+                            return Ok();
                         }
                     }
                 }
@@ -145,10 +132,9 @@ namespace LabelWise.Api.Controllers
                 }
                 else if (messageType == "audio" && messagingEvent?.Audio?.Id != null)
                 {
-                    await _whatsAppSender.SendTextMessageAsync(senderPhone, "🎙️ Ouvindo o seu áudio e transcrevendo...");
+                    await _whatsAppSender.SendTextMessageAsync(senderPhone, "🎙 Ouvindo o seu áudio e transcrevendo...");
                     var audioBytes = await _metaMediaService.DownloadMediaAsBytesAsync(messagingEvent.Audio.Id);
 
-                    // Transcrevendo via Gemini
                     textoDigitado = await TranscreverAudioComGeminiAsync(audioBytes);
 
                     _logger.LogInformation("[WhatsAppController] 🎧 Áudio transcrito via Gemini para {Phone}: {Text}", senderPhone, textoDigitado);
@@ -161,7 +147,6 @@ namespace LabelWise.Api.Controllers
                 if (string.IsNullOrWhiteSpace(textoDigitado) && string.IsNullOrWhiteSpace(imagemBase64))
                     return Ok();
 
-                // 2. Verifica se existe uma dúvida pendente para este usuário
                 var contextoPendente = await _nutritionRepository.ObterClarificacaoPendenteAsync(senderPhone);
 
                 string textoFinalParaIa = textoDigitado ?? string.Empty;
@@ -179,7 +164,6 @@ namespace LabelWise.Api.Controllers
                     await _nutritionRepository.RemoverClarificacaoPendenteAsync(senderPhone);
                 }
 
-                // 3. Envia para o serviço de nutrição
                 var request = new ParseMealRequestDto(
                     senderPhone,
                     TextInput: textoFinalParaIa,
@@ -194,7 +178,6 @@ namespace LabelWise.Api.Controllers
                 bool isSystemError = result.ClarificationQuestion != null &&
                                      result.ClarificationQuestion.Contains("serviços de IA estão instáveis", StringComparison.OrdinalIgnoreCase);
 
-                // 4. Tratamento de pendência ou obtenção de status consolidado com sugestões
                 if (result.RequiresUserClarification && !isSystemError)
                 {
                     var novaClarificacao = new MealClarificationContext(
@@ -212,7 +195,6 @@ namespace LabelWise.Api.Controllers
                     statusDoDia = await _nutritionService.GetDailyStatusAndSuggestionAsync(senderPhone, dataHojeBr);
                 }
 
-                // 5. Envia a resposta final formatada
                 var respostaTexto = FormatarRespostaParaWhatsApp(result, statusDoDia);
                 await _whatsAppSender.SendTextMessageAsync(senderPhone, respostaTexto);
 
@@ -418,6 +400,12 @@ namespace LabelWise.Api.Controllers
 
             if (statusDoDia != null)
             {
+                // Exibição da Ofensiva (Streak) no WhatsApp
+                if (statusDoDia.StreakDays > 0)
+                {
+                    msg += $"🔥 *OFENSIVA:* {statusDoDia.StreakDays} dia(s) seguidos no foco! 🚀\n\n";
+                }
+
                 msg += $"📊 *SEU RESUMO DE HOJE*\n" +
                        $"• *Calorias:* {statusDoDia.Consumed.Calories} / {statusDoDia.Target.Calories} kcal\n";
 
@@ -444,7 +432,6 @@ namespace LabelWise.Api.Controllers
         }
     }
 
-    // Classes de Mapeamento do JSON da Meta Cloud API
     public class MetaWebhookPayload
     {
         public List<MetaEntry>? Entry { get; set; }
