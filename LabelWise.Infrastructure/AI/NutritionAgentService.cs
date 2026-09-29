@@ -9,25 +9,21 @@ using System.Net.Http;
 using System.Net.Http.Headers;
 using System.Text;
 using System.Text.Json;
+using System.Text.Json.Nodes;
 using System.Threading;
 using System.Threading.Tasks;
 
 namespace LabelWise.Infrastructure.Services;
 
-/// <summary>
-/// Implementação de análise nutricional multimodal com estratégia de Fallback (Gemini -> OpenAI) e Tratamento Resiliente de Erros.
-/// </summary>
 public sealed class NutritionAgentService : INutritionAgentService
 {
     private readonly IHttpClientFactory _httpClientFactory;
     private readonly ILogger<NutritionAgentService> _logger;
 
-    // Configurações do Gemini (Primário)
     private readonly string _geminiApiKey;
     private readonly string _geminiEndpoint;
     private readonly string _geminiModel;
 
-    // Configurações da OpenAI (Fallback)
     private readonly string _openAiApiKey;
     private readonly string _openAiEndpoint;
     private readonly string _openAiModel;
@@ -42,28 +38,24 @@ public sealed class NutritionAgentService : INutritionAgentService
 
 ════════════════════════════════════════════════════════════════
 REGRA 1 — PROCESSAMENTO E ESTIMATIVA DE PORÇÕES
-════════════════════════════════════════════════════════════════
-1. Identifique o nome geral do prato principal ou da refeição (ex: ""Espaguete ao alho e óleo"", ""Frango com batata doce"") e preencha no campo ""dishName"".
+1. Identifique o nome geral do prato principal ou da refeição (ex: ""Espaguete ao alho e óleo"") e preencha no campo ""dishName"".
 2. Identifique cada item alimentício individualmente na lista ""items"".
-3. Estime o peso/volume individual em gramas (g) ou mililitros (ml). Caso a quantidade não seja informada, utilize porções padrão da culinária brasileira/latino-americana (ex: 1 colher de servir de arroz = 100g; 1 concha de feijão = 130g; 1 bife de frango = 120g; 1 ovo = 50g).
-4. Considere métodos de preparo (frito em óleo aumenta gordura; grelhado/assado mantém padrão).
-5. Calcule calorias e macronutrientes (proteínas, carboidratos, gorduras) com base na tabela TACO/TBCA/USDA tanto para os itens quanto para o total.
+3. Estime o peso/volume individual em gramas (g) ou mililitros (ml).
+4. Considere métodos de preparo.
+5. Calcule calorias e macronutrientes com base na tabela TACO/TBCA.
 6. Atribua um score de confiança (confidenceScore de 0.0 a 1.0) para cada alimento.
 
 ════════════════════════════════════════════════════════════════
 REGRA 2 — TRATAMENTO DE INCERTEZAS (CLARIFICAÇÃO)
-════════════════════════════════════════════════════════════════
-Se a confiança geral for menor que 0.60 (ex: molhos não identificados, recheios ocultos, imagem borrada):
+Se a confiança geral for menor que 0.60:
 - Defina ""requiresUserClarification"": true
-- Adicione uma pergunta curta em ""clarificationQuestion"" (ex: ""O frango do seu prato é grelhado ou empanado?"").
+- Adicione uma pergunta curta em ""clarificationQuestion"".
 Caso contrário, ""requiresUserClarification"": false e ""clarificationQuestion"": null.
 
-════════════════════════════════════════════════════════════════
 ESTRUTURA DE SAÍDA OBRIGATÓRIA (JSON PURO)
-════════════════════════════════════════════════════════════════
 {
   ""mealType"": ""Café da Manhã"" | ""Almoço"" | ""Lanche"" | ""Jantar"" | ""Ceia"",
-  ""dishName"": ""string (ex: Espaguete ao alho e óleo)"",
+  ""dishName"": ""string"",
   ""items"": [
     {
       ""foodName"": ""string"",
@@ -87,24 +79,17 @@ ESTRUTURA DE SAÍDA OBRIGATÓRIA (JSON PURO)
 }";
 
     private const string DietReaderSystemPrompt = @"Você é um Assistente Clínico Especialista em Nutrição e Extração de Dados.
-Sua função é analisar prescrições dietéticas (fotos de cardápios, PDFs convertidos em texto ou anotações livres) e extrair:
+Sua função é analisar prescrições dietéticas e extrair:
 1. Os ALVOS NUTRICIONAIS DIÁRIOS TOTAIS do paciente.
-2. O PLANO DE REFEIÇÕES DETALHADO (cardápio prescrito formatado de forma limpa, dividindo por refeições como Café da Manhã, Almoço, Lanche, Jantar, etc.).
+2. O PLANO DE REFEIÇÕES DETALHADO.
 Retorne APENAS um JSON válido, sem texto fora dele, sem blocos markdown (```json).
-
-REGRAS:
-1. Se a dieta não informar as calorias totais, calcule somando as refeições ou estimando (Prot*4 + Carb*4 + Gord*9).
-2. Se a dieta não informar os macronutrientes totais, some as quantidades de todas as refeições do plano diário.
-3. Identifique restrições alimentares (ex: ""Sem lactose"", ""Intolerante a glúten"", ""Vegetariano"").
-4. Identifique alimentos favoritos ou observações relevantes se houver.
-5. Formate o campo ""prescribedMealPlan"" com o cardápio detalhado completo estruturado por refeições.
 
 FORMATO DE SAÍDA OBRIGATÓRIO:
 {
-  ""targetCalories"": number (inteiro),
-  ""targetProteinG"": number (decimal),
-  ""targetCarbsG"": number (decimal),
-  ""targetFatG"": number (decimal),
+  ""targetCalories"": number,
+  ""targetProteinG"": number,
+  ""targetCarbsG"": number,
+  ""targetFatG"": number,
   ""dietaryRestrictions"": ""string ou null"",
   ""favoriteFoods"": ""string ou null"",
   ""prescribedMealPlan"": ""string ou null""
@@ -118,262 +103,145 @@ FORMATO DE SAÍDA OBRIGATÓRIO:
         _httpClientFactory = httpClientFactory;
         _logger = logger;
 
-        // Resgate das chaves do Gemini (Primário)
-        _geminiApiKey = GetConfigValue(configuration, "GeminiApiKey", "GeminiApiKey")
-            ?? throw new ArgumentNullException("ApiKey de IA (Gemini) não encontrada no appsettings.");
+        _geminiApiKey = (GetConfigValue(configuration, "GeminiApiKey", "Gemini:ApiKey") ?? throw new ArgumentNullException("ApiKey do Gemini ausente.")).Trim();
+        _geminiEndpoint = (GetConfigValue(configuration, "GeminiEndpoint", "Gemini:Endpoint") ?? "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions").Trim();
 
-        _geminiEndpoint = GetConfigValue(configuration, "Gemini:Endpoint", "OpenAi:Endpoint")
-            ?? "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions";
+        // Mantém a leitura da sua chave original "Model" do appsettings.
+        _geminiModel = (GetConfigValue(configuration, "Model", "Gemini:Model") ?? "gemini-1.5-flash").Trim();
 
-        _geminiModel = GetConfigValue(configuration, "Model", "Model")
-            ?? "gemini-3.1-flash-lite";
-
-        // Resgate das chaves da OpenAI (Fallback)
-        _openAiApiKey = configuration["OpenAiVision:ApiKey"]
-            ?? throw new ArgumentNullException("OpenAiVision:ApiKey não encontrada no appsettings.");
-
-        _openAiEndpoint = configuration["OpenAiVision:Endpoint"]
-            ?? "https://api.openai.com/v1/chat/completions";
-
-        _openAiModel = configuration["OpenAiVision:Model"]
-            ?? "gpt-4o";
+        _openAiApiKey = (configuration["OpenAiVision:ApiKey"] ?? "fallback-key").Trim();
+        _openAiEndpoint = (configuration["OpenAiVision:Endpoint"] ?? "https://api.openai.com/v1/chat/completions").Trim();
+        _openAiModel = (configuration["OpenAiVision:Model"] ?? "gpt-4o").Trim();
     }
 
-    public async Task<List<string>> GenerateProactiveSuggestionsAsync(
-    MacroSummaryDto remainingBalance,
-    string nextMealType,
-    List<string>? pratosJaConsumidos = null)
+    public async Task<List<string>> GenerateProactiveSuggestionsAsync(MacroSummaryDto remainingBalance, string nextMealType, List<string>? pratosJaConsumidos = null)
     {
         try
         {
-            _logger.LogInformation("[NutritionAgentService] 🤖 Gerando sugestões proativas de refeição...");
-
             var historicoPratos = (pratosJaConsumidos != null && pratosJaConsumidos.Any())
                 ? string.Join(", ", pratosJaConsumidos)
                 : "Nenhum alimento registrado até o momento.";
 
-            const string systemPrompt = @"Você é um Copiloto Nutricional Proativo.
-Sua função é analisar o saldo restante de macronutrientes do dia e o histórico de refeições para gerar exatamente 3 opções práticas de refeição para a culinária brasileira/latino-americana.
-Retorne APENAS um JSON com a chave ""suggestions"" contendo um array de 3 strings, sem textos adicionais ou blocos markdown (```json).
-
-Exemplo de formato esperado:
-{
-  ""suggestions"": [
-    ""Opção 1 Rápida: Omelete de 3 ovos com 50g de queijo minas (~300 kcal | 26g Prot)"",
-    ""Opção 2 Completa: 150g de peito de frango grelhado + salada verde (~320 kcal | 40g Prot)"",
-    ""Opção 3 Delivery: 2 espetinhos de carne/frango sem acompanhamento pesado (~350 kcal | 38g Prot)""
-  ]
-}";
-
-            var userPrompt = $@"PRÓXIMA REFEIÇÃO: {nextMealType}
-SALDO RESTANTE PARA HOJE:
-- Calorias: {remainingBalance.Calories} kcal
-- Proteínas: {remainingBalance.ProteinG}g
-- Carboidratos: {remainingBalance.CarbsG}g
-- Gorduras: {remainingBalance.FatG}g
-
-ALIMENTOS JÁ CONSUMIDOS HOJE (EVITE REPETIR OS MESMOS ALIMENTOS OU PROTEÍNAS):
-{historicoPratos}
-
-Gere 3 opções realistas e práticas alinhadas a esse saldo e ao histórico de refeições.";
+            const string systemPrompt = @"Você é um Copiloto Nutricional Proativo. Retorne APENAS um JSON com a chave ""suggestions"" contendo um array de 3 strings.";
+            var userPrompt = $"PRÓXIMA REFEIÇÃO: {nextMealType}\nSALDO: {remainingBalance.Calories} kcal...\nALIMENTOS JÁ CONSUMIDOS: {historicoPratos}";
 
             var requestBody = new
             {
                 model = _geminiModel,
                 temperature = 0.6,
                 max_tokens = 4000,
-                response_format = new { type = "json_object" },
                 messages = new object[]
                 {
-                    new { role = "system", content = systemPrompt },
-                    new { role = "user", content = userPrompt }
+                    // Unificado para evitar bugs de roteamento
+                    new { role = "user", content = $"{systemPrompt}\n\n{userPrompt}" }
                 }
             };
 
-            var responseString = await ExecuteWithFailoverAsync(
-                _geminiEndpoint, _geminiApiKey, _geminiModel, "Gemini",
-                _openAiEndpoint, _openAiApiKey, _openAiModel, "OpenAiVision",
-                requestBody);
-
+            var responseString = await ExecuteWithFailoverAsync(_geminiEndpoint, _geminiApiKey, _geminiModel, "Gemini", _openAiEndpoint, _openAiApiKey, _openAiModel, "OpenAiVision", requestBody);
             var jsonContent = ExtractJsonFromResponse(responseString);
 
             using var document = JsonDocument.Parse(jsonContent);
             if (document.RootElement.TryGetProperty("suggestions", out var suggestionsElement))
             {
-                var options = new JsonSerializerOptions { PropertyNameCaseInsensitive = true };
-                var list = JsonSerializer.Deserialize<List<string>>(suggestionsElement.GetRawText(), options);
-                if (list != null && list.Count > 0) return list;
+                return JsonSerializer.Deserialize<List<string>>(suggestionsElement.GetRawText(), new JsonSerializerOptions { PropertyNameCaseInsensitive = true }) ?? GetFallbackSuggestions();
             }
 
             return GetFallbackSuggestions();
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "[NutritionAgentService] ❌ Erro ao gerar sugestões proativas.");
+            _logger.LogError(ex, "[NutritionAgentService] Erro proativo.");
             return GetFallbackSuggestions();
         }
     }
 
     public async Task<MealAnalysisResponseDto> ExtractMealDataAsync(ParseMealRequestDto request)
     {
-        string responseString;
-
         try
         {
-            _logger.LogInformation("[NutritionAgentService] ═══ Iniciando extração nutricional com Failover ═══");
-
-            var geminiBody = BuildRequestBody(request, _geminiModel);
+            var geminiBody = BuildRequestBody(request, _geminiModel, SystemPrompt, UserPromptInstructions);
+            string responseString;
 
             try
             {
-                _logger.LogInformation("[NutritionAgentService] 🚀 Tentando Gemini ({Model})...", _geminiModel);
                 responseString = await SendRequestAsync(_geminiEndpoint, _geminiApiKey, _geminiModel, "Gemini", geminiBody, TimeSpan.FromSeconds(45));
             }
             catch (Exception exGemini)
             {
-                _logger.LogWarning(exGemini, "[NutritionAgentService] ⚠️ Falha ou limite excedido no Gemini. Acionando Fallback para OpenAI imediatamente...");
-
-                var openAiBody = BuildRequestBody(request, _openAiModel);
-                _logger.LogInformation("[NutritionAgentService] 🔄 Executando OpenAI Fallback ({Model})...", _openAiModel);
-
+                _logger.LogWarning(exGemini, "[NutritionAgentService] Falha no Gemini. Acionando OpenAI Fallback...");
+                var openAiBody = BuildRequestBody(request, _openAiModel, SystemPrompt, UserPromptInstructions);
                 responseString = await SendRequestAsync(_openAiEndpoint, _openAiApiKey, _openAiModel, "OpenAiVision", openAiBody, TimeSpan.FromSeconds(60));
             }
 
             var jsonContent = ExtractJsonFromResponse(responseString);
+            var result = JsonSerializer.Deserialize<MealAnalysisResponseDto>(jsonContent, new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
 
-            var options = new JsonSerializerOptions { PropertyNameCaseInsensitive = true };
-            var result = JsonSerializer.Deserialize<MealAnalysisResponseDto>(jsonContent, options);
-
-            if (result == null)
-            {
-                _logger.LogWarning("[NutritionAgentService] ⚠️ Falha ao parsear JSON da IA.");
-                throw new Exception("Não foi possível processar o laudo nutricional da refeição.");
-            }
-
-            _logger.LogInformation("[NutritionAgentService] ✅ Análise concluída — Tipo: {MealType}, Prato: {DishName}, Calorias: {Calories}",
-                result.MealType, result.DishName, result.TotalMeal?.Calories ?? 0);
-
-            return result;
+            return result ?? throw new Exception("Falha ao parsear JSON");
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "[NutritionAgentService] ❌ Erro crítico: Tanto Gemini quanto OpenAI falharam no processamento da refeição.");
-
-            return new MealAnalysisResponseDto(
-                "Almoço",
-                "Indefinido",
-                new List<FoodItemDto>(),
-                new MacroSummaryDto(0, 0, 0, 0),
-                true,
-                "Desculpe, nossos serviços de IA estão instáveis no momento. Poderia tentar enviar a foto ou texto novamente em instantes?"
-            );
+            _logger.LogError(ex, "Erro no processamento da refeição.");
+            return new MealAnalysisResponseDto("Indefinido", "Indefinido", new List<FoodItemDto>(), new MacroSummaryDto(0, 0, 0, 0), true, "Desculpe, a IA está instável.");
         }
     }
 
     public async Task<ExtractDietGoalResponseDto> ExtractDietGoalsFromDocumentAsync(ExtractDietGoalRequestDto request)
     {
-        try
+        var userContentList = new List<object>
+        { 
+            // Unificado no User Role
+            new { type = "text", text = $"{DietReaderSystemPrompt}\n\nExtraia os alvos nutricionais e retorne APENAS um JSON válido." }
+        };
+
+        if (!string.IsNullOrWhiteSpace(request.TextInput))
+            userContentList.Add(new { type = "text", text = $"DIETA: {request.TextInput}" });
+
+        if (!string.IsNullOrWhiteSpace(request.Base64Image))
         {
-            _logger.LogInformation("[NutritionAgentService] 📋 Iniciando extração de metas de dieta a partir de documento/foto...");
-
-            var userContentList = new List<object>
-            {
-                new { type = "text", text = "Extraia os alvos nutricionais diários, restrições e preferências desta dieta e retorne estritamente no formato JSON exigido." }
-            };
-
-            if (!string.IsNullOrWhiteSpace(request.TextInput))
-            {
-                userContentList.Add(new { type = "text", text = $"CONTEÚDO DA DIETA: {request.TextInput}" });
-            }
-
-            if (!string.IsNullOrWhiteSpace(request.Base64Image))
-            {
-                var imageBase64 = request.Base64Image.Contains(",")
-                    ? request.Base64Image
-                    : $"data:image/jpeg;base64,{request.Base64Image}";
-
-                userContentList.Add(new
-                {
-                    type = "image_url",
-                    image_url = new { url = imageBase64, detail = "high" }
-                });
-            }
-
-            var requestBody = new
-            {
-                model = _geminiModel,
-                temperature = 0.1,
-                max_tokens = 1500,
-                response_format = new { type = "json_object" },
-                messages = new object[]
-                {
-                    new { role = "system", content = DietReaderSystemPrompt },
-                    new { role = "user", content = userContentList.ToArray() }
-                }
-            };
-
-            var responseString = await ExecuteWithFailoverAsync(
-                _geminiEndpoint, _geminiApiKey, _geminiModel, "Gemini",
-                _openAiEndpoint, _openAiApiKey, _openAiModel, "OpenAiVision",
-                requestBody);
-
-            var jsonContent = ExtractJsonFromResponse(responseString);
-            var options = new JsonSerializerOptions { PropertyNameCaseInsensitive = true };
-
-            var result = JsonSerializer.Deserialize<ExtractDietGoalResponseDto>(jsonContent, options);
-            if (result == null)
-            {
-                throw new Exception("Falha ao desserializar o resultado da extração de dieta.");
-            }
-
-            return result;
+            var imageBase64 = request.Base64Image.Contains(",") ? request.Base64Image : $"data:image/jpeg;base64,{request.Base64Image}";
+            // Removido o 'detail = "high"' que causava o crash no Gemini
+            userContentList.Add(new { type = "image_url", image_url = new { url = imageBase64 } });
         }
-        catch (Exception ex)
+
+        var requestBody = new
         {
-            _logger.LogError(ex, "[NutritionAgentService] ❌ Erro ao extrair metas de dieta do documento.");
-            throw;
-        }
+            model = _geminiModel,
+            temperature = 0.1,
+            max_tokens = 1500,
+            messages = new object[]
+            {
+                new { role = "user", content = userContentList.ToArray() }
+            }
+        };
+
+        var responseString = await ExecuteWithFailoverAsync(_geminiEndpoint, _geminiApiKey, _geminiModel, "Gemini", _openAiEndpoint, _openAiApiKey, _openAiModel, "OpenAiVision", requestBody);
+        var jsonContent = ExtractJsonFromResponse(responseString);
+
+        return JsonSerializer.Deserialize<ExtractDietGoalResponseDto>(jsonContent, new JsonSerializerOptions { PropertyNameCaseInsensitive = true })
+               ?? throw new Exception("Falha ao extrair dieta.");
     }
 
     private async Task<string> SendRequestAsync(string endpoint, string apiKey, string model, string clientName, object requestBodyObj, TimeSpan timeout)
     {
         var client = _httpClientFactory.CreateClient(clientName);
+        var content = new StringContent(JsonSerializer.Serialize(requestBodyObj), Encoding.UTF8, "application/json");
 
-        var content = new StringContent(
-            JsonSerializer.Serialize(requestBodyObj),
-            Encoding.UTF8,
-            "application/json");
-
-        using var requestMessage = new HttpRequestMessage(HttpMethod.Post, endpoint)
-        {
-            Content = content
-        };
+        using var requestMessage = new HttpRequestMessage(HttpMethod.Post, endpoint) { Content = content };
         requestMessage.Headers.Authorization = new AuthenticationHeaderValue("Bearer", apiKey);
 
         using var cts = new CancellationTokenSource(timeout);
+        var response = await client.SendAsync(requestMessage, cts.Token);
 
-        try
+        if (!response.IsSuccessStatusCode)
         {
-            var response = await client.SendAsync(requestMessage, cts.Token);
-
-            if (!response.IsSuccessStatusCode)
-            {
-                var errorContent = await response.Content.ReadAsStringAsync();
-                throw new HttpRequestException($"API request to {clientName} ({model}) failed with Status {response.StatusCode}: {errorContent}");
-            }
-
-            return await response.Content.ReadAsStringAsync();
+            var errorContent = await response.Content.ReadAsStringAsync();
+            throw new HttpRequestException($"API request to {clientName} ({model}) failed with Status {response.StatusCode}: {errorContent}");
         }
-        catch (OperationCanceledException) when (cts.IsCancellationRequested)
-        {
-            throw new TimeoutException($"A requisição para {clientName} ({model}) excedeu o tempo limite de {timeout.TotalSeconds} segundos.");
-        }
+
+        return await response.Content.ReadAsStringAsync();
     }
 
-    private async Task<string> ExecuteWithFailoverAsync(
-        string primaryEndpoint, string primaryKey, string primaryModel, string primaryClient,
-        string fallbackEndpoint, string fallbackKey, string fallbackModel, string fallbackClient,
-        object baseRequestBody)
+    private async Task<string> ExecuteWithFailoverAsync(string primaryEndpoint, string primaryKey, string primaryModel, string primaryClient, string fallbackEndpoint, string fallbackKey, string fallbackModel, string fallbackClient, object baseRequestBody)
     {
         try
         {
@@ -382,7 +250,7 @@ Gere 3 opções realistas e práticas alinhadas a esse saldo e ao histórico de 
         }
         catch (Exception ex)
         {
-            _logger.LogWarning(ex, "[NutritionAgentService] ⚠️ Falha no provedor primário. Tentando fallback...");
+            _logger.LogWarning(ex, "Falha no provedor primário. Tentando fallback...");
             var fallbackBody = UpdateModelInBody(baseRequestBody, fallbackModel);
             return await SendRequestAsync(fallbackEndpoint, fallbackKey, fallbackModel, fallbackClient, fallbackBody, TimeSpan.FromSeconds(60));
         }
@@ -391,42 +259,29 @@ Gere 3 opções realistas e práticas alinhadas a esse saldo e ao histórico de 
     private object UpdateModelInBody(object originalBody, string newModel)
     {
         var json = JsonSerializer.Serialize(originalBody);
-        var dict = JsonSerializer.Deserialize<Dictionary<string, object>>(json);
-        if (dict != null)
+        var node = JsonNode.Parse(json);
+        if (node != null)
         {
-            dict["model"] = newModel;
+            node["model"] = newModel;
+            return node;
         }
-        return dict ?? originalBody;
+        return originalBody;
     }
 
-    private object BuildRequestBody(ParseMealRequestDto request, string targetModel)
+    private object BuildRequestBody(ParseMealRequestDto request, string targetModel, string sysPrompt, string userPrompt)
     {
         var userContentList = new List<object>
         {
-            new { type = "text", text = UserPromptInstructions }
+            new { type = "text", text = $"{sysPrompt}\n\n{userPrompt}" }
         };
 
         if (!string.IsNullOrWhiteSpace(request.TextInput))
-        {
-            userContentList.Add(new { type = "text", text = $"ENTRADA DE TEXTO DO USUÁRIO: {request.TextInput}" });
-        }
+            userContentList.Add(new { type = "text", text = $"ENTRADA: {request.TextInput}" });
 
         if (!string.IsNullOrWhiteSpace(request.Base64Image))
         {
-            var imageBase64 = request.Base64Image.Contains(",")
-                ? request.Base64Image
-                : $"data:image/jpeg;base64,{request.Base64Image}";
-
-            userContentList.Add(new
-            {
-                type = "image_url",
-                image_url = new { url = imageBase64, detail = "high" }
-            });
-        }
-
-        if (!string.IsNullOrWhiteSpace(request.AudioUrl))
-        {
-            userContentList.Add(new { type = "text", text = $"TRANSCRIÇÃO DE ÁUDIO DO USUÁRIO: {request.AudioUrl}" });
+            var imageBase64 = request.Base64Image.Contains(",") ? request.Base64Image : $"data:image/jpeg;base64,{request.Base64Image}";
+            userContentList.Add(new { type = "image_url", image_url = new { url = imageBase64 } });
         }
 
         return new
@@ -434,10 +289,8 @@ Gere 3 opções realistas e práticas alinhadas a esse saldo e ao histórico de 
             model = targetModel,
             temperature = 0.1,
             max_tokens = 3000,
-            response_format = new { type = "json_object" },
             messages = new object[]
             {
-                new { role = "system", content = SystemPrompt },
                 new { role = "user", content = userContentList.ToArray() }
             }
         };
@@ -448,16 +301,7 @@ Gere 3 opções realistas e práticas alinhadas a esse saldo e ao histórico de 
         using var document = JsonDocument.Parse(responseString);
         var choice = document.RootElement.GetProperty("choices")[0];
 
-        if (choice.TryGetProperty("finish_reason", out var finishReason) && finishReason.GetString() == "length")
-        {
-            _logger.LogError("[NutritionAgentService] ❌ A resposta da IA foi truncada por atingir o limite de max_tokens.");
-            throw new InvalidOperationException("A IA não conseguiu finalizar a geração completa dos alimentos. Tente novamente.");
-        }
-
-        var rawText = choice
-            .GetProperty("message")
-            .GetProperty("content")
-            .GetString() ?? "";
+        var rawText = choice.GetProperty("message").GetProperty("content").GetString() ?? "";
 
         rawText = rawText.Trim();
         if (rawText.StartsWith("```json", StringComparison.OrdinalIgnoreCase))
@@ -474,9 +318,9 @@ Gere 3 opções realistas e práticas alinhadas a esse saldo e ao histórico de 
     {
         return new List<string>
         {
-            "Opção Rápida: Omelete de 3 ovos com queijo minas",
-            "Opção Completa: Peito de frango grelhado com salada folhosa",
-            "Opção Prática: Shake de whey protein com água e aveia"
+            "Opção Rápida: Omelete de 3 ovos",
+            "Opção Completa: Frango grelhado e salada",
+            "Opção Prática: Shake de whey protein"
         };
     }
 

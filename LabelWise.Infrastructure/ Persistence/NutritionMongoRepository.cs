@@ -5,6 +5,8 @@ using LabelWise.Domain.Entities;
 using LabelWise.Domain.Entities.Nutrition;
 using MongoDB.Driver;
 using System;
+using System.Collections.Generic;
+using System.Linq;
 using System.Threading.Tasks;
 
 namespace LabelWise.Infrastructure.Repositories
@@ -15,6 +17,14 @@ namespace LabelWise.Infrastructure.Repositories
         private readonly IMongoCollection<PatientDto> _patients;
         private readonly IMongoCollection<MealLog> _mealLogs;
         private readonly IMongoCollection<DailyNutritionGoal> _dailyGoals;
+
+        public NutritionRepository(IMongoDatabase database)
+        {
+            _mealLogs = database.GetCollection<MealLog>("Nutrition_MealLogs");
+            _dailyGoals = database.GetCollection<DailyNutritionGoal>("DailyGoals");
+            _patients = database.GetCollection<PatientDto>("Nutrition_Patients");
+            _pendingClarifications = database.GetCollection<MealClarificationContext>("Nutrition_PendingClarifications");
+        }
 
         public async Task InserirPacienteAsync(PatientDto paciente)
         {
@@ -27,32 +37,18 @@ namespace LabelWise.Infrastructure.Repositories
             return await _patients.Find(x => x.ProfessionalId == professionalId).ToListAsync();
         }
 
-        public NutritionRepository(IMongoDatabase database)
-        {
-            _mealLogs = database.GetCollection<MealLog>("Nutrition_MealLogs");
-            _dailyGoals = database.GetCollection<DailyNutritionGoal>("DailyGoals");
-            _patients = database.GetCollection<PatientDto>("Nutrition_Patients");
-            _pendingClarifications = database.GetCollection<MealClarificationContext>("Nutrition_PendingClarifications");
-        }
-
         public async Task<List<string>> ObterTelefonesAtivosAsync()
         {
-            // O nome _dailyGoalsCollection precisa ser exatamente o nome 
-            // da variável que você usa no repositório para acessar a coleção do banco.
             using var cursor = await _dailyGoals.DistinctAsync(
                 x => x.UserId,
                 MongoDB.Driver.Builders<DailyNutritionGoal>.Filter.Empty);
 
             var telefones = await cursor.ToListAsync();
-
             return telefones.Where(t => !string.IsNullOrWhiteSpace(t)).ToList();
         }
 
-        
-
         public async Task<MealClarificationContext?> ObterClarificacaoPendenteAsync(string userId)
         {
-            // Expira automaticamente dúvidas com mais de 15 minutos
             var limiteTempo = DateTime.UtcNow.AddMinutes(-15);
 
             return await _pendingClarifications
@@ -78,7 +74,6 @@ namespace LabelWise.Infrastructure.Repositories
                 Builders<DailyNutritionGoal>.Filter.Eq(x => x.TargetDate, goal.TargetDate)
             );
 
-            // Substitui o documento se já existir para aquele dia ou insere um novo
             await _dailyGoals.ReplaceOneAsync(filter, goal, new ReplaceOptions { IsUpsert = true });
         }
 
@@ -86,39 +81,44 @@ namespace LabelWise.Infrastructure.Repositories
         {
             try
             {
-                var inicioDia = data.Date;
-                var fimDia = inicioDia.AddDays(1).AddTicks(-1);
+                // Conversão precisa considerando o fuso horário do Brasil (UTC-3)
+                // 00:00 no Brasil = 03:00 em UTC do mesmo dia
+                var inicioDiaLocal = data.Date;
+                var inicioDiaUtc = DateTime.SpecifyKind(inicioDiaLocal.AddHours(3), DateTimeKind.Utc);
+                var fimDiaUtc = inicioDiaUtc.AddDays(1).AddTicks(-1);
 
-                return await _mealLogs.Find(x => x.UserId == userId && x.LoggedAt >= inicioDia && x.LoggedAt <= fimDia)
+                return await _mealLogs.Find(x => x.UserId == userId && x.LoggedAt >= inicioDiaUtc && x.LoggedAt <= fimDiaUtc)
                                       .ToListAsync();
             }
-            catch (Exception ex)
+            catch (Exception)
             {
-                // Se você já tiver o ILogger injetado no seu NutritionRepository, descomente a linha abaixo:
-                // _logger.LogError(ex, "[NutritionRepository] ❌ Erro ao buscar refeições do dia para o usuário {UserId}", userId);
-
-                // Retorna uma lista vazia para que o sistema não quebre o fluxo do WhatsApp 
-                // e considere temporariamente 0 calorias extras consumidas no dia.
                 return new List<MealLog>();
             }
         }
 
         public async Task InserirMealLogAsync(MealLog mealLog)
         {
-            // Padrão simplificado, sem passagem de tokens, idêntico ao seu InserirAsync
             await _mealLogs.InsertOneAsync(mealLog);
         }
 
-        // 1. Salva a clarificação de forma limpa (deleta a anterior do usuário e insere a nova)
         public async Task SalvarClarificacaoPendenteAsync(MealClarificationContext context)
         {
             await _pendingClarifications.DeleteManyAsync(x => x.UserId == context.UserId);
             await _pendingClarifications.InsertOneAsync(context);
         }
 
-        // 2. Garante o retorno anulável exigido pela interface INutritionRepository
         public async Task<DailyNutritionGoal?> ObterMetaDiariaAsync(string userId, DateTime data)
         {
+            var targetDate = data.Date;
+
+            // Tenta buscar a meta específica para o dia exato
+            var metaExata = await _dailyGoals
+                .Find(x => x.UserId == userId && x.TargetDate == targetDate)
+                .FirstOrDefaultAsync();
+
+            if (metaExata != null) return metaExata;
+
+            // Fallback: se não houver meta cadastrada especificamente para hoje, pega a última cadastrada
             return await _dailyGoals
                 .Find(x => x.UserId == userId)
                 .SortByDescending(x => x.TargetDate)
