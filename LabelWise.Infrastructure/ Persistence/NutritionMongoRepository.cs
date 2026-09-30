@@ -18,6 +18,8 @@ namespace LabelWise.Infrastructure.Repositories
         private readonly IMongoCollection<MealLog> _mealLogs;
         private readonly IMongoCollection<DailyNutritionGoal> _dailyGoals;
 
+        private readonly IMongoCollection<ChatMessageLog> _chatHistory;
+
         public NutritionRepository(IMongoDatabase database)
         {
             _mealLogs = database.GetCollection<MealLog>("Nutrition_MealLogs");
@@ -165,6 +167,32 @@ namespace LabelWise.Infrastructure.Repositories
                 .Find(x => x.UserId == userId)
                 .SortByDescending(x => x.TargetDate)
                 .FirstOrDefaultAsync();
+        }
+
+
+        // _chatHistory = database.GetCollection<ChatMessageLog>("WhatsAppChatHistory");
+
+        public async Task SalvarMensagemHistoricoAsync(string userId, string role, string content)
+        {
+            var msg = new ChatMessageLog
+            {
+                UserId = userId,
+                Role = role,
+                Content = content,
+                Timestamp = DateTime.UtcNow
+            };
+            await _chatHistory.InsertOneAsync(msg);
+        }
+
+        public async Task<List<ChatMessageLog>> ObterUltimasMensagensAsync(string userId, int limite = 6)
+        {
+            // Pega as últimas mensagens do usuário nas últimas 2 horas
+            var corteTempo = DateTime.UtcNow.AddHours(-2);
+
+            return await _chatHistory
+                .Find(x => x.UserId == userId && x.Timestamp >= corteTempo)
+                .SortBy(x => x.Timestamp)
+                .ToListAsync();
         }
     }
 }

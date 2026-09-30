@@ -24,4 +24,6 @@ public interface INutritionRepository
 
     Task<int> CalcularOfensivaStreakAsync(string userId);
 
+    Task SalvarMensagemHistoricoAsync(string userId, string role, string content);
+
 }

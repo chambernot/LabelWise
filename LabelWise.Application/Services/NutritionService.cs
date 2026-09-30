@@ -89,9 +89,47 @@ namespace LabelWise.Application.Services.Nutrition
 
         public async Task<MealAnalysisResponseDto> ProcessMealEntryAsync(ParseMealRequestDto request)
         {
-            var aiAnalysis = await _aiAgent.ExtractMealDataAsync(request);
+            // 🚀 1. BUSCAR O CONTEXTO REAL DO PACIENTE NO BANCO DE DADOS
+            var dataHojeBr = DateTime.UtcNow.AddHours(-3);
+            var dailyGoal = await _repository.ObterMetaDiariaAsync(request.UserId, dataHojeBr.Date);
+            var logs = await _repository.ObterRefeicoesDoDiaAsync(request.UserId, dataHojeBr.Date);
 
-            // 🚀 Se a IA identificou que é uma pergunta/conselho (Modo SOS), retorna direto sem salvar log
+            int targetCal = dailyGoal?.TargetCalories ?? 2000;
+            decimal targetProt = dailyGoal?.TargetProteinG ?? 150;
+            decimal targetCarb = dailyGoal?.TargetCarbsG ?? 200;
+            decimal targetFat = dailyGoal?.TargetFatG ?? 60;
+
+            int consumedCal = logs.Sum(x => x.Calories);
+            decimal consumedProt = logs.Sum(x => x.ProteinG);
+            decimal consumedCarb = logs.Sum(x => x.CarbsG);
+            decimal consumedFat = logs.Sum(x => x.FatG);
+
+            int remainingCal = Math.Max(0, targetCal - consumedCal);
+
+            // Formata o contexto clínico atual para a IA usar
+            string contextoPaciente = $"\n\n[CONTEXTO CLÍNICO DO PACIENTE HOJE]: " +
+                                      $"- Meta Calórica Diária: {targetCal} kcal (Já consumidas: {consumedCal} kcal | Restam: {remainingCal} kcal)\n" +
+                                      $"- Metas de Macros: Proteína {targetProt}g (Consumido: {consumedProt:F0}g), " +
+                                      $"Carboidratos {targetCarb}g (Consumido: {consumedCarb:F0}g), " +
+                                      $"Gorduras {targetFat}g (Consumido: {consumedFat:F0}g).\n" +
+                                      $"- Refeições já registradas hoje: {logs.Count} refeições.";
+
+            // Enriquece o texto de entrada com a realidade do paciente
+            var textoOriginal = request.TextInput ?? string.Empty;
+            var textoEnriquecido = textoOriginal + contextoPaciente;
+
+            var enrichedRequest = new ParseMealRequestDto(
+                request.UserId,
+                textoEnriquecido,
+                request.Base64Image,
+                request.AudioUrl,
+                request.LocalTime
+            );
+
+            // 2. Delega a análise para o agente de IA com o contexto completo
+            var aiAnalysis = await _aiAgent.ExtractMealDataAsync(enrichedRequest);
+
+            // Se for conselho (Modo SOS), retorna direto sem salvar log
             if (aiAnalysis.IsAdvice)
             {
                 return aiAnalysis;

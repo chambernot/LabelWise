@@ -1,5 +1,6 @@
 ﻿using LabelWise.Application.DTOs.Nutrition;
 using LabelWise.Application.Interfaces.AI;
+using LabelWise.Domain.Entities.Nutrition;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
 using System;
@@ -29,15 +30,16 @@ namespace LabelWise.Infrastructure.Services
         private readonly string _openAiModel;
 
         private const string SystemPrompt =
-            "Você é um especialista MÁSTER em nutrição, análise de alimentos e Visão Computacional. " +
-            "Sua função é analisar entradas multimodais (imagens de pratos de comida, áudios transcritos ou textos livres).\n" +
+            "Você é um especialista MÁSTER em nutrição clínica, análise de alimentos e Visão Computacional. " +
+            "Sua função é analisar entradas multimodais mantendo total coerência com o histórico da conversa recente.\n" +
             "ATENÇÃO AOS DOIS MODOS DE OPERAÇÃO:\n" +
-            "MODO 1 (REGISTRO): Se o usuário enviou uma foto, áudio ou texto descrevendo o que COMEU, preencha os dados de macronutrientes e defina 'isAdvice': false.\n" +
-            "MODO 2 (MODO SOS / CONSELHO): Se o usuário fez uma PERGUNTA, DÚVIDA ou PEDIDO DE ORIENTAÇÃO (ex: 'o que peço na churrascaria?', 'posso comer chocolate?', 'está faltando calorias, o que comer?'), " +
-            "atue como um Nutricionista Conselheiro prático e motivador. Responda à dúvida dele no campo 'adviceText' e defina 'isAdvice': true (deixando itens e macros zerados).\n" +
+            "MODO 1 (REGISTRO): Se o usuário enviou uma foto, áudio ou texto descrevendo o que COMEU, preencha os dados e defina 'isAdvice': false.\n" +
+            "MODO 2 (MODO SOS / CONSELHO): Se o usuário fez uma PERGUNTA, DÚVIDA ou PEDIDO DE ORIENTAÇÃO (ex: 'o que peço na churrascaria?', 'posso comer chocolate?', 'como não prejudicar meu objetivo hoje?'), " +
+            "você DEVE utilizar obrigatoriamente o bloco '[CONTEXTO CLÍNICO DO PACIENTE HOJE]' e o histórico de mensagens anteriores para dar uma resposta hiper-personalizada, fluida e contínua. " +
+            "Diga exatamente com base no saldo calórico dele (ex: 'Como ainda te restam X calorias hoje...'). Responda no campo 'adviceText' e defina 'isAdvice': true.\n" +
             "Retorne APENAS um JSON válido, sem texto fora dele, sem markdown de bloco de código (```json).";
 
-        private const string UserPromptInstructions = @"TAREFA: Analisar a entrada do usuário e retornar o JSON correspondente.
+        private const string UserPromptInstructions = @"TAREFA: Analisar a entrada atual do usuário considerando o histórico da conversa e retornar o JSON correspondente.
 
 ESTRUTURA DE SAÍDA OBRIGATÓRIA (JSON PURO)
 {
@@ -141,11 +143,18 @@ FORMATO DE SAÍDA OBRIGATÓRIO:
             }
         }
 
+        // 🚀 1. Implementa a interface INutritionAgentService (Exigida pelo compilador)
         public async Task<MealAnalysisResponseDto> ExtractMealDataAsync(ParseMealRequestDto request)
+        {
+            return await ExtractMealDataAsync(request, null);
+        }
+
+        // 🚀 2. Sobrecarga estendida que aceita o histórico de conversas do chat
+        public async Task<MealAnalysisResponseDto> ExtractMealDataAsync(ParseMealRequestDto request, List<ChatMessageLog>? chatHistory)
         {
             try
             {
-                var geminiBody = BuildRequestBody(request, _geminiModel, SystemPrompt, UserPromptInstructions);
+                var geminiBody = BuildRequestBodyWithHistory(chatHistory, request, _geminiModel, SystemPrompt, UserPromptInstructions);
                 string responseString;
 
                 try
@@ -155,7 +164,7 @@ FORMATO DE SAÍDA OBRIGATÓRIO:
                 catch (Exception exGemini)
                 {
                     _logger.LogWarning(exGemini, "[NutritionAgentService] Falha no Gemini. Acionando OpenAI Fallback...");
-                    var openAiBody = BuildRequestBody(request, _openAiModel, SystemPrompt, UserPromptInstructions);
+                    var openAiBody = BuildRequestBodyWithHistory(chatHistory, request, _openAiModel, SystemPrompt, UserPromptInstructions);
                     responseString = await SendRequestAsync(_openAiEndpoint, _openAiApiKey, _openAiModel, "OpenAiVision", openAiBody, TimeSpan.FromSeconds(60));
                 }
 
@@ -252,31 +261,47 @@ FORMATO DE SAÍDA OBRIGATÓRIO:
             return originalBody;
         }
 
-        private object BuildRequestBody(ParseMealRequestDto request, string targetModel, string sysPrompt, string userPrompt)
+        private object BuildRequestBodyWithHistory(List<ChatMessageLog>? history, ParseMealRequestDto request, string targetModel, string sysPrompt, string userPromptInstructions)
         {
-            var userContentList = new List<object>
+            var messagesList = new List<object>
             {
-                new { type = "text", text = $"{sysPrompt}\n\n{userPrompt}" }
+                new { role = "system", content = $"{sysPrompt}\n\n{userPromptInstructions}" }
             };
 
+            if (history != null && history.Any())
+            {
+                foreach (var h in history)
+                {
+                    messagesList.Add(new { role = h.Role, content = h.Content });
+                }
+            }
+
+            var currentUserContent = new List<object>();
+
             if (!string.IsNullOrWhiteSpace(request.TextInput))
-                userContentList.Add(new { type = "text", text = $"ENTRADA: {request.TextInput}" });
+            {
+                currentUserContent.Add(new { type = "text", text = request.TextInput });
+            }
 
             if (!string.IsNullOrWhiteSpace(request.Base64Image))
             {
                 var imageBase64 = request.Base64Image.Contains(",") ? request.Base64Image : $"data:image/jpeg;base64,{request.Base64Image}";
-                userContentList.Add(new { type = "image_url", image_url = new { url = imageBase64 } });
+                currentUserContent.Add(new { type = "image_url", image_url = new { url = imageBase64 } });
             }
+
+            if (currentUserContent.Count == 0)
+            {
+                currentUserContent.Add(new { type = "text", text = "Analise esta entrada." });
+            }
+
+            messagesList.Add(new { role = "user", content = currentUserContent.ToArray() });
 
             return new
             {
                 model = targetModel,
-                temperature = 0.1,
+                temperature = 0.2,
                 max_tokens = 3000,
-                messages = new object[]
-                {
-                    new { role = "user", content = userContentList.ToArray() }
-                }
+                messages = messagesList.ToArray()
             };
         }
 
@@ -319,4 +344,4 @@ FORMATO DE SAÍDA OBRIGATÓRIO:
             return null;
         }
     }
-}
+}   
