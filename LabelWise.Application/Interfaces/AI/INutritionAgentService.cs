@@ -1,16 +1,19 @@
-﻿namespace LabelWise.Application.Interfaces.AI;
+﻿using LabelWise.Application.DTOs.Nutrition;
+using LabelWise.Domain.Entities.Nutrition; // 👈 Certifique-se de ter este using
+using System.Collections.Generic;
+using System.Threading.Tasks;
 
-using LabelWise.Application.DTOs.Nutrition;
-
-public interface INutritionAgentService
+namespace LabelWise.Application.Interfaces.AI
 {
-    Task<MealAnalysisResponseDto> ExtractMealDataAsync(
-        ParseMealRequestDto request);
-    
-    Task<List<string>> GenerateProactiveSuggestionsAsync(
-            MacroSummaryDto remainingBalance,
-            string nextMealType,
-            List<string>? pratosJaConsumidos = null);
+    public interface INutritionAgentService
+    {
+        Task<List<string>> GenerateProactiveSuggestionsAsync(MacroSummaryDto remainingBalance, string nextMealType, List<string>? pratosJaConsumidos = null);
 
-    Task<ExtractDietGoalResponseDto> ExtractDietGoalsFromDocumentAsync(ExtractDietGoalRequestDto request);
+        Task<MealAnalysisResponseDto> ExtractMealDataAsync(ParseMealRequestDto request);
+
+        // 🚀 Adicione esta linha para aceitar o histórico de conversas na interface
+        Task<MealAnalysisResponseDto> ExtractMealDataAsync(ParseMealRequestDto request, List<ChatMessageLog>? chatHistory);
+
+        Task<ExtractDietGoalResponseDto> ExtractDietGoalsFromDocumentAsync(ExtractDietGoalRequestDto request);
+    }
 }

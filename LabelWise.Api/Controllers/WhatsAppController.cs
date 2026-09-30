@@ -164,6 +164,9 @@ namespace LabelWise.Api.Controllers
                     await _nutritionRepository.RemoverClarificacaoPendenteAsync(senderPhone);
                 }
 
+                // 🚀 1. Salva a mensagem do usuário no histórico do MongoDB antes de processar
+                await _nutritionRepository.SalvarMensagemHistoricoAsync(senderPhone, "user", textoFinalParaIa);
+
                 var request = new ParseMealRequestDto(
                     senderPhone,
                     TextInput: textoFinalParaIa,
@@ -197,6 +200,9 @@ namespace LabelWise.Api.Controllers
 
                 var respostaTexto = FormatarRespostaParaWhatsApp(result, statusDoDia);
                 await _whatsAppSender.SendTextMessageAsync(senderPhone, respostaTexto);
+
+                // 🚀 2. Salva a resposta do assistente no histórico do MongoDB para manter o fluxo da conversa
+                await _nutritionRepository.SalvarMensagemHistoricoAsync(senderPhone, "assistant", respostaTexto);
 
                 return Ok();
             }
@@ -306,7 +312,7 @@ namespace LabelWise.Api.Controllers
                 throw new InvalidOperationException("Chave da API Gemini não configurada para a transcrição de áudio.");
             }
 
-            var endpoint = _configuration["Gemini:Endpoint"] ?? "[https://generativelanguage.googleapis.com/v1beta/openai/chat/completions](https://generativelanguage.googleapis.com/v1beta/openai/chat/completions)";
+            var endpoint = _configuration["Gemini:Endpoint"] ?? "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions";
             var model = _configuration["Model"] ?? "gemini-3.1-flash-lite";
 
             var client = _httpClientFactory.CreateClient();

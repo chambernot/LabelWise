@@ -24,6 +24,8 @@ public interface INutritionRepository
 
     Task<int> CalcularOfensivaStreakAsync(string userId);
 
+    // 🚀 Novas assinaturas para o Histórico de Conversa (Memória de Curto Prazo)
     Task SalvarMensagemHistoricoAsync(string userId, string role, string content);
+    Task<List<ChatMessageLog>> ObterUltimasMensagensAsync(string userId, int limite = 6);
 
 }

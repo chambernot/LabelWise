@@ -89,7 +89,10 @@ namespace LabelWise.Application.Services.Nutrition
 
         public async Task<MealAnalysisResponseDto> ProcessMealEntryAsync(ParseMealRequestDto request)
         {
-            // 🚀 1. BUSCAR O CONTEXTO REAL DO PACIENTE NO BANCO DE DADOS
+            // 🚀 1. BUSCAR O HISTÓRICO DE MENSAGENS RECENTES (Memória de curto prazo)
+            var chatHistory = await _repository.ObterUltimasMensagensAsync(request.UserId, 6);
+
+            // 🚀 2. BUSCAR O CONTEXTO REAL DO PACIENTE NO BANCO DE DADOS
             var dataHojeBr = DateTime.UtcNow.AddHours(-3);
             var dailyGoal = await _repository.ObterMetaDiariaAsync(request.UserId, dataHojeBr.Date);
             var logs = await _repository.ObterRefeicoesDoDiaAsync(request.UserId, dataHojeBr.Date);
@@ -126,8 +129,8 @@ namespace LabelWise.Application.Services.Nutrition
                 request.LocalTime
             );
 
-            // 2. Delega a análise para o agente de IA com o contexto completo
-            var aiAnalysis = await _aiAgent.ExtractMealDataAsync(enrichedRequest);
+            // 🚀 3. Delega a análise para o agente de IA enviando o histórico conversacional junto
+            var aiAnalysis = await _aiAgent.ExtractMealDataAsync(enrichedRequest, chatHistory);
 
             // Se for conselho (Modo SOS), retorna direto sem salvar log
             if (aiAnalysis.IsAdvice)
