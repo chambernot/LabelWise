@@ -17,8 +17,7 @@ namespace LabelWise.Infrastructure.Repositories
         private readonly IMongoCollection<PatientDto> _patients;
         private readonly IMongoCollection<MealLog> _mealLogs;
         private readonly IMongoCollection<DailyNutritionGoal> _dailyGoals;
-
-        private readonly IMongoCollection<ChatMessageLog> _chatHistory;
+        private readonly IMongoCollection<ChatMessageLog> _chatHistory; // 👈 Declarado
 
         public NutritionRepository(IMongoDatabase database)
         {
@@ -26,6 +25,9 @@ namespace LabelWise.Infrastructure.Repositories
             _dailyGoals = database.GetCollection<DailyNutritionGoal>("DailyGoals");
             _patients = database.GetCollection<PatientDto>("Nutrition_Patients");
             _pendingClarifications = database.GetCollection<MealClarificationContext>("Nutrition_PendingClarifications");
+
+            // 🚀 CORRIGIDO: Inicialização ativada para evitar o NullReferenceException
+            _chatHistory = database.GetCollection<ChatMessageLog>("WhatsAppChatHistory");
         }
 
         public async Task InserirPacienteAsync(PatientDto paciente)
@@ -96,7 +98,6 @@ namespace LabelWise.Infrastructure.Repositories
             }
         }
 
-        // 🚀 NOVO: Método que calcula a sequência de dias consecutivos (Streak)
         public async Task<int> CalcularOfensivaStreakAsync(string userId)
         {
             try
@@ -118,7 +119,6 @@ namespace LabelWise.Infrastructure.Repositories
                 int streak = 0;
                 var checkDate = todayBrazil;
 
-                // Tolerância: se ainda não registrou hoje, confere se registrou ontem para não quebrar à toa
                 if (!loggedDays.Contains(checkDate))
                 {
                     checkDate = todayBrazil.AddDays(-1);
@@ -169,9 +169,6 @@ namespace LabelWise.Infrastructure.Repositories
                 .FirstOrDefaultAsync();
         }
 
-
-        // _chatHistory = database.GetCollection<ChatMessageLog>("WhatsAppChatHistory");
-
         public async Task SalvarMensagemHistoricoAsync(string userId, string role, string content)
         {
             var msg = new ChatMessageLog
@@ -186,12 +183,12 @@ namespace LabelWise.Infrastructure.Repositories
 
         public async Task<List<ChatMessageLog>> ObterUltimasMensagensAsync(string userId, int limite = 6)
         {
-            // Pega as últimas mensagens do usuário nas últimas 2 horas
             var corteTempo = DateTime.UtcNow.AddHours(-2);
 
             return await _chatHistory
                 .Find(x => x.UserId == userId && x.Timestamp >= corteTempo)
                 .SortBy(x => x.Timestamp)
+                .Limit(limite)
                 .ToListAsync();
         }
     }
