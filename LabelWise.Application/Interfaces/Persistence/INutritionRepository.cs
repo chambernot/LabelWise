@@ -6,6 +6,7 @@ namespace LabelWise.Application.Interfaces.Persistence;
 
 public interface INutritionRepository
 {
+    Task<PatientDto?> ObterPacientePorIdAsync(string patientId);
     Task<List<string>> ObterTelefonesAtivosAsync();
     Task SalvarClarificacaoPendenteAsync(MealClarificationContext context);
     Task<MealClarificationContext?> ObterClarificacaoPendenteAsync(string userId);

@@ -18,7 +18,10 @@ namespace LabelWise.Infrastructure.Repositories
         private readonly IMongoCollection<MealLog> _mealLogs;
         private readonly IMongoCollection<DailyNutritionGoal> _dailyGoals;
         private readonly IMongoCollection<ChatMessageLog> _chatHistory; // 👈 Declarado
-
+        public async Task<PatientDto?> ObterPacientePorIdAsync(string patientId)
+        {
+            return await _patients.Find(x => x.Id == patientId).FirstOrDefaultAsync();
+        }
         public NutritionRepository(IMongoDatabase database)
         {
             _mealLogs = database.GetCollection<MealLog>("Nutrition_MealLogs");
