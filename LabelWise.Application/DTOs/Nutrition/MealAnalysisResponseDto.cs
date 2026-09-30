@@ -1,12 +1,16 @@
-﻿namespace LabelWise.Application.DTOs.Nutrition;
+﻿using System.Collections.Generic;
+
+namespace LabelWise.Application.DTOs.Nutrition;
 
 public record MealAnalysisResponseDto(
     string MealType,
     string DishName,
-    List <FoodItemDto> Items,
+    List<FoodItemDto> Items,
     MacroSummaryDto TotalMeal,
     bool RequiresUserClarification,
-    string? ClarificationQuestion
+    string? ClarificationQuestion,
+    bool IsAdvice = false,
+    string? AdviceText = null
 );
 
 public record FoodItemDto(

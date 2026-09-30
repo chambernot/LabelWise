@@ -189,7 +189,7 @@ namespace LabelWise.Api.Controllers
 
                     await _nutritionRepository.SalvarClarificacaoPendenteAsync(novaClarificacao);
                 }
-                else if (result.TotalMeal != null && !isSystemError)
+                else if (result.TotalMeal != null && !isSystemError && !result.IsAdvice)
                 {
                     var dataHojeBr = DateTime.UtcNow.AddHours(-3);
                     statusDoDia = await _nutritionService.GetDailyStatusAndSuggestionAsync(senderPhone, dataHojeBr);
@@ -306,7 +306,7 @@ namespace LabelWise.Api.Controllers
                 throw new InvalidOperationException("Chave da API Gemini não configurada para a transcrição de áudio.");
             }
 
-            var endpoint = _configuration["Gemini:Endpoint"] ?? "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions";
+            var endpoint = _configuration["Gemini:Endpoint"] ?? "[https://generativelanguage.googleapis.com/v1beta/openai/chat/completions](https://generativelanguage.googleapis.com/v1beta/openai/chat/completions)";
             var model = _configuration["Model"] ?? "gemini-3.1-flash-lite";
 
             var client = _httpClientFactory.CreateClient();
@@ -381,6 +381,16 @@ namespace LabelWise.Api.Controllers
                        "Por favor, tente enviar sua foto ou descrição novamente em instantes.";
             }
 
+            // 🚀 TRATAMENTO DO MODO SOS / CONSELHO
+            if (aiResult.IsAdvice)
+            {
+                var conselho = !string.IsNullOrWhiteSpace(aiResult.AdviceText)
+                    ? aiResult.AdviceText
+                    : "Estou aqui para ajudar com sua dieta! Como posso orientar sua próxima escolha?";
+
+                return $"💡 *Conselho do Nutri:*\n\n{conselho}";
+            }
+
             if (aiResult.RequiresUserClarification)
             {
                 return $"🤔 *Fiquei na dúvida sobre o seu prato:*\n{aiResult.ClarificationQuestion}";
@@ -400,7 +410,6 @@ namespace LabelWise.Api.Controllers
 
             if (statusDoDia != null)
             {
-                // Exibição da Ofensiva (Streak) no WhatsApp
                 if (statusDoDia.StreakDays > 0)
                 {
                     msg += $"🔥 *OFENSIVA:* {statusDoDia.StreakDays} dia(s) seguidos no foco! 🚀\n\n";

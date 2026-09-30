@@ -82,7 +82,6 @@ namespace LabelWise.Application.Services.Nutrition
 
             var suggestions = await _aiAgent.GenerateProactiveSuggestionsAsync(remaining, nextMealType, pratosJaConsumidos);
 
-            // 🚀 Busca o Streak calculado no Repositório
             int streakDays = await _repository.CalcularOfensivaStreakAsync(userId);
 
             return new DailyStatusResponseDto(userId, targetDate, target, consumed, remaining, suggestions, streakDays);
@@ -91,6 +90,12 @@ namespace LabelWise.Application.Services.Nutrition
         public async Task<MealAnalysisResponseDto> ProcessMealEntryAsync(ParseMealRequestDto request)
         {
             var aiAnalysis = await _aiAgent.ExtractMealDataAsync(request);
+
+            // 🚀 Se a IA identificou que é uma pergunta/conselho (Modo SOS), retorna direto sem salvar log
+            if (aiAnalysis.IsAdvice)
+            {
+                return aiAnalysis;
+            }
 
             if (aiAnalysis.RequiresUserClarification)
             {
