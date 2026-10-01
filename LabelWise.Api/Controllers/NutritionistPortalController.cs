@@ -270,6 +270,9 @@ public class NutritionistPortalController : ControllerBase
         [FromHeader(Name = "X-Nutri-Key")] string key,
         [FromBody] ConfirmDietRequestDto dto)
     {
+        _logger.LogInformation("📥 DTO Recebido (Confirm): Phone={Phone}, Calories={Cal}, MainGoal={Goal}, Restrições={Rest}, Prefs={Pref}, Plano={Plan}",
+            dto.PatientPhone, dto.Calories, dto.MainGoal, dto.DietaryRestrictions, dto.FavoriteFoods, dto.PrescribedMealPlan);
+
         var nutri = await ObterNutricionistaAutenticadoAsync(key);
         if (nutri == null)
         {
