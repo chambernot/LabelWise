@@ -52,7 +52,7 @@
         <!-- Conteúdo Principal -->
         <main class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6 flex-1 w-full">
 
-            <!-- ABAS MOBILE (Aparece apenas em telas pequenas) -->
+            <!-- ABAS MOBILE -->
             <div class="lg:hidden flex p-1 bg-gray-200/50 rounded-xl mb-6">
                 <button @click="mobileTab = 'list'"
                         :class="mobileTab === 'list' ? 'bg-white shadow-sm text-gray-900' : 'text-gray-500'"
@@ -105,7 +105,7 @@
                                    class="w-full px-3 py-2 rounded-lg border border-gray-200 text-sm focus:ring-2 focus:ring-emerald-500 focus:outline-none">
                         </div>
 
-                        <!-- 🚀 NOVOS CAMPOS CLÍNICOS -->
+                        <!-- PERFIL CLÍNICO -->
                         <div class="pt-2 pb-1 border-t border-gray-100">
                             <h3 class="text-xs font-bold text-gray-800 mb-3 uppercase tracking-wider">Perfil Clínico</h3>
 
@@ -123,17 +123,18 @@
                                 <label class="block text-xs font-semibold uppercase text-gray-600 mb-1 flex items-center">
                                     Restrições Médicas / Alergias <span class="text-red-500 ml-1" title="A IA nunca recomendará nada que viole isso">*</span>
                                 </label>
-                                <input type="text" x-model="form.medicalRestrictions" placeholder="Ex: Intolerância a lactose, Doença celíaca..."
+                                <input type="text" x-model="form.dietaryRestrictions" placeholder="Ex: Intolerância a lactose, Doença celíaca..."
                                        class="w-full px-3 py-2 rounded-lg border border-gray-200 text-sm focus:ring-2 focus:ring-red-300 focus:outline-none bg-red-50/30">
                             </div>
 
                             <div class="mb-3">
-                                <label class="block text-xs font-semibold uppercase text-gray-600 mb-1">Aversões Alimentares</label>
-                                <input type="text" x-model="form.foodAversions" placeholder="Ex: Não gosta de ovo, odeia fígado..."
+                                <label class="block text-xs font-semibold uppercase text-gray-600 mb-1">Aversões / Alimentos Favoritos</label>
+                                <input type="text" x-model="form.favoriteFoods" placeholder="Ex: Não gosta de ovo, prefere frango..."
                                        class="w-full px-3 py-2 rounded-lg border border-gray-200 text-sm focus:ring-2 focus:ring-emerald-500 focus:outline-none">
                             </div>
                         </div>
 
+                        <!-- METAS DIÁRIAS -->
                         <div class="pt-2 pb-1 border-t border-gray-100">
                             <h3 class="text-xs font-bold text-gray-800 mb-3 uppercase tracking-wider">Metas Diárias</h3>
                             <div class="grid grid-cols-2 gap-3 mb-3">
@@ -184,7 +185,7 @@
                          class="mt-4 p-3 rounded-xl border text-xs text-center font-medium"></div>
                 </div>
 
-                <!-- Coluna Direita: Dashboard e Tabela (Oculta no mobile se a aba não for 'list') -->
+                <!-- Coluna Direita: Dashboard e Tabela -->
                 <div class="lg:col-span-2 space-y-6"
                      :class="mobileTab === 'list' ? 'block' : 'hidden lg:block'">
 
@@ -214,14 +215,11 @@
 
                     <!-- Lista de Pacientes -->
                     <div class="bg-white rounded-2xl shadow-sm border border-gray-200 overflow-hidden">
-
                         <div class="p-4 sm:p-6 border-b border-gray-100 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
                             <div>
                                 <h2 class="text-lg font-bold text-gray-900">Seus Pacientes</h2>
                                 <p class="text-xs text-gray-500">Acompanhe a dieta e retenção da carteira.</p>
                             </div>
-
-                            <!-- Barra de Pesquisa -->
                             <div class="flex space-x-2">
                                 <input type="text" x-model="searchQuery" placeholder="Buscar telefone..."
                                        class="px-3 py-2 rounded-lg border border-gray-200 text-xs focus:ring-2 focus:ring-emerald-500 focus:outline-none w-full sm:w-48">
@@ -231,14 +229,14 @@
                             </div>
                         </div>
 
-                        <!-- CARDS PARA MOBILE -->
+                        <!-- CARDS MOBILE -->
                         <div class="block lg:hidden divide-y divide-gray-100 p-2">
                             <template x-for="patient in filteredPatients" :key="patient.userId">
                                 <div class="p-4 bg-white hover:bg-gray-50 transition">
                                     <div class="flex justify-between items-start mb-2">
                                         <div>
                                             <h3 class="font-bold text-gray-800 text-sm" x-text="patient.userId"></h3>
-                                            <p class="text-[10px] text-gray-500" x-text="patient.mainGoal || 'Objetivo não definido'"></p>
+                                            <p class="text-[10px] text-gray-500" x-text="patient.dietaryRestrictions ? '⚠️ ' + patient.dietaryRestrictions : 'Sem restrições'"></p>
                                         </div>
                                         <a :href="'https://wa.me/' + patient.userId" target="_blank"
                                            class="bg-green-100 hover:bg-green-200 text-green-700 p-1.5 rounded-full flex items-center justify-center transition">
@@ -260,13 +258,13 @@
                             </template>
                         </div>
 
-                        <!-- TABELA PARA DESKTOP -->
+                        <!-- TABELA DESKTOP -->
                         <div class="hidden lg:block overflow-x-auto">
                             <table class="w-full text-left border-collapse">
                                 <thead>
                                     <tr class="bg-gray-50/50 text-[11px] uppercase font-bold text-gray-400 tracking-wider border-b border-gray-100">
                                         <th class="py-3 px-6">Paciente</th>
-                                        <th class="py-3 px-6">Objetivo Clínico</th>
+                                        <th class="py-3 px-6">Restrições / Observações</th>
                                         <th class="py-3 px-6">Meta Diária</th>
                                         <th class="py-3 px-6 text-right">Ações</th>
                                     </tr>
@@ -285,8 +283,8 @@
                                             </td>
                                             <td class="py-4 px-6 text-xs text-gray-600">
                                                 <div class="flex flex-col">
-                                                    <span class="font-medium text-gray-800" x-text="patient.mainGoal || 'Manutenção'"></span>
-                                                    <span x-show="patient.medicalRestrictions && patient.medicalRestrictions !== 'Nenhuma'" class="text-[10px] text-red-500 mt-0.5 truncate max-w-[150px]" :title="patient.medicalRestrictions" x-text="'⚠️ ' + patient.medicalRestrictions"></span>
+                                                    <span class="font-medium text-gray-800" x-text="patient.dietaryRestrictions || 'Nenhuma restrição'"></span>
+                                                    <span class="text-[10px] text-gray-400 mt-0.5 truncate max-w-[180px]" x-text="patient.favoriteFoods ? 'Fav: ' + patient.favoriteFoods : ''"></span>
                                                 </div>
                                             </td>
                                             <td class="py-4 px-6">
@@ -324,7 +322,7 @@
         </main>
     </div>
 
-    <!-- MODAL DE HISTÓRICO DE CONSUMO AVANÇADO -->
+    <!-- MODAL DE HISTÓRICO -->
     <div x-show="showModal" class="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm px-4" style="display: none;">
         <div class="bg-white rounded-2xl max-w-3xl w-full p-5 sm:p-6 shadow-2xl border border-gray-100 max-h-[90vh] flex flex-col">
             <div class="flex items-center justify-between pb-4 border-b border-gray-100">
@@ -357,8 +355,6 @@
             <div class="py-4 overflow-y-auto flex-1 space-y-4 pr-2">
                 <template x-for="(group, dateStr) in groupedLogs" :key="dateStr">
                     <div class="border border-gray-100 rounded-xl overflow-hidden shadow-sm">
-
-                        <!-- Cabeçalho do Dia c/ Barra de Progresso -->
                         <div class="bg-gray-50 px-4 py-3 border-b border-gray-100">
                             <div class="flex items-center justify-between mb-2">
                                 <span class="text-xs font-bold text-gray-700" x-text="formatDateTitle(dateStr)"></span>
@@ -373,7 +369,6 @@
                             </div>
                         </div>
 
-                        <!-- Refeições do dia -->
                         <div class="divide-y divide-gray-50 bg-white">
                             <template x-for="log in group" :key="log.id">
                                 <div class="p-3 px-4 flex justify-between hover:bg-gray-50/50 transition items-start">
@@ -438,7 +433,7 @@
                 targetCalories: 2000,
                 selectedPeriod: '7',
 
-                // 🚀 ADICIONADO CAMPOS CLÍNICOS AQUI
+                // 🚀 FORMULÁRIO SINCRONIZADO COM O BACKEND C#
                 form: {
                     patientPhone: '',
                     nutritionistId: 'nutri_web_portal',
@@ -447,8 +442,8 @@
                     carbs: 200,
                     fat: 60,
                     mainGoal: 'Emagrecimento',
-                    medicalRestrictions: '',
-                    foodAversions: '',
+                    dietaryRestrictions: '',
+                    favoriteFoods: '',
                     prescribedMealPlan: ''
                 },
 
@@ -592,11 +587,8 @@
                             this.form.carbs = data.targetCarbsG || this.form.carbs;
                             this.form.fat = data.targetFatG || this.form.fat;
 
-                            // 🚀 Mapeia o que a IA entender para os campos clínicos
-                            this.form.medicalRestrictions = data.medicalRestrictions || data.dietaryRestrictions || '';
-                            this.form.foodAversions = data.foodAversions || '';
-                            this.form.mainGoal = data.mainGoal || this.form.mainGoal;
-
+                            this.form.dietaryRestrictions = data.dietaryRestrictions || '';
+                            this.form.favoriteFoods = data.favoriteFoods || '';
                             this.form.prescribedMealPlan = data.prescribedMealPlan || '';
 
                             this.feedbackMessage = '✨ Dieta extraída com sucesso pelo Gemini! Revise os campos e salve.';
@@ -667,15 +659,6 @@
                         return;
                     }
 
-                    if (!this.isEditing) {
-                        const pacienteExistente = this.patients.find(p => p.userId === this.form.patientPhone);
-                        if (pacienteExistente) {
-                            this.feedbackMessage = `❌ O número ${this.form.patientPhone} já está cadastrado. Use o botão de editar.`;
-                            this.feedbackError = true;
-                            return;
-                        }
-                    }
-
                     this.feedbackMessage = 'Salvando dieta e perfil clínico...';
                     this.feedbackError = false;
 
@@ -716,11 +699,8 @@
                     this.form.carbs = p.targetCarbsG;
                     this.form.fat = p.targetFatG;
 
-                    // 🚀 Carrega os campos novos para edição
-                    this.form.mainGoal = p.mainGoal || 'Manutenção Saudável';
-                    this.form.medicalRestrictions = p.medicalRestrictions || p.dietaryRestrictions || '';
-                    this.form.foodAversions = p.foodAversions || '';
-
+                    this.form.dietaryRestrictions = p.dietaryRestrictions || '';
+                    this.form.favoriteFoods = p.favoriteFoods || '';
                     this.form.prescribedMealPlan = p.prescribedMealPlan || '';
 
                     this.mobileTab = 'form';
@@ -736,11 +716,9 @@
                     this.form.carbs = 200;
                     this.form.fat = 60;
 
-                    // 🚀 Limpa os campos novos
                     this.form.mainGoal = 'Emagrecimento';
-                    this.form.medicalRestrictions = '';
-                    this.form.foodAversions = '';
-
+                    this.form.dietaryRestrictions = '';
+                    this.form.favoriteFoods = '';
                     this.form.prescribedMealPlan = '';
                     this.aiRawText = '';
                     this.selectedFileBase64 = null;

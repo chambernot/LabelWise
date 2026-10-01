@@ -42,7 +42,6 @@ public class NutritionistPortalController : ControllerBase
     {
         if (string.IsNullOrWhiteSpace(key)) return null;
 
-        // Se for a chave master/padrão do sistema
         if (key == _nutriKey)
         {
             return new AuthenticatedNutri(
@@ -54,7 +53,6 @@ public class NutritionistPortalController : ControllerBase
             );
         }
 
-        // Valida se existe no banco de dados na collection "Nutritionists"
         try
         {
             var nutriCollection = _database.GetCollection<Nutritionist>("Nutritionists");
@@ -65,7 +63,7 @@ public class NutritionistPortalController : ControllerBase
                 Id: nutri.Id ?? "unknown",
                 Name: nutri.Name,
                 Email: nutri.Email,
-                MaxPatients: nutri.MaxPatients > 0 ? nutri.MaxPatients : 30, // Padrão de 30 pacientes por plano
+                MaxPatients: nutri.MaxPatients > 0 ? nutri.MaxPatients : 30,
                 IsMaster: false
             );
         }
@@ -75,9 +73,6 @@ public class NutritionistPortalController : ControllerBase
         }
     }
 
-    /// <summary>
-    /// Valida se a API Key informada no login é real e ativa.
-    /// </summary>
     [HttpGet("verify-key")]
     public async Task<IActionResult> VerifyKey([FromHeader(Name = "X-Nutri-Key")] string key)
     {
@@ -90,9 +85,6 @@ public class NutritionistPortalController : ControllerBase
         return Ok(new { success = true, name = nutricionista.Name, nutritionistId = nutricionista.Id });
     }
 
-    /// <summary>
-    /// Retorna o histórico de refeições de um paciente filtrado por período para avaliação mensal/diária.
-    /// </summary>
     [HttpGet("patient-logs/{phone}")]
     public async Task<IActionResult> GetPatientLogs(
         [FromHeader(Name = "X-Nutri-Key")] string key,
@@ -155,9 +147,6 @@ public class NutritionistPortalController : ControllerBase
         }
     }
 
-    /// <summary>
-    /// Exclui o paciente e revoga o acesso dele ao bot do WhatsApp.
-    /// </summary>
     [HttpDelete("patient/{phone}")]
     public async Task<IActionResult> DeletePatient(
         [FromHeader(Name = "X-Nutri-Key")] string key,
@@ -185,9 +174,6 @@ public class NutritionistPortalController : ControllerBase
         }
     }
 
-    /// <summary>
-    /// Lista apenas os pacientes vinculados à nutricionista autenticada (ou todos se for master).
-    /// </summary>
     [HttpGet("patients")]
     public async Task<IActionResult> GetPatients([FromHeader(Name = "X-Nutri-Key")] string key)
     {
@@ -217,9 +203,6 @@ public class NutritionistPortalController : ControllerBase
         }
     }
 
-    /// <summary>
-    /// CADASTRO DE NUTRICIONISTA: Cria um novo perfil profissional e gera sua API Key exclusiva.
-    /// </summary>
     [HttpPost("register")]
     public async Task<IActionResult> RegisterNutritionist(
         [FromHeader(Name = "X-Admin-Secret")] string adminSecret,
@@ -244,8 +227,6 @@ public class NutritionistPortalController : ControllerBase
             var novaNutri = new Nutritionist(dto.Name, dto.Email, dto.ApiKey);
             await collection.InsertOneAsync(novaNutri);
 
-            _logger.LogInformation("✅ Nutricionista cadastrada com sucesso: {Email}", dto.Email);
-
             return Ok(new
             {
                 success = true,
@@ -261,10 +242,6 @@ public class NutritionistPortalController : ControllerBase
         }
     }
 
-    /// <summary>
-    /// ETAPA 1: A nutricionista envia a foto do cardápio/dieta ou texto. 
-    /// O Gemini lê, estrutura e devolve os macros calculados para revisão na tela.
-    /// </summary>
     [HttpPost("extract")]
     public async Task<IActionResult> ExtractDietData(
         [FromHeader(Name = "X-Nutri-Key")] string key,
@@ -288,10 +265,6 @@ public class NutritionistPortalController : ControllerBase
         }
     }
 
-    /// <summary>
-    /// ETAPA 2: Após a nutricionista revisar (ou preencher manualmente), 
-    /// ela confirma e o sistema salva ou atualiza definitivamente na base do paciente.
-    /// </summary>
     [HttpPost("confirm")]
     public async Task<IActionResult> ConfirmAndSaveDiet(
         [FromHeader(Name = "X-Nutri-Key")] string key,
@@ -310,15 +283,13 @@ public class NutritionistPortalController : ControllerBase
             dto.Protein,
             dto.Carbs,
             dto.Fat,
+            dto.MainGoal,
             dto.DietaryRestrictions,
             dto.FavoriteFoods,
             dto.PrescribedMealPlan
         );
     }
 
-    /// <summary>
-    /// Importação Direta com validação de limite do plano da nutricionista.
-    /// </summary>
     [HttpPost("import-diet")]
     public async Task<IActionResult> ImportarDietaPaciente(
         [FromHeader(Name = "X-Nutri-Key")] string key,
@@ -337,6 +308,7 @@ public class NutritionistPortalController : ControllerBase
             dto.Protein,
             dto.Carbs,
             dto.Fat,
+            dto.MainGoal,
             dto.DietaryRestrictions,
             dto.FavoriteFoods,
             dto.PrescribedMealPlan
@@ -358,11 +330,7 @@ public class NutritionistPortalController : ControllerBase
         try
         {
             var nutriCollection = _database.GetCollection<Nutritionist>("Nutritionists");
-
-            // Atualiza o MaxPatients e opcionalmente o nome do plano
-            var update = Builders<Nutritionist>.Update
-                .Set(x => x.MaxPatients, dto.NewMaxPatients);
-
+            var update = Builders<Nutritionist>.Update.Set(x => x.MaxPatients, dto.NewMaxPatients);
             var result = await nutriCollection.UpdateOneAsync(x => x.Id == nutritionistId, update);
 
             if (result.MatchedCount == 0)
@@ -370,7 +338,6 @@ public class NutritionistPortalController : ControllerBase
                 return NotFound(new { success = false, message = "Nutricionista não encontrada." });
             }
 
-            _logger.LogInformation("✅ Plano atualizado para a nutri ID {Id}. Novo limite: {Limit}", nutritionistId, dto.NewMaxPatients);
             return Ok(new { success = true, message = $"Limite atualizado para {dto.NewMaxPatients} pacientes com sucesso!" });
         }
         catch (Exception ex)
@@ -382,9 +349,6 @@ public class NutritionistPortalController : ControllerBase
 
     public record UpdateLimitDto(int NewMaxPatients);
 
-    /// <summary>
-    /// Método auxiliar privado que aplica a regra de limite de pacientes e persiste os dados com segurança.
-    /// </summary>
     private async Task<IActionResult> SalvarOuAtualizarDietaAsync(
         AuthenticatedNutri nutri,
         string patientPhone,
@@ -392,6 +356,7 @@ public class NutritionistPortalController : ControllerBase
         decimal protein,
         decimal carbs,
         decimal fat,
+        string? mainGoal,
         string? dietaryRestrictions,
         string? favoriteFoods,
         string? prescribedMealPlan)
@@ -401,26 +366,28 @@ public class NutritionistPortalController : ControllerBase
             var filter = Builders<DailyNutritionGoal>.Filter.Eq(x => x.UserId, patientPhone);
             var existingGoal = await _goalsCollection.Find(filter).FirstOrDefaultAsync();
 
-            // Se for um paciente novo, validamos o teto máximo de vagas do plano contratado
             if (existingGoal == null)
             {
                 var currentPatientCount = await _goalsCollection.CountDocumentsAsync(x => x.NutritionistId == nutri.Id);
 
                 if (currentPatientCount >= nutri.MaxPatients)
                 {
-                    _logger.LogWarning("⚠️ Nutricionista {Email} atingiu o limite de pacientes ({Count}/{Limit})", nutri.Email, currentPatientCount, nutri.MaxPatients);
                     return BadRequest(new
                     {
                         success = false,
-                        message = $"❌ Limite de pacientes atingido ({currentPatientCount}/{nutri.MaxPatients}). Faça upgrade no seu plano para cadastrar mais."
+                        message = $"❌ Limite de pacientes atingido ({currentPatientCount}/{nutri.MaxPatients}). Faça upgrade no seu plano."
                     });
                 }
             }
 
             if (existingGoal != null)
             {
+                // Atualiza metas e garante que o ID da nutricionista logada atual seja dono do registro
                 existingGoal.UpdateGoals(calories, protein, carbs, fat, nutri.Id);
                 existingGoal.UpdatePreferences(dietaryRestrictions, favoriteFoods);
+
+                // Se a entidade possuir método para atualizar cardápio ou objetivo, ajuste conforme os métodos do seu Domain model:
+                // existingGoal.UpdateMealPlan(prescribedMealPlan);
 
                 await _goalsCollection.ReplaceOneAsync(filter, existingGoal);
             }
@@ -454,7 +421,6 @@ public class NutritionistPortalController : ControllerBase
     }
 }
 
-// Record auxiliar para gerenciar a sessão autenticada com segurança
 public record AuthenticatedNutri(
     string Id,
     string Name,
@@ -463,7 +429,6 @@ public record AuthenticatedNutri(
     bool IsMaster
 );
 
-// DTOs auxiliares do Controller
 public record RegisterNutritionistDto(
     string Name,
     string Email,
@@ -477,6 +442,7 @@ public record ConfirmDietRequestDto(
     decimal Protein,
     decimal Carbs,
     decimal Fat,
+    string? MainGoal,
     string? DietaryRestrictions,
     string? FavoriteFoods,
     string? PrescribedMealPlan
@@ -489,6 +455,7 @@ public record ImportDietDto(
     decimal Protein,
     decimal Carbs,
     decimal Fat,
+    string? MainGoal,
     string? DietaryRestrictions,
     string? FavoriteFoods,
     string? PrescribedMealPlan

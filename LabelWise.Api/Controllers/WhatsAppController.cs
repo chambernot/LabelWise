@@ -84,8 +84,10 @@ namespace LabelWise.Api.Controllers
                     return Ok();
                 }
 
-                var metaCadastrada = await _nutritionRepository.ObterMetaDiariaAsync(senderPhone, DateTime.UtcNow);
-                if (metaCadastrada == null)
+                // 🚀 NOVA VALIDAÇÃO DE SEGURANÇA: Verifica se o paciente está cadastrado no Portal
+                var pacienteCadastrado = await _nutritionRepository.ObterPacientePorIdAsync(senderPhone);
+
+                if (pacienteCadastrado == null)
                 {
                     _logger.LogWarning("[WhatsApp Security] ⛔ Mensagem bloqueada de número não cadastrado: {Phone}", senderPhone);
 
@@ -164,7 +166,6 @@ namespace LabelWise.Api.Controllers
                     await _nutritionRepository.RemoverClarificacaoPendenteAsync(senderPhone);
                 }
 
-                // 🚀 1. Salva a mensagem do usuário no histórico do MongoDB antes de processar
                 await _nutritionRepository.SalvarMensagemHistoricoAsync(senderPhone, "user", textoFinalParaIa);
 
                 var request = new ParseMealRequestDto(
@@ -201,7 +202,6 @@ namespace LabelWise.Api.Controllers
                 var respostaTexto = FormatarRespostaParaWhatsApp(result, statusDoDia);
                 await _whatsAppSender.SendTextMessageAsync(senderPhone, respostaTexto);
 
-                // 🚀 2. Salva a resposta do assistente no histórico do MongoDB para manter o fluxo da conversa
                 await _nutritionRepository.SalvarMensagemHistoricoAsync(senderPhone, "assistant", respostaTexto);
 
                 return Ok();
@@ -387,7 +387,6 @@ namespace LabelWise.Api.Controllers
                        "Por favor, tente enviar sua foto ou descrição novamente em instantes.";
             }
 
-            // 🚀 TRATAMENTO DO MODO SOS / CONSELHO
             if (aiResult.IsAdvice)
             {
                 var conselho = !string.IsNullOrWhiteSpace(aiResult.AdviceText)
