@@ -433,7 +433,6 @@
                 targetCalories: 2000,
                 selectedPeriod: '7',
 
-                // 🚀 FORMULÁRIO SINCRONIZADO COM O BACKEND
                 form: {
                     patientPhone: '',
                     nutritionistId: 'nutri_web_portal',
@@ -535,8 +534,21 @@
                             headers: { 'X-Nutri-Key': this.apiKey }
                         });
                         const result = await response.json();
+
                         if (response.ok && result.success) {
-                            this.patients = result.data || [];
+                            // 🚀 CORREÇÃO 1: Mapeamento "Case-Insensitive" para garantir
+                            // que a leitura da tabela sempre funcione (Maiúscula ou Minúscula)
+                            this.patients = (result.data || []).map(p => ({
+                                userId: p.userId || p.UserId,
+                                targetCalories: p.targetCalories || p.TargetCalories,
+                                targetProteinG: p.targetProteinG || p.TargetProteinG,
+                                targetCarbsG: p.targetCarbsG || p.TargetCarbsG,
+                                targetFatG: p.targetFatG || p.TargetFatG,
+                                mainGoal: p.mainGoal || p.MainGoal,
+                                dietaryRestrictions: p.dietaryRestrictions || p.DietaryRestrictions,
+                                favoriteFoods: p.favoriteFoods || p.FavoriteFoods,
+                                prescribedMealPlan: p.prescribedMealPlan || p.PrescribedMealPlan
+                            }));
                         }
                     } catch (err) {
                         console.error('Erro ao carregar pacientes', err);
@@ -663,14 +675,28 @@
                     this.feedbackError = false;
 
                     try {
-                        // CORRIGIDO: Agora enviando para a rota confirm, como desenhado na arquitetura ideal
+                        // 🚀 CORREÇÃO 2: Forçando a Montagem do Payload Exatamente no Formato DTO (PascalCase)
+                        // Isso resolve definitivamente o problema do ASP.NET não reconhecer os campos de texto no Body.
+                        const payload = {
+                            PatientPhone: this.form.patientPhone,
+                            NutritionistId: this.form.nutritionistId,
+                            Calories: Number(this.form.calories) || 0,
+                            Protein: parseFloat(this.form.protein) || 0,
+                            Carbs: parseFloat(this.form.carbs) || 0,
+                            Fat: parseFloat(this.form.fat) || 0,
+                            MainGoal: this.form.mainGoal,
+                            DietaryRestrictions: this.form.dietaryRestrictions,
+                            FavoriteFoods: this.form.favoriteFoods,
+                            PrescribedMealPlan: this.form.prescribedMealPlan
+                        };
+
                         const response = await fetch('/api/nutritionist/confirm', {
                             method: 'POST',
                             headers: {
                                 'Content-Type': 'application/json',
                                 'X-Nutri-Key': this.apiKey
                             },
-                            body: JSON.stringify(this.form)
+                            body: JSON.stringify(payload)
                         });
 
                         const result = await response.json();
@@ -700,7 +726,7 @@
                     this.form.carbs = p.targetCarbsG;
                     this.form.fat = p.targetFatG;
 
-                    // CORRIGIDO: Agora o campo mainGoal volta a ser preenchido ao clicar em editar
+                    // 🚀 CORREÇÃO 3: Lendo de forma segura caso a API devolva em maiúsculo ou minúsculo
                     this.form.mainGoal = p.mainGoal || 'Emagrecimento';
                     this.form.dietaryRestrictions = p.dietaryRestrictions || '';
                     this.form.favoriteFoods = p.favoriteFoods || '';
