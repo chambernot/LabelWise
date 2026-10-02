@@ -353,63 +353,45 @@ public class NutritionistPortalController : ControllerBase
     public record UpdateLimitDto(int NewMaxPatients);
 
     private async Task<IActionResult> SalvarOuAtualizarDietaAsync(
-    AuthenticatedNutri nutri,
-    string patientPhone,
-    int calories,
-    decimal protein,
-    decimal carbs,
-    decimal fat,
-    string? mainGoal,
-    string? dietaryRestrictions,
-    string? favoriteFoods,
-    string? prescribedMealPlan)
+        AuthenticatedNutri nutri,
+        string patientPhone,
+        int calories,
+        decimal protein,
+        decimal carbs,
+        decimal fat,
+        string? mainGoal,
+        string? dietaryRestrictions,
+        string? favoriteFoods,
+        string? prescribedMealPlan)
     {
         try
         {
-            // 1. SALVAR O PERFIL DO PACIENTE (Libera o acesso ao bot e salva os objetivos para a IA)
+            // 1. FORÇAR A GRAVAÇÃO NA TABELA DE PACIENTES VIA UPDATE DIRETO (Bypass de Entity)
             var patientsCollection = _database.GetCollection<MongoDB.Bson.BsonDocument>("Nutrition_Patients");
-            var patientDoc = new MongoDB.Bson.BsonDocument
-        {
-            { "_id", patientPhone },
-            { "ProfessionalId", nutri.Id },
-            { "MainGoal", mainGoal ?? "Emagrecimento" },
-            { "MedicalRestrictions", dietaryRestrictions ?? "" },
-            { "FoodAversions", favoriteFoods ?? "" }
-        };
+            var patientUpdate = Builders<MongoDB.Bson.BsonDocument>.Update
+                .Set("ProfessionalId", nutri.Id)
+                .Set("MainGoal", mainGoal ?? "Emagrecimento")
+                .Set("MedicalRestrictions", dietaryRestrictions ?? "")
+                .Set("FoodAversions", favoriteFoods ?? "");
 
-            await patientsCollection.ReplaceOneAsync(
+            await patientsCollection.UpdateOneAsync(
                 Builders<MongoDB.Bson.BsonDocument>.Filter.Eq("_id", patientPhone),
-                patientDoc,
-                new ReplaceOptions { IsUpsert = true }
+                patientUpdate,
+                new UpdateOptions { IsUpsert = true }
             );
 
-            // 2. SALVAR A META DIÁRIA (DailyGoals)
+            // 2. BUSCAR A META E INSERIR CASO NÃO EXISTA
             var filter = Builders<DailyNutritionGoal>.Filter.Eq(x => x.UserId, patientPhone);
             var existingGoal = await _goalsCollection.Find(filter).FirstOrDefaultAsync();
 
             if (existingGoal == null)
             {
                 var currentPatientCount = await _goalsCollection.CountDocumentsAsync(x => x.NutritionistId == nutri.Id);
-
                 if (currentPatientCount >= nutri.MaxPatients)
                 {
-                    return BadRequest(new
-                    {
-                        success = false,
-                        message = $"❌ Limite de pacientes atingido ({currentPatientCount}/{nutri.MaxPatients}). Faça upgrade no seu plano."
-                    });
+                    return BadRequest(new { success = false, message = $"❌ Limite atingido ({currentPatientCount}/{nutri.MaxPatients})." });
                 }
-            }
 
-            if (existingGoal != null)
-            {
-                existingGoal.UpdateGoals(calories, protein, carbs, fat, nutri.Id);
-                existingGoal.UpdatePreferences(dietaryRestrictions, favoriteFoods);
-
-                await _goalsCollection.ReplaceOneAsync(filter, existingGoal);
-            }
-            else
-            {
                 var novaMeta = new DailyNutritionGoal(
                     userId: patientPhone,
                     targetDate: DateTime.UtcNow,
@@ -422,13 +404,26 @@ public class NutritionistPortalController : ControllerBase
                     favoriteFoods: favoriteFoods,
                     prescribedMealPlan: prescribedMealPlan
                 );
-
                 await _goalsCollection.InsertOneAsync(novaMeta);
             }
 
-            _logger.LogInformation("✅ Dieta e perfil salvos com sucesso para o paciente {Phone} pela nutri {Nutri}", patientPhone, nutri.Id);
+            // 3. O SEGREDO AQUI: Update forçado no banco ignorando bloqueios da classe C#
+            // Isso garante que os campos sejam preenchidos no Compass mesmo que a entidade tenha bugs.
+            var forceUpdate = Builders<DailyNutritionGoal>.Update
+                .Set(x => x.TargetCalories, calories)
+                .Set(x => x.TargetProteinG, protein)
+                .Set(x => x.TargetCarbsG, carbs)
+                .Set(x => x.TargetFatG, fat)
+                .Set(x => x.NutritionistId, nutri.Id)
+                .Set("DietaryRestrictions", dietaryRestrictions ?? "")
+                .Set("FavoriteFoods", favoriteFoods ?? "")
+                .Set("PrescribedMealPlan", prescribedMealPlan ?? "");
 
-            return Ok(new { success = true, message = "Dieta e perfil cadastrados com sucesso!" });
+            await _goalsCollection.UpdateOneAsync(filter, forceUpdate);
+
+            _logger.LogInformation("✅ Dieta e perfil FORÇADOS com sucesso no DB para o paciente {Phone}", patientPhone);
+
+            return Ok(new { success = true, message = "Dieta e perfil atualizados com sucesso!" });
         }
         catch (Exception ex)
         {
