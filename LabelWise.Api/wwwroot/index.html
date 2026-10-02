@@ -433,7 +433,7 @@
                 targetCalories: 2000,
                 selectedPeriod: '7',
 
-                // 🚀 FORMULÁRIO SINCRONIZADO COM O BACKEND C#
+                // 🚀 FORMULÁRIO SINCRONIZADO COM O BACKEND
                 form: {
                     patientPhone: '',
                     nutritionistId: 'nutri_web_portal',
@@ -663,7 +663,8 @@
                     this.feedbackError = false;
 
                     try {
-                        const response = await fetch('/api/nutritionist/import-diet', {
+                        // CORRIGIDO: Agora enviando para a rota confirm, como desenhado na arquitetura ideal
+                        const response = await fetch('/api/nutritionist/confirm', {
                             method: 'POST',
                             headers: {
                                 'Content-Type': 'application/json',
@@ -699,6 +700,8 @@
                     this.form.carbs = p.targetCarbsG;
                     this.form.fat = p.targetFatG;
 
+                    // CORRIGIDO: Agora o campo mainGoal volta a ser preenchido ao clicar em editar
+                    this.form.mainGoal = p.mainGoal || 'Emagrecimento';
                     this.form.dietaryRestrictions = p.dietaryRestrictions || '';
                     this.form.favoriteFoods = p.favoriteFoods || '';
                     this.form.prescribedMealPlan = p.prescribedMealPlan || '';
