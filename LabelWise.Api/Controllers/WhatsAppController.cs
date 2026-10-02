@@ -113,7 +113,7 @@ namespace LabelWise.Api.Controllers
                         };
                         await trialCollection.InsertOneAsync(userDoc);
 
-                        // Cria metas padrão iniciais com _id em string (evita erro de ObjectId)
+                        // Cria metas padrão iniciais com _id em string
                         var goalsCollection = _database.GetCollection<MongoDB.Bson.BsonDocument>("DailyGoals");
                         var defaultGoal = new MongoDB.Bson.BsonDocument
                         {
@@ -165,18 +165,53 @@ namespace LabelWise.Api.Controllers
                     {
                         var textoConfig = messagingEvent?.Text?.Body ?? string.Empty;
 
-                        // Atualiza as restrições médicas e alergias com o texto do utilizador
+                        // Atualização garantida na tabela Nutrition_Patients
                         var patientsCollection = _database.GetCollection<MongoDB.Bson.BsonDocument>("Nutrition_Patients");
+                        var patientFilter = Builders<MongoDB.Bson.BsonDocument>.Filter.Eq("_id", senderPhone);
                         var updatePatient = Builders<MongoDB.Bson.BsonDocument>.Update
                             .Set("MedicalRestrictions", textoConfig)
                             .Set("FoodAversions", textoConfig);
-                        await patientsCollection.UpdateOneAsync(Builders<MongoDB.Bson.BsonDocument>.Filter.Eq("_id", senderPhone), updatePatient);
 
+                        var patientResult = await patientsCollection.UpdateOneAsync(patientFilter, updatePatient);
+                        if (patientResult.MatchedCount == 0)
+                        {
+                            var forcedPatient = new MongoDB.Bson.BsonDocument
+                            {
+                                { "_id", senderPhone },
+                                { "ProfessionalId", "b2c_autonomous_user" },
+                                { "MainGoal", "Emagrecimento" },
+                                { "MedicalRestrictions", textoConfig },
+                                { "FoodAversions", textoConfig }
+                            };
+                            await patientsCollection.ReplaceOneAsync(patientFilter, forcedPatient, new ReplaceOptions { IsUpsert = true });
+                        }
+
+                        // Atualização garantida na tabela DailyGoals
                         var goalsCollection = _database.GetCollection<MongoDB.Bson.BsonDocument>("DailyGoals");
+                        var goalFilter = Builders<MongoDB.Bson.BsonDocument>.Filter.Eq("UserId", senderPhone);
                         var updateGoal = Builders<MongoDB.Bson.BsonDocument>.Update
                             .Set("DietaryRestrictions", textoConfig)
                             .Set("PrescribedMealPlan", $"Perfil configurado pelo utilizador: {textoConfig}");
-                        await goalsCollection.UpdateOneAsync(Builders<MongoDB.Bson.BsonDocument>.Filter.Eq("UserId", senderPhone), updateGoal);
+
+                        var goalResult = await goalsCollection.UpdateOneAsync(goalFilter, updateGoal);
+                        if (goalResult.MatchedCount == 0)
+                        {
+                            var forcedGoal = new MongoDB.Bson.BsonDocument
+                            {
+                                { "_id", Guid.NewGuid().ToString() },
+                                { "UserId", senderPhone },
+                                { "NutritionistId", "b2c_autonomous_user" },
+                                { "TargetDate", now.Date },
+                                { "TargetCalories", 2000 },
+                                { "TargetProteinG", 150 },
+                                { "TargetCarbsG", 200 },
+                                { "TargetFatG", 60 },
+                                { "DietaryRestrictions", textoConfig },
+                                { "FavoriteFoods", "" },
+                                { "PrescribedMealPlan", $"Perfil configurado pelo utilizador: {textoConfig}" }
+                            };
+                            await goalsCollection.InsertOneAsync(forcedGoal);
+                        }
 
                         // Marca o perfil como configurado
                         var updateTrialConfig = Builders<MongoDB.Bson.BsonDocument>.Update.Set("ProfileConfigured", true);
