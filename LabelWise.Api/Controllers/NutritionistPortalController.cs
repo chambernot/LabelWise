@@ -353,19 +353,37 @@ public class NutritionistPortalController : ControllerBase
     public record UpdateLimitDto(int NewMaxPatients);
 
     private async Task<IActionResult> SalvarOuAtualizarDietaAsync(
-        AuthenticatedNutri nutri,
-        string patientPhone,
-        int calories,
-        decimal protein,
-        decimal carbs,
-        decimal fat,
-        string? mainGoal,
-        string? dietaryRestrictions,
-        string? favoriteFoods,
-        string? prescribedMealPlan)
+    AuthenticatedNutri nutri,
+    string patientPhone,
+    int calories,
+    decimal protein,
+    decimal carbs,
+    decimal fat,
+    string? mainGoal,
+    string? dietaryRestrictions,
+    string? favoriteFoods,
+    string? prescribedMealPlan)
     {
         try
         {
+            // 1. SALVAR O PERFIL DO PACIENTE (Libera o acesso ao bot e salva os objetivos para a IA)
+            var patientsCollection = _database.GetCollection<MongoDB.Bson.BsonDocument>("Nutrition_Patients");
+            var patientDoc = new MongoDB.Bson.BsonDocument
+        {
+            { "_id", patientPhone },
+            { "ProfessionalId", nutri.Id },
+            { "MainGoal", mainGoal ?? "Emagrecimento" },
+            { "MedicalRestrictions", dietaryRestrictions ?? "" },
+            { "FoodAversions", favoriteFoods ?? "" }
+        };
+
+            await patientsCollection.ReplaceOneAsync(
+                Builders<MongoDB.Bson.BsonDocument>.Filter.Eq("_id", patientPhone),
+                patientDoc,
+                new ReplaceOptions { IsUpsert = true }
+            );
+
+            // 2. SALVAR A META DIÁRIA (DailyGoals)
             var filter = Builders<DailyNutritionGoal>.Filter.Eq(x => x.UserId, patientPhone);
             var existingGoal = await _goalsCollection.Find(filter).FirstOrDefaultAsync();
 
@@ -385,12 +403,8 @@ public class NutritionistPortalController : ControllerBase
 
             if (existingGoal != null)
             {
-                // Atualiza metas e garante que o ID da nutricionista logada atual seja dono do registro
                 existingGoal.UpdateGoals(calories, protein, carbs, fat, nutri.Id);
                 existingGoal.UpdatePreferences(dietaryRestrictions, favoriteFoods);
-
-                // Se a entidade possuir método para atualizar cardápio ou objetivo, ajuste conforme os métodos do seu Domain model:
-                // existingGoal.UpdateMealPlan(prescribedMealPlan);
 
                 await _goalsCollection.ReplaceOneAsync(filter, existingGoal);
             }
@@ -412,9 +426,9 @@ public class NutritionistPortalController : ControllerBase
                 await _goalsCollection.InsertOneAsync(novaMeta);
             }
 
-            _logger.LogInformation("✅ Dieta salva com sucesso para o paciente {Phone} pela nutri {Nutri}", patientPhone, nutri.Id);
+            _logger.LogInformation("✅ Dieta e perfil salvos com sucesso para o paciente {Phone} pela nutri {Nutri}", patientPhone, nutri.Id);
 
-            return Ok(new { success = true, message = "Dieta do paciente cadastrada/atualizada com sucesso!" });
+            return Ok(new { success = true, message = "Dieta e perfil cadastrados com sucesso!" });
         }
         catch (Exception ex)
         {
