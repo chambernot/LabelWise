@@ -90,11 +90,10 @@ namespace LabelWise.Api.Controllers
 
                 // 1. Valida se o paciente está cadastrado no Portal da Clínica
                 var pacienteCadastrado = await _nutritionRepository.ObterPacientePorIdAsync(senderPhone);
-                bool isFirstInteraction = false;
 
                 if (pacienteCadastrado == null)
                 {
-                    // 2. Camada B2C: Valida o Trial de 15 dias e 3 mensagens/dia
+                    // 2. Camada B2C: Valida o Trial de 15 dias, 3 mensagens/dia e Onboarding guiado
                     var trialCollection = _database.GetCollection<MongoDB.Bson.BsonDocument>("B2C_Trial_Users");
                     var filterTrial = Builders<MongoDB.Bson.BsonDocument>.Filter.Eq("_id", senderPhone);
                     var userDoc = await trialCollection.Find(filterTrial).FirstOrDefaultAsync();
@@ -103,19 +102,18 @@ namespace LabelWise.Api.Controllers
 
                     if (userDoc == null)
                     {
-                        isFirstInteraction = true; // Marca que é a estreia do utilizador
-
-                        // Inicia o trial de 15 dias
+                        // --- PASSO 1: ESTREIA DO UTILIZADOR (Envia Boas-vindas e Exemplo) ---
                         userDoc = new MongoDB.Bson.BsonDocument
                         {
                             { "_id", senderPhone },
                             { "TrialStartDate", now },
                             { "LastInteractionDate", now.Date },
-                            { "DailyMessageCount", 0 }
+                            { "DailyMessageCount", 0 },
+                            { "ProfileConfigured", false }
                         };
                         await trialCollection.InsertOneAsync(userDoc);
 
-                        // Cria metas padrão para o B2C com ID em String explícita (evita erro de ObjectId)
+                        // Cria metas padrão iniciais com _id em string (evita erro de ObjectId)
                         var goalsCollection = _database.GetCollection<MongoDB.Bson.BsonDocument>("DailyGoals");
                         var defaultGoal = new MongoDB.Bson.BsonDocument
                         {
@@ -133,7 +131,7 @@ namespace LabelWise.Api.Controllers
                         };
                         await goalsCollection.InsertOneAsync(defaultGoal);
 
-                        // Cria perfil na tabela de pacientes (Libera a parte alérgica/restrições e o Link Mágico)
+                        // Cria perfil inicial na tabela de pacientes
                         var patientsCollection = _database.GetCollection<MongoDB.Bson.BsonDocument>("Nutrition_Patients");
                         var defaultPatient = new MongoDB.Bson.BsonDocument
                         {
@@ -149,10 +147,50 @@ namespace LabelWise.Api.Controllers
                             new ReplaceOptions { IsUpsert = true }
                         );
 
-                        _logger.LogInformation("[WhatsApp B2C] 🚀 Novo utilizador autónomo registado. Trial e perfil criados para: {Phone}", senderPhone);
+                        // Mensagem interativa com exemplo para o utilizador configurar suas restrições/metas
+                        string mensagemBoasVindas = "🎉 *Bem-vindo ao LabelWise (Versão de Teste - 15 dias)!* 🥗\n\n" +
+                                                    "Para começarmos a personalizar a sua IA e garantir total segurança com **alergias e restrições**, por favor envie uma mensagem com o seu objetivo e preferências.\n\n" +
+                                                    "📝 *Exemplo de texto para enviar agora:*\n" +
+                                                    "_'Meu objetivo é emagrecimento, meta de 1800 calorias, sou alérgico a amendoim e não gosto de ovo.'_\n\n" +
+                                                    "Assim que enviar este texto, o seu perfil estará pronto e poderá começar a registrar as suas refeições! ✨";
+
+                        await _whatsAppSender.SendTextMessageAsync(senderPhone, mensagemBoasVindas);
+                        return Ok();
                     }
 
-                    // Valida se o período de teste de 15 dias expirou
+                    // --- PASSO 2: CONFIGURAÇÃO DO PERFIL (Recebe o texto de metas/restrições enviado) ---
+                    bool profileConfigured = userDoc.Contains("ProfileConfigured") && userDoc["ProfileConfigured"].AsBoolean;
+
+                    if (!profileConfigured)
+                    {
+                        var textoConfig = messagingEvent?.Text?.Body ?? string.Empty;
+
+                        // Atualiza as restrições médicas e alergias com o texto do utilizador
+                        var patientsCollection = _database.GetCollection<MongoDB.Bson.BsonDocument>("Nutrition_Patients");
+                        var updatePatient = Builders<MongoDB.Bson.BsonDocument>.Update
+                            .Set("MedicalRestrictions", textoConfig)
+                            .Set("FoodAversions", textoConfig);
+                        await patientsCollection.UpdateOneAsync(Builders<MongoDB.Bson.BsonDocument>.Filter.Eq("_id", senderPhone), updatePatient);
+
+                        var goalsCollection = _database.GetCollection<MongoDB.Bson.BsonDocument>("DailyGoals");
+                        var updateGoal = Builders<MongoDB.Bson.BsonDocument>.Update
+                            .Set("DietaryRestrictions", textoConfig)
+                            .Set("PrescribedMealPlan", $"Perfil configurado pelo utilizador: {textoConfig}");
+                        await goalsCollection.UpdateOneAsync(Builders<MongoDB.Bson.BsonDocument>.Filter.Eq("UserId", senderPhone), updateGoal);
+
+                        // Marca o perfil como configurado
+                        var updateTrialConfig = Builders<MongoDB.Bson.BsonDocument>.Update.Set("ProfileConfigured", true);
+                        await trialCollection.UpdateOneAsync(filterTrial, updateTrialConfig);
+
+                        string respostaConfig = "✅ *Perfil configurado com sucesso!* 🥗\n\n" +
+                                                "As suas restrições alérgicas e preferências foram guardadas com sucesso. A IA já está a par de tudo.\n\n" +
+                                                "👉 *Agora já pode enviar as suas refeições* por texto, foto ou áudio (ex: _'Comi frango com batata doce'_).";
+
+                        await _whatsAppSender.SendTextMessageAsync(senderPhone, respostaConfig);
+                        return Ok();
+                    }
+
+                    // --- PASSO 3: VALIDAÇÕES DE TRIAL E LIMITES DIÁRIOS ---
                     var trialStartDate = userDoc["TrialStartDate"].ToUniversalTime();
                     if ((now - trialStartDate).TotalDays > 15)
                     {
@@ -164,7 +202,6 @@ namespace LabelWise.Api.Controllers
                         return Ok();
                     }
 
-                    // Valida o limite diário de 3 mensagens
                     var lastInteractionDate = userDoc.Contains("LastInteractionDate") ? userDoc["LastInteractionDate"].ToUniversalTime().Date : now.Date;
                     int dailyCount = userDoc.Contains("DailyMessageCount") ? userDoc["DailyMessageCount"].AsInt32 : 0;
 
@@ -184,7 +221,7 @@ namespace LabelWise.Api.Controllers
                         return Ok();
                     }
 
-                    // Incrementa o contador diário
+                    // Incrementa o contador diário de mensagens válidas
                     dailyCount++;
                     var updateB2C = Builders<MongoDB.Bson.BsonDocument>.Update
                         .Set("LastInteractionDate", lastInteractionDate)
@@ -294,16 +331,6 @@ namespace LabelWise.Api.Controllers
                 }
 
                 var respostaTexto = FormatarRespostaParaWhatsApp(result, statusDoDia);
-
-                // 🚀 SE FOR A PRIMEIRA INTERAÇÃO, AVISA SOBRE O CADASTRO DO TRIAL E LIBERAÇÃO
-                if (isFirstInteraction)
-                {
-                    string avisoCadastro = "🎉 *Cadastro de Teste Realizado com Sucesso!* \n\n" +
-                                           "O seu período experimental gratuito de 15 dias foi ativado. Já pode começar a registrar as suas refeições, tirar dúvidas e interagir à vontade! 🥗✨\n\n" +
-                                           "-----------------------------------\n\n";
-                    respostaTexto = avisoCadastro + respostaTexto;
-                }
-
                 await _whatsAppSender.SendTextMessageAsync(senderPhone, respostaTexto);
 
                 await _nutritionRepository.SalvarMensagemHistoricoAsync(senderPhone, "assistant", respostaTexto);
