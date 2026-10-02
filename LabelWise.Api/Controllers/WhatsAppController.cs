@@ -115,10 +115,11 @@ namespace LabelWise.Api.Controllers
                         };
                         await trialCollection.InsertOneAsync(userDoc);
 
-                        // Cria metas padrão para o B2C
+                        // Cria metas padrão para o B2C com ID em String explícita (evita erro de ObjectId)
                         var goalsCollection = _database.GetCollection<MongoDB.Bson.BsonDocument>("DailyGoals");
                         var defaultGoal = new MongoDB.Bson.BsonDocument
                         {
+                            { "_id", Guid.NewGuid().ToString() },
                             { "UserId", senderPhone },
                             { "NutritionistId", "b2c_autonomous_user" },
                             { "TargetDate", now.Date },
@@ -175,7 +176,7 @@ namespace LabelWise.Api.Controllers
 
                     if (dailyCount >= 3)
                     {
-                        _logger.LogWarning("[WhatsApp B2C] ⚠️️ Limite diário de mensagens atingido para: {Phone}", senderPhone);
+                        _logger.LogWarning("[WhatsApp B2C] ⚠️ Limite diário de mensagens atingido para: {Phone}", senderPhone);
                         await _whatsAppSender.SendTextMessageAsync(
                             senderPhone,
                             "⚠️ Atingiu o limite de 3 interações gratuitas para hoje. O seu saldo diário será renovado amanhã! ⏰"
