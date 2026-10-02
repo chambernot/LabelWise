@@ -7,6 +7,7 @@ using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
+using MongoDB.Driver;
 using System;
 using System.Collections.Generic;
 using System.IO;
@@ -31,6 +32,7 @@ namespace LabelWise.Api.Controllers
         private readonly IHttpClientFactory _httpClientFactory;
         private readonly IConfiguration _configuration;
         private readonly ILogger<WhatsAppController> _logger;
+        private readonly IMongoDatabase _database;
         private readonly string _verifyToken;
 
         public WhatsAppController(
@@ -40,7 +42,8 @@ namespace LabelWise.Api.Controllers
             INutritionRepository nutritionRepository,
             IHttpClientFactory httpClientFactory,
             IConfiguration configuration,
-            ILogger<WhatsAppController> logger)
+            ILogger<WhatsAppController> logger,
+            IMongoDatabase database)
         {
             _nutritionService = nutritionService;
             _whatsAppSender = whatsAppSender;
@@ -49,6 +52,7 @@ namespace LabelWise.Api.Controllers
             _httpClientFactory = httpClientFactory;
             _configuration = configuration;
             _logger = logger;
+            _database = database;
             _verifyToken = configuration["MetaWhatsApp:VerifyToken"] ?? "labelwise_verify_token_123";
         }
 
@@ -84,19 +88,108 @@ namespace LabelWise.Api.Controllers
                     return Ok();
                 }
 
-                // 🚀 NOVA VALIDAÇÃO DE SEGURANÇA: Verifica se o paciente está cadastrado no Portal
+                // 1. Valida se o paciente está cadastrado no Portal da Clínica
                 var pacienteCadastrado = await _nutritionRepository.ObterPacientePorIdAsync(senderPhone);
+                bool isFirstInteraction = false;
 
                 if (pacienteCadastrado == null)
                 {
-                    _logger.LogWarning("[WhatsApp Security] ⛔ Mensagem bloqueada de número não cadastrado: {Phone}", senderPhone);
+                    // 2. Camada B2C: Valida o Trial de 15 dias e 3 mensagens/dia
+                    var trialCollection = _database.GetCollection<MongoDB.Bson.BsonDocument>("B2C_Trial_Users");
+                    var filterTrial = Builders<MongoDB.Bson.BsonDocument>.Filter.Eq("_id", senderPhone);
+                    var userDoc = await trialCollection.Find(filterTrial).FirstOrDefaultAsync();
 
-                    await _whatsAppSender.SendTextMessageAsync(
-                        senderPhone,
-                        "Olá! Este canal do Nutrição Certa é de uso exclusivo para pacientes com acompanhamento nutricional ativo na clínica. Por favor, entre em contato com sua nutricionista para liberar o seu acesso. 🥗"
-                    );
+                    var now = DateTime.UtcNow;
 
-                    return Ok();
+                    if (userDoc == null)
+                    {
+                        isFirstInteraction = true; // Marca que é a estreia do utilizador
+
+                        // Inicia o trial de 15 dias
+                        userDoc = new MongoDB.Bson.BsonDocument
+                        {
+                            { "_id", senderPhone },
+                            { "TrialStartDate", now },
+                            { "LastInteractionDate", now.Date },
+                            { "DailyMessageCount", 0 }
+                        };
+                        await trialCollection.InsertOneAsync(userDoc);
+
+                        // Cria metas padrão para o B2C
+                        var goalsCollection = _database.GetCollection<MongoDB.Bson.BsonDocument>("DailyGoals");
+                        var defaultGoal = new MongoDB.Bson.BsonDocument
+                        {
+                            { "UserId", senderPhone },
+                            { "NutritionistId", "b2c_autonomous_user" },
+                            { "TargetDate", now.Date },
+                            { "TargetCalories", 2000 },
+                            { "TargetProteinG", 150 },
+                            { "TargetCarbsG", 200 },
+                            { "TargetFatG", 60 },
+                            { "DietaryRestrictions", "" },
+                            { "FavoriteFoods", "" },
+                            { "PrescribedMealPlan", "Plano autónomo inicial de 15 dias." }
+                        };
+                        await goalsCollection.InsertOneAsync(defaultGoal);
+
+                        // Cria perfil na tabela de pacientes (Libera a parte alérgica/restrições e o Link Mágico)
+                        var patientsCollection = _database.GetCollection<MongoDB.Bson.BsonDocument>("Nutrition_Patients");
+                        var defaultPatient = new MongoDB.Bson.BsonDocument
+                        {
+                            { "_id", senderPhone },
+                            { "ProfessionalId", "b2c_autonomous_user" },
+                            { "MainGoal", "Emagrecimento" },
+                            { "MedicalRestrictions", "" },
+                            { "FoodAversions", "" }
+                        };
+                        await patientsCollection.ReplaceOneAsync(
+                            Builders<MongoDB.Bson.BsonDocument>.Filter.Eq("_id", senderPhone),
+                            defaultPatient,
+                            new ReplaceOptions { IsUpsert = true }
+                        );
+
+                        _logger.LogInformation("[WhatsApp B2C] 🚀 Novo utilizador autónomo registado. Trial e perfil criados para: {Phone}", senderPhone);
+                    }
+
+                    // Valida se o período de teste de 15 dias expirou
+                    var trialStartDate = userDoc["TrialStartDate"].ToUniversalTime();
+                    if ((now - trialStartDate).TotalDays > 15)
+                    {
+                        _logger.LogWarning("[WhatsApp B2C] ⏳ Trial expirado para o número: {Phone}", senderPhone);
+                        await _whatsAppSender.SendTextMessageAsync(
+                            senderPhone,
+                            "⏳ O seu período experimental gratuito de 15 dias terminou. Para continuar a usar o assistente, por favor faça a subscrição do plano completo. 🥗"
+                        );
+                        return Ok();
+                    }
+
+                    // Valida o limite diário de 3 mensagens
+                    var lastInteractionDate = userDoc.Contains("LastInteractionDate") ? userDoc["LastInteractionDate"].ToUniversalTime().Date : now.Date;
+                    int dailyCount = userDoc.Contains("DailyMessageCount") ? userDoc["DailyMessageCount"].AsInt32 : 0;
+
+                    if (lastInteractionDate < now.Date)
+                    {
+                        dailyCount = 0;
+                        lastInteractionDate = now.Date;
+                    }
+
+                    if (dailyCount >= 3)
+                    {
+                        _logger.LogWarning("[WhatsApp B2C] ⚠️️ Limite diário de mensagens atingido para: {Phone}", senderPhone);
+                        await _whatsAppSender.SendTextMessageAsync(
+                            senderPhone,
+                            "⚠️ Atingiu o limite de 3 interações gratuitas para hoje. O seu saldo diário será renovado amanhã! ⏰"
+                        );
+                        return Ok();
+                    }
+
+                    // Incrementa o contador diário
+                    dailyCount++;
+                    var updateB2C = Builders<MongoDB.Bson.BsonDocument>.Update
+                        .Set("LastInteractionDate", lastInteractionDate)
+                        .Set("DailyMessageCount", dailyCount);
+
+                    await trialCollection.UpdateOneAsync(filterTrial, updateB2C);
                 }
 
                 string? textoDigitado = null;
@@ -200,6 +293,16 @@ namespace LabelWise.Api.Controllers
                 }
 
                 var respostaTexto = FormatarRespostaParaWhatsApp(result, statusDoDia);
+
+                // 🚀 SE FOR A PRIMEIRA INTERAÇÃO, AVISA SOBRE O CADASTRO DO TRIAL E LIBERAÇÃO
+                if (isFirstInteraction)
+                {
+                    string avisoCadastro = "🎉 *Cadastro de Teste Realizado com Sucesso!* \n\n" +
+                                           "O seu período experimental gratuito de 15 dias foi ativado. Já pode começar a registrar as suas refeições, tirar dúvidas e interagir à vontade! 🥗✨\n\n" +
+                                           "-----------------------------------\n\n";
+                    respostaTexto = avisoCadastro + respostaTexto;
+                }
+
                 await _whatsAppSender.SendTextMessageAsync(senderPhone, respostaTexto);
 
                 await _nutritionRepository.SalvarMensagemHistoricoAsync(senderPhone, "assistant", respostaTexto);
