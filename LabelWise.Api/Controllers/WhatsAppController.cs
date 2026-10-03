@@ -88,7 +88,6 @@ namespace LabelWise.Api.Controllers
                     return Ok();
                 }
 
-                // Extrai o texto limpo caso seja uma mensagem de texto
                 string? textoBruto = messageType == "text" ? messagingEvent?.Text?.Body?.Trim() : null;
                 string textoLower = textoBruto?.ToLowerInvariant() ?? "";
 
@@ -96,7 +95,7 @@ namespace LabelWise.Api.Controllers
                 var filterTrial = Builders<MongoDB.Bson.BsonDocument>.Filter.Eq("_id", senderPhone);
                 var userDoc = await trialCollection.Find(filterTrial).FirstOrDefaultAsync();
 
-                // 🚀 1. INTERCEÇÃO GLOBAL DE COMANDOS DE RECONFIGURAÇÃO (Funciona a qualquer momento!)
+                // 🚀 1. INTERCEÇÃO GLOBAL DE COMANDOS DE RECONFIGURAÇÃO
                 if (textoLower == "meta" || textoLower == "perfil" || textoLower == "configurar" || textoLower == "ajustar")
                 {
                     if (userDoc != null)
@@ -144,38 +143,6 @@ namespace LabelWise.Api.Controllers
                         };
                         await trialCollection.InsertOneAsync(userDoc);
 
-                        var goalsCollection = _database.GetCollection<MongoDB.Bson.BsonDocument>("DailyGoals");
-                        var defaultGoal = new MongoDB.Bson.BsonDocument
-                        {
-                            { "_id", Guid.NewGuid().ToString() },
-                            { "UserId", senderPhone },
-                            { "NutritionistId", "b2c_autonomous_user" },
-                            { "TargetDate", now.Date },
-                            { "TargetCalories", 2000 },
-                            { "TargetProteinG", 150 },
-                            { "TargetCarbsG", 200 },
-                            { "TargetFatG", 60 },
-                            { "DietaryRestrictions", "" },
-                            { "FavoriteFoods", "" },
-                            { "PrescribedMealPlan", "Plano autónomo pendente de configuração." }
-                        };
-                        await goalsCollection.InsertOneAsync(defaultGoal);
-
-                        var patientsCollection = _database.GetCollection<MongoDB.Bson.BsonDocument>("Nutrition_Patients");
-                        var defaultPatient = new MongoDB.Bson.BsonDocument
-                        {
-                            { "_id", senderPhone },
-                            { "ProfessionalId", "b2c_autonomous_user" },
-                            { "MainGoal", "Pendente" },
-                            { "MedicalRestrictions", "" },
-                            { "FoodAversions", "" }
-                        };
-                        await patientsCollection.ReplaceOneAsync(
-                            Builders<MongoDB.Bson.BsonDocument>.Filter.Eq("_id", senderPhone),
-                            defaultPatient,
-                            new ReplaceOptions { IsUpsert = true }
-                        );
-
                         string mensagemBoasVindas = "🎉 *Bem-vindo ao LabelWise (Versão de Teste - 15 dias)!* 🥗\n\n" +
                                                     "Para começarmos a personalizar a sua IA e garantir total segurança com **alergias e restrições**, por favor envie uma mensagem com o seu objetivo e preferências.\n\n" +
                                                     "📝 *Exemplo de texto para enviar agora:*\n" +
@@ -215,24 +182,48 @@ namespace LabelWise.Api.Controllers
                             return Ok();
                         }
 
+                        // 🛡️ GRAVAÇÃO ROBUSTA NA TABELA Nutrition_Patients (Com Upsert garantido)
                         var patientsCollection = _database.GetCollection<MongoDB.Bson.BsonDocument>("Nutrition_Patients");
-                        var patientFilter = Builders<MongoDB.Bson.BsonDocument>.Filter.Eq("_id", senderPhone);
-                        var updatePatient = Builders<MongoDB.Bson.BsonDocument>.Update
-                            .Set("MainGoal", perfilExtraido.MainGoal)
-                            .Set("MedicalRestrictions", perfilExtraido.MedicalRestrictions)
-                            .Set("FoodAversions", perfilExtraido.FoodAversions);
+                        var patientDoc = new MongoDB.Bson.BsonDocument
+                        {
+                            { "_id", senderPhone },
+                            { "ProfessionalId", "b2c_autonomous_user" },
+                            { "MainGoal", perfilExtraido.MainGoal },
+                            { "MedicalRestrictions", perfilExtraido.MedicalRestrictions },
+                            { "FoodAversions", perfilExtraido.FoodAversions }
+                        };
+                        await patientsCollection.ReplaceOneAsync(
+                            Builders<MongoDB.Bson.BsonDocument>.Filter.Eq("_id", senderPhone),
+                            patientDoc,
+                            new ReplaceOptions { IsUpsert = true }
+                        );
 
-                        await patientsCollection.UpdateOneAsync(patientFilter, updatePatient);
-
+                        // 🛡️️ GRAVAÇÃO ROBUSTA NA TABELA DailyGoals (Com Upsert garantido por UserId)
                         var goalsCollection = _database.GetCollection<MongoDB.Bson.BsonDocument>("DailyGoals");
                         var goalFilter = Builders<MongoDB.Bson.BsonDocument>.Filter.Eq("UserId", senderPhone);
-                        var updateGoal = Builders<MongoDB.Bson.BsonDocument>.Update
-                            .Set("TargetCalories", perfilExtraido.TargetCalories)
-                            .Set("DietaryRestrictions", perfilExtraido.MedicalRestrictions)
-                            .Set("PrescribedMealPlan", $"Objetivo: {perfilExtraido.MainGoal}");
+                        var existingGoal = await goalsCollection.Find(goalFilter).FirstOrDefaultAsync();
 
-                        await goalsCollection.UpdateOneAsync(goalFilter, updateGoal);
+                        string goalId = existingGoal != null && existingGoal.Contains("_id")
+                            ? existingGoal["_id"].AsString
+                            : Guid.NewGuid().ToString();
 
+                        var goalDoc = new MongoDB.Bson.BsonDocument
+                        {
+                            { "_id", goalId },
+                            { "UserId", senderPhone },
+                            { "NutritionistId", "b2c_autonomous_user" },
+                            { "TargetDate", now.Date },
+                            { "TargetCalories", perfilExtraido.TargetCalories },
+                            { "TargetProteinG", 150 },
+                            { "TargetCarbsG", 200 },
+                            { "TargetFatG", 60 },
+                            { "DietaryRestrictions", perfilExtraido.MedicalRestrictions },
+                            { "FavoriteFoods", perfilExtraido.FoodAversions },
+                            { "PrescribedMealPlan", $"Objetivo: {perfilExtraido.MainGoal}" }
+                        };
+                        await goalsCollection.ReplaceOneAsync(goalFilter, goalDoc, new ReplaceOptions { IsUpsert = true });
+
+                        // Marca o perfil como 100% configurado
                         var updateTrialConfig = Builders<MongoDB.Bson.BsonDocument>.Update.Set("ProfileConfigured", true);
                         await trialCollection.UpdateOneAsync(filterTrial, updateTrialConfig);
 
