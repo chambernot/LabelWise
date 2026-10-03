@@ -164,11 +164,30 @@ namespace LabelWise.Api.Controllers
                     {
                         var textoConfig = messagingEvent?.Text?.Body ?? string.Empty;
 
-                        // Envia feedback rápido de "Processando"
+                        // 🛡️ VALIDAÇÃO 1: Evitar textos curtos como "olá", "ok", "sim"
+                        if (textoConfig.Trim().Length < 10)
+                        {
+                            string msgErroCurta = "👋 Olá! Notei que ainda precisa configurar o seu perfil.\n\n" +
+                                                  "Para a IA funcionar corretamente, por favor envie uma frase com o seu objetivo e preferências.\n\n" +
+                                                  "📝 *Exemplo:* _'Quero emagrecer, 1500 kcal, sou alérgico a amendoim e não gosto de ovo.'_";
+                            await _whatsAppSender.SendTextMessageAsync(senderPhone, msgErroCurta);
+                            return Ok(); // Interrompe para o utilizador tentar de novo
+                        }
+
                         await _whatsAppSender.SendTextMessageAsync(senderPhone, "⚙️ Processando o seu perfil...");
 
                         // 🚀 EXTRAÇÃO INTELIGENTE DE DADOS VIA GEMINI API
                         var perfilExtraido = await ExtrairPerfilComGeminiAsync(textoConfig);
+
+                        // 🛡️ VALIDAÇÃO 2: Se a IA não conseguiu extrair um objetivo válido
+                        if (perfilExtraido.MainGoal == "Não informado" || perfilExtraido.MainGoal == "Não identificado automaticamente")
+                        {
+                            string msgErroIA = "🤔 Não consegui identificar os detalhes do seu objetivo nessa mensagem.\n\n" +
+                                               "Por favor, tente ser um pouco mais específico sobre a sua meta e eventuais restrições.\n\n" +
+                                               "📝 *Exemplo:* _'Meu objetivo é hipertrofia, 2500 calorias, não gosto de ovo.'_";
+                            await _whatsAppSender.SendTextMessageAsync(senderPhone, msgErroIA);
+                            return Ok(); // Interrompe para o utilizador tentar de novo
+                        }
 
                         // Atualiza as tabelas com os dados limpos extraídos pela IA
                         var patientsCollection = _database.GetCollection<MongoDB.Bson.BsonDocument>("Nutrition_Patients");
@@ -443,7 +462,6 @@ namespace LabelWise.Api.Controllers
             return doc.RootElement.GetProperty("choices")[0].GetProperty("message").GetProperty("content").GetString()?.Trim() ?? string.Empty;
         }
 
-        // 🚀 NOVO MÉTODO PARA EXTRAÇÃO DE PERFIL ESTRUTURADO COM JSON
         private async Task<SetupProfileDto> ExtrairPerfilComGeminiAsync(string userText)
         {
             var apiKey = _configuration["GeminiApiKey"] ?? _configuration["Gemini:ApiKey"];
@@ -455,7 +473,7 @@ namespace LabelWise.Api.Controllers
             var systemPrompt = @"Você é um especialista em triagem nutricional. Leia o texto e extraia os dados estritamente em formato JSON válido:
             {
                 ""TargetCalories"": <número inteiro da meta de calorias. Se não informado, use 2000>,
-                ""MainGoal"": ""<string com o objetivo. Ex: 'Emagrecimento'. Se não informado, use 'Não informado'>"",
+                ""MainGoal"": ""<string com o objetivo. Ex: 'Emagrecimento'. Se não informado, retorne 'Não informado'>"",
                 ""MedicalRestrictions"": ""<string com as alergias separadas por vírgula. Se não houver, vazio>"",
                 ""FoodAversions"": ""<string com aversões alimentares separadas por vírgula. Se não houver, vazio>""
             }
@@ -465,7 +483,7 @@ namespace LabelWise.Api.Controllers
             {
                 model = model,
                 temperature = 0.0,
-                response_format = new { type = "json_object" }, // Garante que a IA responda em JSON puro
+                response_format = new { type = "json_object" },
                 messages = new object[]
                 {
                     new { role = "system", content = systemPrompt },
@@ -498,7 +516,6 @@ namespace LabelWise.Api.Controllers
                 _logger.LogError(ex, "Erro ao extrair perfil estruturado com Gemini. Usando fallback.");
             }
 
-            // Fallback seguro caso a IA falhe
             return new SetupProfileDto
             {
                 TargetCalories = 2000,
@@ -546,7 +563,6 @@ namespace LabelWise.Api.Controllers
             return msg;
         }
 
-        // DTO Interno para deserialização limpa
         private class SetupProfileDto
         {
             public int TargetCalories { get; set; } = 2000;
@@ -556,37 +572,11 @@ namespace LabelWise.Api.Controllers
         }
     }
 
-    public class MetaWebhookPayload
-    {
-        public List<MetaEntry>? Entry { get; set; }
-    }
-    public class MetaEntry
-    {
-        public List<MetaChange>? Changes { get; set; }
-    }
-    public class MetaChange
-    {
-        public MetaValue? Value { get; set; }
-    }
-    public class MetaValue
-    {
-        public List<MetaMessage>? Messages { get; set; }
-    }
-    public class MetaMessage
-    {
-        public string? From { get; set; }
-        public string? Type { get; set; }
-        public MetaText? Text { get; set; }
-        public MetaMedia? Image { get; set; }
-        public MetaMedia? Audio { get; set; }
-    }
-    public class MetaText
-    {
-        public string? Body { get; set; }
-    }
-    public class MetaMedia
-    {
-        public string? Id { get; set; }
-        public string? Mime_Type { get; set; }
-    }
+    public class MetaWebhookPayload { public List<MetaEntry>? Entry { get; set; } }
+    public class MetaEntry { public List<MetaChange>? Changes { get; set; } }
+    public class MetaChange { public MetaValue? Value { get; set; } }
+    public class MetaValue { public List<MetaMessage>? Messages { get; set; } }
+    public class MetaMessage { public string? From { get; set; } public string? Type { get; set; } public MetaText? Text { get; set; } public MetaMedia? Image { get; set; } public MetaMedia? Audio { get; set; } }
+    public class MetaText { public string? Body { get; set; } }
+    public class MetaMedia { public string? Id { get; set; } public string? Mime_Type { get; set; } }
 }
