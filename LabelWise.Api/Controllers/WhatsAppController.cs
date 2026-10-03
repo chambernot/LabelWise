@@ -91,46 +91,20 @@ namespace LabelWise.Api.Controllers
                 string? textoBruto = messageType == "text" ? messagingEvent?.Text?.Body?.Trim() : null;
                 string textoLower = textoBruto?.ToLowerInvariant() ?? "";
 
+                // 1. Verifica se é um paciente de clínica B2B real
+                var pacienteCadastrado = await _nutritionRepository.ObterPacientePorIdAsync(senderPhone);
+                bool isB2bPatient = pacienteCadastrado != null;
+
+                // 2. Gestão B2C (Trial, Limites e Onboarding)
                 var trialCollection = _database.GetCollection<MongoDB.Bson.BsonDocument>("B2C_Trial_Users");
                 var filterTrial = Builders<MongoDB.Bson.BsonDocument>.Filter.Eq("_id", senderPhone);
                 var userDoc = await trialCollection.Find(filterTrial).FirstOrDefaultAsync();
 
-                // 🚀 1. INTERCEÇÃO GLOBAL DE COMANDOS DE RECONFIGURAÇÃO
-                if (textoLower == "meta" || textoLower == "perfil" || textoLower == "configurar" || textoLower == "ajustar")
-                {
-                    if (userDoc != null)
-                    {
-                        var resetConfig = Builders<MongoDB.Bson.BsonDocument>.Update.Set("ProfileConfigured", false);
-                        await trialCollection.UpdateOneAsync(filterTrial, resetConfig);
-                    }
-                    else
-                    {
-                        var nowInit = DateTime.UtcNow;
-                        var novoDoc = new MongoDB.Bson.BsonDocument
-                        {
-                            { "_id", senderPhone },
-                            { "TrialStartDate", nowInit },
-                            { "LastInteractionDate", nowInit.Date },
-                            { "DailyMessageCount", 0 },
-                            { "ProfileConfigured", false }
-                        };
-                        await trialCollection.InsertOneAsync(novoDoc);
-                    }
-
-                    string mensagemReset = "⚙️ *Reconfiguração de Perfil Iniciada!*\n\n" +
-                                           "Por favor, envie o seu novo objetivo, meta de calorias e restrições alérgicas (ex: _'Quero emagrecer, 1500 calorias, alérgico a amendoim e não gosto de ovo'_).";
-                    await _whatsAppSender.SendTextMessageAsync(senderPhone, mensagemReset);
-                    return Ok();
-                }
-
-                // 2. Valida se o paciente está cadastrado no Portal da Clínica B2B
-                var pacienteCadastrado = await _nutritionRepository.ObterPacientePorIdAsync(senderPhone);
-
-                if (pacienteCadastrado == null)
+                if (!isB2bPatient)
                 {
                     var now = DateTime.UtcNow;
 
-                    // --- PASSO 1: ESTREIA DO UTILIZADOR ---
+                    // --- A. ESTREIA DO UTILIZADOR (PRIMEIRO CONTACTO) ---
                     if (userDoc == null)
                     {
                         userDoc = new MongoDB.Bson.BsonDocument
@@ -153,7 +127,19 @@ namespace LabelWise.Api.Controllers
                         return Ok();
                     }
 
-                    // --- PASSO 2: EXTRAÇÃO ESTRUTURADA DO PERFIL (VIA IA) ---
+                    // --- B. COMANDO GLOBAL DE RECONFIGURAÇÃO ("meta", "perfil", etc.) ---
+                    if (textoLower == "meta" || textoLower == "perfil" || textoLower == "configurar" || textoLower == "ajustar")
+                    {
+                        var resetConfig = Builders<MongoDB.Bson.BsonDocument>.Update.Set("ProfileConfigured", false);
+                        await trialCollection.UpdateOneAsync(filterTrial, resetConfig);
+
+                        string mensagemReset = "⚙️ *Reconfiguração de Perfil Iniciada!*\n\n" +
+                                               "Por favor, envie o seu novo objetivo, meta de calorias e restrições alérgicas (ex: _'Quero emagrecer, 1500 calorias, alérgico a amendoim e não gosto de ovo'_).";
+                        await _whatsAppSender.SendTextMessageAsync(senderPhone, mensagemReset);
+                        return Ok();
+                    }
+
+                    // --- C. VERIFICAÇÃO DE PERFIL CONFIGURADO ---
                     bool profileConfigured = userDoc.Contains("ProfileConfigured") && userDoc["ProfileConfigured"].AsBoolean;
 
                     if (!profileConfigured)
@@ -182,7 +168,7 @@ namespace LabelWise.Api.Controllers
                             return Ok();
                         }
 
-                        // Gravação robusta na tabela Nutrition_Patients
+                        // Gravação em Nutrition_Patients
                         var patientsCollection = _database.GetCollection<MongoDB.Bson.BsonDocument>("Nutrition_Patients");
                         var patientDoc = new MongoDB.Bson.BsonDocument
                         {
@@ -198,7 +184,7 @@ namespace LabelWise.Api.Controllers
                             new ReplaceOptions { IsUpsert = true }
                         );
 
-                        // Gravação robusta na tabela DailyGoals
+                        // Gravação em DailyGoals
                         var goalsCollection = _database.GetCollection<MongoDB.Bson.BsonDocument>("DailyGoals");
                         var goalFilter = Builders<MongoDB.Bson.BsonDocument>.Filter.Eq("UserId", senderPhone);
                         var existingGoal = await goalsCollection.Find(goalFilter).FirstOrDefaultAsync();
@@ -238,7 +224,7 @@ namespace LabelWise.Api.Controllers
                         return Ok();
                     }
 
-                    // --- PASSO 3: VALIDAÇÕES DE TRIAL E CONTROLO DE MENSAGENS DIÁRIAS ---
+                    // --- D. VALIDAÇÃO DE TRIAL (15 DIAS) ---
                     var trialStartDate = userDoc["TrialStartDate"].ToUniversalTime();
                     if ((now - trialStartDate).TotalDays > 15)
                     {
@@ -250,6 +236,7 @@ namespace LabelWise.Api.Controllers
                         return Ok();
                     }
 
+                    // --- E. VALIDAÇÃO E INCREMENTO DO LIMITE DIÁRIO (4 MENSAGENS) ---
                     var lastInteractionDate = userDoc.Contains("LastInteractionDate") ? userDoc["LastInteractionDate"].ToUniversalTime().Date : now.Date;
                     int dailyCount = userDoc.Contains("DailyMessageCount") ? userDoc["DailyMessageCount"].AsInt32 : 0;
 
@@ -259,17 +246,17 @@ namespace LabelWise.Api.Controllers
                         lastInteractionDate = now.Date;
                     }
 
-                    if (dailyCount >= 3)
+                    if (dailyCount >= 4)
                     {
                         _logger.LogWarning("[WhatsApp B2C] ⚠️ Limite diário de mensagens atingido para: {Phone}", senderPhone);
                         await _whatsAppSender.SendTextMessageAsync(
                             senderPhone,
-                            "⚠️ Atingiu o limite de 3 interações gratuitas para hoje. O seu saldo diário será renovado amanhã! ⏰"
+                            "⚠️ Atingiu o limite de 4 interações gratuitas para hoje. O seu saldo diário será renovado amanhã! ⏰"
                         );
                         return Ok();
                     }
 
-                    // 🚀 INCREMENTO GARANTIDO DO CONTADOR DIÁRIO DE MENSAGENS
+                    // Incrementa e atualiza obrigatoriamente no MongoDB
                     dailyCount++;
                     var updateB2C = Builders<MongoDB.Bson.BsonDocument>.Update
                         .Set("LastInteractionDate", lastInteractionDate)
@@ -332,7 +319,6 @@ namespace LabelWise.Api.Controllers
                 {
                     _logger.LogInformation("[WhatsAppController] 🔄 Resposta de clarificação detectada para o usuário {Phone}", senderPhone);
 
-                    // 🚀 FORÇA A IA A INTERPRETAR A CONFIRMAÇÃO COMO PARTE DA REFEIÇÃO, EVITANDO O MODO CONSELHO
                     textoFinalParaIa = $"[Contexto Anterior da Refeição: {contextoPendente.OriginalTextInput}] " +
                                        $"[Alerta de Restrição Enviado: {contextoPendente.ClarificationQuestion}] " +
                                        $"[Confirmação / Resposta do Utilizador: {textoDigitado}] " +
