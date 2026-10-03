@@ -16,6 +16,7 @@ using System.Net.Http;
 using System.Net.Http.Headers;
 using System.Text;
 using System.Text.Json;
+using System.Text.RegularExpressions;
 using System.Threading.Tasks;
 
 namespace LabelWise.Api.Controllers
@@ -158,12 +159,20 @@ namespace LabelWise.Api.Controllers
                         return Ok();
                     }
 
-                    // --- PASSO 2: CONFIGURAÇÃO DO PERFIL (Recebe o texto de metas/restrições enviado) ---
+                    // --- PASSO 2: CONFIGURAÇÃO DO PERFIL (Extrai calorias e restrições do texto enviado) ---
                     bool profileConfigured = userDoc.Contains("ProfileConfigured") && userDoc["ProfileConfigured"].AsBoolean;
 
                     if (!profileConfigured)
                     {
                         var textoConfig = messagingEvent?.Text?.Body ?? string.Empty;
+
+                        // 🚀 EXTRAÇÃO INTELIGENTE DE CALORIAS VIA REGEX (ex: "1500 calorias" ou "1800 kcal")
+                        int targetCalories = 2000; // Valor padrão caso não informe
+                        var calorieMatch = Regex.Match(textoConfig, @"(\d{3,4})\s*(calorias|kcal|Kcal)", RegexOptions.IgnoreCase);
+                        if (calorieMatch.Success && int.TryParse(calorieMatch.Groups[1].Value, out var parsedCals))
+                        {
+                            targetCalories = parsedCals;
+                        }
 
                         // Atualização garantida na tabela Nutrition_Patients
                         var patientsCollection = _database.GetCollection<MongoDB.Bson.BsonDocument>("Nutrition_Patients");
@@ -186,10 +195,11 @@ namespace LabelWise.Api.Controllers
                             await patientsCollection.ReplaceOneAsync(patientFilter, forcedPatient, new ReplaceOptions { IsUpsert = true });
                         }
 
-                        // Atualização garantida na tabela DailyGoals
+                        // Atualização garantida na tabela DailyGoals (incluindo as calorias extraídas!)
                         var goalsCollection = _database.GetCollection<MongoDB.Bson.BsonDocument>("DailyGoals");
                         var goalFilter = Builders<MongoDB.Bson.BsonDocument>.Filter.Eq("UserId", senderPhone);
                         var updateGoal = Builders<MongoDB.Bson.BsonDocument>.Update
+                            .Set("TargetCalories", targetCalories)
                             .Set("DietaryRestrictions", textoConfig)
                             .Set("PrescribedMealPlan", $"Perfil configurado pelo utilizador: {textoConfig}");
 
@@ -202,7 +212,7 @@ namespace LabelWise.Api.Controllers
                                 { "UserId", senderPhone },
                                 { "NutritionistId", "b2c_autonomous_user" },
                                 { "TargetDate", now.Date },
-                                { "TargetCalories", 2000 },
+                                { "TargetCalories", targetCalories },
                                 { "TargetProteinG", 150 },
                                 { "TargetCarbsG", 200 },
                                 { "TargetFatG", 60 },
@@ -217,8 +227,9 @@ namespace LabelWise.Api.Controllers
                         var updateTrialConfig = Builders<MongoDB.Bson.BsonDocument>.Update.Set("ProfileConfigured", true);
                         await trialCollection.UpdateOneAsync(filterTrial, updateTrialConfig);
 
-                        string respostaConfig = "✅ *Perfil configurado com sucesso!* 🥗\n\n" +
-                                                "As suas restrições alérgicas e preferências foram guardadas com sucesso. A IA já está a par de tudo.\n\n" +
+                        string respostaConfig = $"✅ *Perfil configurado com sucesso!* 🥗\n\n" +
+                                                $"🎯 **Meta definida:** {targetCalories} kcal\n" +
+                                                $"🛡️ **Restrições/Alergias:** Registadas com sucesso.\n\n" +
                                                 "👉 *Agora já pode enviar as suas refeições* por texto, foto ou áudio (ex: _'Comi frango com batata doce'_).";
 
                         await _whatsAppSender.SendTextMessageAsync(senderPhone, respostaConfig);
