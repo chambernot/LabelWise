@@ -88,16 +88,47 @@ namespace LabelWise.Api.Controllers
                     return Ok();
                 }
 
-                // 1. Valida se o paciente está cadastrado no Portal da Clínica B2B
+                // Extrai o texto limpo caso seja uma mensagem de texto
+                string? textoBruto = messageType == "text" ? messagingEvent?.Text?.Body?.Trim() : null;
+                string textoLower = textoBruto?.ToLowerInvariant() ?? "";
+
+                var trialCollection = _database.GetCollection<MongoDB.Bson.BsonDocument>("B2C_Trial_Users");
+                var filterTrial = Builders<MongoDB.Bson.BsonDocument>.Filter.Eq("_id", senderPhone);
+                var userDoc = await trialCollection.Find(filterTrial).FirstOrDefaultAsync();
+
+                // 🚀 1. INTERCEÇÃO GLOBAL DE COMANDOS DE RECONFIGURAÇÃO (Funciona a qualquer momento!)
+                if (textoLower == "meta" || textoLower == "perfil" || textoLower == "configurar" || textoLower == "ajustar")
+                {
+                    if (userDoc != null)
+                    {
+                        var resetConfig = Builders<MongoDB.Bson.BsonDocument>.Update.Set("ProfileConfigured", false);
+                        await trialCollection.UpdateOneAsync(filterTrial, resetConfig);
+                    }
+                    else
+                    {
+                        var nowInit = DateTime.UtcNow;
+                        var novoDoc = new MongoDB.Bson.BsonDocument
+                        {
+                            { "_id", senderPhone },
+                            { "TrialStartDate", nowInit },
+                            { "LastInteractionDate", nowInit.Date },
+                            { "DailyMessageCount", 0 },
+                            { "ProfileConfigured", false }
+                        };
+                        await trialCollection.InsertOneAsync(novoDoc);
+                    }
+
+                    string mensagemReset = "⚙️ *Reconfiguração de Perfil Iniciada!*\n\n" +
+                                           "Por favor, envie o seu novo objetivo, meta de calorias e restrições alérgicas (ex: _'Quero emagrecer, 1500 calorias, alérgico a amendoim e não gosto de ovo'_).";
+                    await _whatsAppSender.SendTextMessageAsync(senderPhone, mensagemReset);
+                    return Ok();
+                }
+
+                // 2. Valida se o paciente está cadastrado no Portal da Clínica B2B
                 var pacienteCadastrado = await _nutritionRepository.ObterPacientePorIdAsync(senderPhone);
 
                 if (pacienteCadastrado == null)
                 {
-                    // 2. Camada B2C: Gestão do Trial de 15 dias e Onboarding Guiado
-                    var trialCollection = _database.GetCollection<MongoDB.Bson.BsonDocument>("B2C_Trial_Users");
-                    var filterTrial = Builders<MongoDB.Bson.BsonDocument>.Filter.Eq("_id", senderPhone);
-                    var userDoc = await trialCollection.Find(filterTrial).FirstOrDefaultAsync();
-
                     var now = DateTime.UtcNow;
 
                     // --- PASSO 1: ESTREIA DO UTILIZADOR ---
@@ -113,7 +144,6 @@ namespace LabelWise.Api.Controllers
                         };
                         await trialCollection.InsertOneAsync(userDoc);
 
-                        // Cria registos base temporários nas tabelas de nutrição
                         var goalsCollection = _database.GetCollection<MongoDB.Bson.BsonDocument>("DailyGoals");
                         var defaultGoal = new MongoDB.Bson.BsonDocument
                         {
@@ -146,7 +176,6 @@ namespace LabelWise.Api.Controllers
                             new ReplaceOptions { IsUpsert = true }
                         );
 
-                        // Envia mensagem de boas vindas com exemplo
                         string mensagemBoasVindas = "🎉 *Bem-vindo ao LabelWise (Versão de Teste - 15 dias)!* 🥗\n\n" +
                                                     "Para começarmos a personalizar a sua IA e garantir total segurança com **alergias e restrições**, por favor envie uma mensagem com o seu objetivo e preferências.\n\n" +
                                                     "📝 *Exemplo de texto para enviar agora:*\n" +
@@ -157,31 +186,14 @@ namespace LabelWise.Api.Controllers
                         return Ok();
                     }
 
-                    // 🚀 COMANDO DE ATALHO: Se o utilizador digitar "meta", "perfil" ou "configurar", reabre a configuração!
-                    if (messageType == "text")
-                    {
-                        var textoBruto = messagingEvent?.Text?.Body?.Trim().ToLowerInvariant() ?? "";
-                        if (textoBruto == "meta" || textoBruto == "perfil" || textoBruto == "configurar" || textoBruto == "ajustar")
-                        {
-                            var resetConfig = Builders<MongoDB.Bson.BsonDocument>.Update.Set("ProfileConfigured", false);
-                            await trialCollection.UpdateOneAsync(filterTrial, resetConfig);
-
-                            string mensagemReset = "⚙️ *Reconfiguração de Perfil Iniciada!*\n\n" +
-                                                   "Por favor, envie novamente o seu objetivo, meta de calorias e restrições alérgicas (ex: _'Quero emagrecer, 1600 calorias, alérgico a amendoim'_).";
-                            await _whatsAppSender.SendTextMessageAsync(senderPhone, mensagemReset);
-                            return Ok();
-                        }
-                    }
-
                     // --- PASSO 2: EXTRAÇÃO ESTRUTURADA DO PERFIL (VIA IA) ---
                     bool profileConfigured = userDoc.Contains("ProfileConfigured") && userDoc["ProfileConfigured"].AsBoolean;
 
                     if (!profileConfigured)
                     {
-                        var textoConfig = messagingEvent?.Text?.Body ?? string.Empty;
+                        var textoConfig = textoBruto ?? string.Empty;
 
-                        // 🛡️ VALIDAÇÃO 1: Evitar textos curtos como "olá", "ok", "sim"
-                        if (textoConfig.Trim().Length < 10)
+                        if (textoConfig.Length < 10)
                         {
                             string msgErroCurta = "👋 Olá! Notei que ainda precisa configurar o seu perfil.\n\n" +
                                                   "Para a IA funcionar corretamente, por favor envie uma frase com o seu objetivo e preferências.\n\n" +
@@ -192,10 +204,8 @@ namespace LabelWise.Api.Controllers
 
                         await _whatsAppSender.SendTextMessageAsync(senderPhone, "⚙️ Processando o seu perfil...");
 
-                        // 🚀 EXTRAÇÃO INTELIGENTE DE DADOS VIA GEMINI API
                         var perfilExtraido = await ExtrairPerfilComGeminiAsync(textoConfig);
 
-                        // 🛡️ VALIDAÇÃO 2: Se a IA não conseguiu extrair um objetivo válido
                         if (perfilExtraido.MainGoal == "Não informado" || perfilExtraido.MainGoal == "Não identificado automaticamente")
                         {
                             string msgErroIA = "🤔 Não consegui identificar os detalhes do seu objetivo nessa mensagem.\n\n" +
@@ -205,7 +215,6 @@ namespace LabelWise.Api.Controllers
                             return Ok();
                         }
 
-                        // Atualiza as tabelas com os dados limpos extraídos pela IA
                         var patientsCollection = _database.GetCollection<MongoDB.Bson.BsonDocument>("Nutrition_Patients");
                         var patientFilter = Builders<MongoDB.Bson.BsonDocument>.Filter.Eq("_id", senderPhone);
                         var updatePatient = Builders<MongoDB.Bson.BsonDocument>.Update
@@ -224,7 +233,6 @@ namespace LabelWise.Api.Controllers
 
                         await goalsCollection.UpdateOneAsync(goalFilter, updateGoal);
 
-                        // Marca o perfil como 100% configurado
                         var updateTrialConfig = Builders<MongoDB.Bson.BsonDocument>.Update.Set("ProfileConfigured", true);
                         await trialCollection.UpdateOneAsync(filterTrial, updateTrialConfig);
 
@@ -233,14 +241,14 @@ namespace LabelWise.Api.Controllers
                                                 $"🔥 **Calorias Diárias:** {perfilExtraido.TargetCalories} kcal\n" +
                                                 $"🛡️ **Alergias/Restrições:** {(string.IsNullOrWhiteSpace(perfilExtraido.MedicalRestrictions) ? "Nenhuma" : perfilExtraido.MedicalRestrictions)}\n" +
                                                 $"🚫 **Aversões:** {(string.IsNullOrWhiteSpace(perfilExtraido.FoodAversions) ? "Nenhuma" : perfilExtraido.FoodAversions)}\n\n" +
-                                                "👉 *Tudo pronto! Já pode enviar as suas refeições* por texto, foto ou áudio (ex: _'Comi frango com batata doce'_).\n\n" +
+                                                "👉 *Tudo pronto! Já pode enviar as suas refeições* por texto, foto ou áudio.\n\n" +
                                                 "_💡 Dica: Se quiser alterar suas metas no futuro, basta digitar *meta* a qualquer momento!_";
 
                         await _whatsAppSender.SendTextMessageAsync(senderPhone, respostaConfig);
                         return Ok();
                     }
 
-                    // --- PASSO 3: VALIDAÇÕES DE TRIAL (15 DIAS E 3 MENSAGENS) ---
+                    // --- PASSO 3: VALIDAÇÕES DE TRIAL ---
                     var trialStartDate = userDoc["TrialStartDate"].ToUniversalTime();
                     if ((now - trialStartDate).TotalDays > 15)
                     {
@@ -271,7 +279,6 @@ namespace LabelWise.Api.Controllers
                         return Ok();
                     }
 
-                    // Incrementa o contador de interações apenas para refeições
                     dailyCount++;
                     var updateB2C = Builders<MongoDB.Bson.BsonDocument>.Update
                         .Set("LastInteractionDate", lastInteractionDate)
@@ -283,13 +290,11 @@ namespace LabelWise.Api.Controllers
                 // =========================================================================
                 // FLUXO NORMAL DE PROCESSAMENTO DE REFEIÇÕES (IA)
                 // =========================================================================
-                string? textoDigitado = null;
+                string? textoDigitado = textoBruto;
                 string? imagemBase64 = null;
 
                 if (messageType == "text")
                 {
-                    textoDigitado = messagingEvent?.Text?.Body;
-
                     if (!string.IsNullOrWhiteSpace(textoDigitado))
                     {
                         var textoLimpo = textoDigitado.Trim().ToLowerInvariant();
@@ -567,10 +572,10 @@ namespace LabelWise.Api.Controllers
                        $"• *Carboidratos:* {statusDoDia.Consumed.CarbsG:F0}g / {statusDoDia.Target.CarbsG:F0}g\n" +
                        $"• *Gorduras:* {statusDoDia.Consumed.FatG:F0}g / {statusDoDia.Target.FatG:F0}g\n";
 
-                if (faltamCal > 100 && statusDocDia.Suggestions != null && statusDocDia.Suggestions.Any())
+                if (faltamCal > 100 && statusDoDia.Suggestions != null && statusDoDia.Suggestions.Any())
                 {
                     msg += "\n💡 *SUGESTÕES PARA A PRÓXIMA REFEIÇÃO:*\n";
-                    foreach (var sugestao in statusDocDia.Suggestions) msg += $"• {sugestao}\n";
+                    foreach (var sugestao in statusDoDia.Suggestions) msg += $"• {sugestao}\n";
                 }
             }
             return msg;
