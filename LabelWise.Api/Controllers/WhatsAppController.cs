@@ -16,7 +16,6 @@ using System.Net.Http;
 using System.Net.Http.Headers;
 using System.Text;
 using System.Text.Json;
-using System.Text.RegularExpressions;
 using System.Threading.Tasks;
 
 namespace LabelWise.Api.Controllers
@@ -89,32 +88,32 @@ namespace LabelWise.Api.Controllers
                     return Ok();
                 }
 
-                // 1. Valida se o paciente está cadastrado no Portal da Clínica
+                // 1. Valida se o paciente está cadastrado no Portal da Clínica B2B
                 var pacienteCadastrado = await _nutritionRepository.ObterPacientePorIdAsync(senderPhone);
 
                 if (pacienteCadastrado == null)
                 {
-                    // 2. Camada B2C: Valida o Trial de 15 dias, 3 mensagens/dia e Onboarding guiado
+                    // 2. Camada B2C: Gestão do Trial de 15 dias e Onboarding Guiado
                     var trialCollection = _database.GetCollection<MongoDB.Bson.BsonDocument>("B2C_Trial_Users");
                     var filterTrial = Builders<MongoDB.Bson.BsonDocument>.Filter.Eq("_id", senderPhone);
                     var userDoc = await trialCollection.Find(filterTrial).FirstOrDefaultAsync();
 
                     var now = DateTime.UtcNow;
 
+                    // --- PASSO 1: ESTREIA DO UTILIZADOR ---
                     if (userDoc == null)
                     {
-                        // --- PASSO 1: ESTREIA DO UTILIZADOR (Envia Boas-vindas e Exemplo) ---
                         userDoc = new MongoDB.Bson.BsonDocument
                         {
                             { "_id", senderPhone },
                             { "TrialStartDate", now },
                             { "LastInteractionDate", now.Date },
                             { "DailyMessageCount", 0 },
-                            { "ProfileConfigured", false }
+                            { "ProfileConfigured", false } // Ainda não configurado
                         };
                         await trialCollection.InsertOneAsync(userDoc);
 
-                        // Cria metas padrão iniciais com _id em string
+                        // Cria registos base temporários nas tabelas de nutrição
                         var goalsCollection = _database.GetCollection<MongoDB.Bson.BsonDocument>("DailyGoals");
                         var defaultGoal = new MongoDB.Bson.BsonDocument
                         {
@@ -128,17 +127,16 @@ namespace LabelWise.Api.Controllers
                             { "TargetFatG", 60 },
                             { "DietaryRestrictions", "" },
                             { "FavoriteFoods", "" },
-                            { "PrescribedMealPlan", "Plano autónomo inicial de 15 dias." }
+                            { "PrescribedMealPlan", "Plano autónomo pendente de configuração." }
                         };
                         await goalsCollection.InsertOneAsync(defaultGoal);
 
-                        // Cria perfil inicial na tabela de pacientes
                         var patientsCollection = _database.GetCollection<MongoDB.Bson.BsonDocument>("Nutrition_Patients");
                         var defaultPatient = new MongoDB.Bson.BsonDocument
                         {
                             { "_id", senderPhone },
                             { "ProfessionalId", "b2c_autonomous_user" },
-                            { "MainGoal", "Emagrecimento" },
+                            { "MainGoal", "Pendente" },
                             { "MedicalRestrictions", "" },
                             { "FoodAversions", "" }
                         };
@@ -148,7 +146,7 @@ namespace LabelWise.Api.Controllers
                             new ReplaceOptions { IsUpsert = true }
                         );
 
-                        // Mensagem interativa com exemplo para o utilizador configurar suas restrições/metas
+                        // Envia mensagem de boas vindas com exemplo
                         string mensagemBoasVindas = "🎉 *Bem-vindo ao LabelWise (Versão de Teste - 15 dias)!* 🥗\n\n" +
                                                     "Para começarmos a personalizar a sua IA e garantir total segurança com **alergias e restrições**, por favor envie uma mensagem com o seu objetivo e preferências.\n\n" +
                                                     "📝 *Exemplo de texto para enviar agora:*\n" +
@@ -156,87 +154,57 @@ namespace LabelWise.Api.Controllers
                                                     "Assim que enviar este texto, o seu perfil estará pronto e poderá começar a registrar as suas refeições! ✨";
 
                         await _whatsAppSender.SendTextMessageAsync(senderPhone, mensagemBoasVindas);
-                        return Ok();
+                        return Ok(); // Encerra aqui na estreia
                     }
 
-                    // --- PASSO 2: CONFIGURAÇÃO DO PERFIL (Extrai calorias e restrições do texto enviado) ---
+                    // --- PASSO 2: EXTRAÇÃO ESTRUTURADA DO PERFIL (VIA IA) ---
                     bool profileConfigured = userDoc.Contains("ProfileConfigured") && userDoc["ProfileConfigured"].AsBoolean;
 
                     if (!profileConfigured)
                     {
                         var textoConfig = messagingEvent?.Text?.Body ?? string.Empty;
 
-                        // 🚀 EXTRAÇÃO INTELIGENTE DE CALORIAS VIA REGEX (ex: "1500 calorias" ou "1800 kcal")
-                        int targetCalories = 2000;
-                        var calorieMatch = Regex.Match(textoConfig, @"(\d{3,4})\s*(calorias|kcal|Kcal)", RegexOptions.IgnoreCase);
-                        if (calorieMatch.Success && int.TryParse(calorieMatch.Groups[1].Value, out var parsedCals))
-                        {
-                            targetCalories = parsedCals;
-                        }
+                        // Envia feedback rápido de "Processando"
+                        await _whatsAppSender.SendTextMessageAsync(senderPhone, "⚙️ Processando o seu perfil...");
 
-                        // Atualização garantida na tabela Nutrition_Patients
+                        // 🚀 EXTRAÇÃO INTELIGENTE DE DADOS VIA GEMINI API
+                        var perfilExtraido = await ExtrairPerfilComGeminiAsync(textoConfig);
+
+                        // Atualiza as tabelas com os dados limpos extraídos pela IA
                         var patientsCollection = _database.GetCollection<MongoDB.Bson.BsonDocument>("Nutrition_Patients");
                         var patientFilter = Builders<MongoDB.Bson.BsonDocument>.Filter.Eq("_id", senderPhone);
                         var updatePatient = Builders<MongoDB.Bson.BsonDocument>.Update
-                            .Set("MedicalRestrictions", textoConfig)
-                            .Set("FoodAversions", textoConfig);
+                            .Set("MainGoal", perfilExtraido.MainGoal)
+                            .Set("MedicalRestrictions", perfilExtraido.MedicalRestrictions)
+                            .Set("FoodAversions", perfilExtraido.FoodAversions);
 
-                        var patientResult = await patientsCollection.UpdateOneAsync(patientFilter, updatePatient);
-                        if (patientResult.MatchedCount == 0)
-                        {
-                            var forcedPatient = new MongoDB.Bson.BsonDocument
-                            {
-                                { "_id", senderPhone },
-                                { "ProfessionalId", "b2c_autonomous_user" },
-                                { "MainGoal", "Emagrecimento" },
-                                { "MedicalRestrictions", textoConfig },
-                                { "FoodAversions", textoConfig }
-                            };
-                            await patientsCollection.ReplaceOneAsync(patientFilter, forcedPatient, new ReplaceOptions { IsUpsert = true });
-                        }
+                        await patientsCollection.UpdateOneAsync(patientFilter, updatePatient);
 
-                        // Atualização garantida na tabela DailyGoals (incluindo as calorias extraídas!)
                         var goalsCollection = _database.GetCollection<MongoDB.Bson.BsonDocument>("DailyGoals");
                         var goalFilter = Builders<MongoDB.Bson.BsonDocument>.Filter.Eq("UserId", senderPhone);
                         var updateGoal = Builders<MongoDB.Bson.BsonDocument>.Update
-                            .Set("TargetCalories", targetCalories)
-                            .Set("DietaryRestrictions", textoConfig)
-                            .Set("PrescribedMealPlan", $"Perfil configurado pelo utilizador: {textoConfig}");
+                            .Set("TargetCalories", perfilExtraido.TargetCalories)
+                            .Set("DietaryRestrictions", perfilExtraido.MedicalRestrictions)
+                            .Set("PrescribedMealPlan", $"Objetivo: {perfilExtraido.MainGoal}");
 
-                        var goalResult = await goalsCollection.UpdateOneAsync(goalFilter, updateGoal);
-                        if (goalResult.MatchedCount == 0)
-                        {
-                            var forcedGoal = new MongoDB.Bson.BsonDocument
-                            {
-                                { "_id", Guid.NewGuid().ToString() },
-                                { "UserId", senderPhone },
-                                { "NutritionistId", "b2c_autonomous_user" },
-                                { "TargetDate", now.Date },
-                                { "TargetCalories", targetCalories },
-                                { "TargetProteinG", 150 },
-                                { "TargetCarbsG", 200 },
-                                { "TargetFatG", 60 },
-                                { "DietaryRestrictions", textoConfig },
-                                { "FavoriteFoods", "" },
-                                { "PrescribedMealPlan", $"Perfil configurado pelo utilizador: {textoConfig}" }
-                            };
-                            await goalsCollection.InsertOneAsync(forcedGoal);
-                        }
+                        await goalsCollection.UpdateOneAsync(goalFilter, updateGoal);
 
-                        // Marca o perfil como configurado
+                        // Marca o perfil como 100% configurado
                         var updateTrialConfig = Builders<MongoDB.Bson.BsonDocument>.Update.Set("ProfileConfigured", true);
                         await trialCollection.UpdateOneAsync(filterTrial, updateTrialConfig);
 
                         string respostaConfig = $"✅ *Perfil configurado com sucesso!* 🥗\n\n" +
-                                                $"🎯 **Meta definida:** {targetCalories} kcal\n" +
-                                                $"🛡️ **Restrições/Alergias:** Registadas com sucesso.\n\n" +
-                                                "👉 *Agora já pode enviar as suas refeições* por texto, foto ou áudio (ex: _'Comi frango com batata doce'_).";
+                                                $"🎯 **Objetivo:** {perfilExtraido.MainGoal}\n" +
+                                                $"🔥 **Calorias Diárias:** {perfilExtraido.TargetCalories} kcal\n" +
+                                                $"🛡️ **Alergias/Restrições:** {(string.IsNullOrWhiteSpace(perfilExtraido.MedicalRestrictions) ? "Nenhuma" : perfilExtraido.MedicalRestrictions)}\n" +
+                                                $"🚫 **Aversões:** {(string.IsNullOrWhiteSpace(perfilExtraido.FoodAversions) ? "Nenhuma" : perfilExtraido.FoodAversions)}\n\n" +
+                                                "👉 *Tudo pronto! Já pode enviar as suas refeições* por texto, foto ou áudio (ex: _'Comi frango com batata doce'_).";
 
                         await _whatsAppSender.SendTextMessageAsync(senderPhone, respostaConfig);
-                        return Ok(); // 🛑 INTERROMPE AQUI PARA NÃO PROCESSAR A CONFIGURAÇÃO COMO REFEIÇÃO!
+                        return Ok(); // Encerra aqui a etapa de configuração
                     }
 
-                    // --- PASSO 3: VALIDAÇÕES DE TRIAL E LIMITES DIÁRIOS ---
+                    // --- PASSO 3: VALIDAÇÕES DE TRIAL (15 DIAS E 3 MENSAGENS) ---
                     var trialStartDate = userDoc["TrialStartDate"].ToUniversalTime();
                     if ((now - trialStartDate).TotalDays > 15)
                     {
@@ -267,7 +235,7 @@ namespace LabelWise.Api.Controllers
                         return Ok();
                     }
 
-                    // Incrementa o contador diário de mensagens válidas (apenas para refeições/interações reais)
+                    // Incrementa o contador de interações apenas para refeições
                     dailyCount++;
                     var updateB2C = Builders<MongoDB.Bson.BsonDocument>.Update
                         .Set("LastInteractionDate", lastInteractionDate)
@@ -276,6 +244,9 @@ namespace LabelWise.Api.Controllers
                     await trialCollection.UpdateOneAsync(filterTrial, updateB2C);
                 }
 
+                // =========================================================================
+                // FLUXO NORMAL DE PROCESSAMENTO DE REFEIÇÕES (IA)
+                // =========================================================================
                 string? textoDigitado = null;
                 string? imagemBase64 = null;
 
@@ -297,8 +268,6 @@ namespace LabelWise.Api.Controllers
                                                "_Dica: Salve essa página nos favoritos do seu celular para consultar sempre que precisar!_ ✨";
 
                             await _whatsAppSender.SendTextMessageAsync(senderPhone, respostaLink);
-                            _logger.LogInformation("[WhatsApp] Link Mágico enviado para o paciente {Phone}", senderPhone);
-
                             return Ok();
                         }
                     }
@@ -313,10 +282,7 @@ namespace LabelWise.Api.Controllers
                 {
                     await _whatsAppSender.SendTextMessageAsync(senderPhone, "🎙 Ouvindo o seu áudio e transcrevendo...");
                     var audioBytes = await _metaMediaService.DownloadMediaAsBytesAsync(messagingEvent.Audio.Id);
-
                     textoDigitado = await TranscreverAudioComGeminiAsync(audioBytes);
-
-                    _logger.LogInformation("[WhatsAppController] 🎧 Áudio transcrito via Gemini para {Phone}: {Text}", senderPhone, textoDigitado);
                 }
                 else
                 {
@@ -327,18 +293,14 @@ namespace LabelWise.Api.Controllers
                     return Ok();
 
                 var contextoPendente = await _nutritionRepository.ObterClarificacaoPendenteAsync(senderPhone);
-
                 string textoFinalParaIa = textoDigitado ?? string.Empty;
                 string? imagemFinalParaIa = imagemBase64;
 
                 if (contextoPendente != null)
                 {
-                    _logger.LogInformation("[WhatsAppController] 🔄 Resposta de clarificação detectada para o usuário {Phone}", senderPhone);
-
                     textoFinalParaIa = $"[Descrição anterior: {contextoPendente.OriginalTextInput}] " +
                                        $"[Pergunta de dúvida feita: {contextoPendente.ClarificationQuestion}] " +
                                        $"[Resposta complementar do usuário: {textoDigitado}]";
-
                     imagemFinalParaIa ??= contextoPendente.OriginalBase64Image;
                     await _nutritionRepository.RemoverClarificacaoPendenteAsync(senderPhone);
                 }
@@ -394,10 +356,7 @@ namespace LabelWise.Api.Controllers
                         string respostaErro = "*Ops! Ocorreu uma instabilidade temporária.* 😔\nTente novamente em instantes!";
                         await _whatsAppSender.SendTextMessageAsync(senderPhone, respostaErro);
                     }
-                    catch (Exception sendEx)
-                    {
-                        _logger.LogError(sendEx, "Falha ao enviar mensagem de erro amigável para o WhatsApp.");
-                    }
+                    catch { }
                 }
 
                 return Ok();
@@ -410,7 +369,6 @@ namespace LabelWise.Api.Controllers
             var expectedSecret = _configuration["CronSecret"];
             if (string.IsNullOrEmpty(secret) || secret != expectedSecret)
             {
-                _logger.LogWarning("⚠️ Tentativa de acesso não autorizada ao Cron Job de lembretes.");
                 return Unauthorized(new { success = false, message = "Acesso negado." });
             }
 
@@ -418,83 +376,49 @@ namespace LabelWise.Api.Controllers
             {
                 var horaBrasilia = DateTime.UtcNow.AddHours(-3).Hour;
                 string mealTime = "café da manhã";
-
                 if (horaBrasilia >= 11 && horaBrasilia < 16) mealTime = "almoço";
                 else if (horaBrasilia >= 16 && horaBrasilia < 24) mealTime = "jantar";
 
                 var telefones = await _nutritionRepository.ObterTelefonesAtivosAsync();
-
                 int enviados = 0, falhas = 0;
 
                 foreach (var telefone in telefones)
                 {
                     try
                     {
-                        bool sucesso = await _whatsAppSender.SendTemplateReminderAsync(
-                            telefone,
-                            "Paciente",
-                            mealTime
-                        );
-
-                        if (sucesso) enviados++;
-                        else falhas++;
+                        bool sucesso = await _whatsAppSender.SendTemplateReminderAsync(telefone, "Paciente", mealTime);
+                        if (sucesso) enviados++; else falhas++;
                     }
-                    catch (Exception ex)
-                    {
-                        falhas++;
-                        _logger.LogError(ex, "Erro ao enviar lembrete automático para o telefone {Phone}", telefone);
-                    }
+                    catch { falhas++; }
                 }
-
-                _logger.LogInformation("✅ Disparo em lote concluído. {Enviados} enviados, {Falhas} falhas.", enviados, falhas);
-                return Ok(new { success = true, message = $"Rotina executada. Refeição cobrada: {mealTime}. Enviados: {enviados}, Falhas: {falhas}" });
+                return Ok(new { success = true, message = $"Rotina executada. Refeição: {mealTime}. Enviados: {enviados}, Falhas: {falhas}" });
             }
-            catch (Exception ex)
+            catch (Exception)
             {
-                _logger.LogError(ex, "❌ Erro crítico ao processar o disparo em lote de lembretes.");
                 return StatusCode(500, new { success = false, message = "Erro interno ao processar os lembretes." });
             }
         }
 
         [HttpPost("send-reminder")]
-        public async Task<IActionResult> SendReminder(
-            [FromQuery] string phone,
-            [FromQuery] string userName = "Anderson",
-            [FromQuery] string mealTime = "café da manhã")
+        public async Task<IActionResult> SendReminder([FromQuery] string phone, [FromQuery] string userName = "Anderson", [FromQuery] string mealTime = "café da manhã")
         {
-            if (string.IsNullOrWhiteSpace(phone))
-            {
-                return BadRequest(new { success = false, message = "O número de telefone é obrigatório." });
-            }
-
+            if (string.IsNullOrWhiteSpace(phone)) return BadRequest(new { success = false, message = "Telefone obrigatório." });
             bool enviado = await _whatsAppSender.SendTemplateReminderAsync(phone, userName, mealTime);
-
-            if (enviado)
-            {
-                return Ok(new { success = true, message = $"Lembrete enviado com sucesso via Template Meta para o número {phone}!" });
-            }
-
-            return StatusCode(500, new
-            {
-                success = false,
-                message = "Falha ao enviar o lembrete. Verifique os logs do sistema e confirme se o template 'lembrete_refeicao_dia' já foi APROVADO no painel da Meta."
-            });
+            if (enviado) return Ok(new { success = true, message = $"Lembrete enviado para {phone}!" });
+            return StatusCode(500, new { success = false, message = "Falha ao enviar lembrete." });
         }
+
+        // =========================================================================
+        // MÉTODOS AUXILIARES: INTEGRAÇÕES COM O GEMINI
+        // =========================================================================
 
         private async Task<string> TranscreverAudioComGeminiAsync(byte[] audioBytes)
         {
             var apiKey = _configuration["GeminiApiKey"] ?? _configuration["Gemini:ApiKey"];
-            if (string.IsNullOrEmpty(apiKey))
-            {
-                throw new InvalidOperationException("Chave da API Gemini não configurada para a transcrição de áudio.");
-            }
-
             var endpoint = _configuration["Gemini:Endpoint"] ?? "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions";
             var model = _configuration["Model"] ?? "gemini-3.1-flash-lite";
 
             var client = _httpClientFactory.CreateClient();
-            client.Timeout = TimeSpan.FromSeconds(30);
-
             var base64Audio = Convert.ToBase64String(audioBytes);
             var dataUri = $"data:audio/ogg;base64,{base64Audio}";
 
@@ -504,79 +428,96 @@ namespace LabelWise.Api.Controllers
                 temperature = 0.0,
                 messages = new object[]
                 {
-                    new
-                    {
-                        role = "system",
-                        content = "Você é um transcritor de áudio profissional. Sua única tarefa é transcrever fielmente o áudio enviado em português do Brasil para texto. Retorne APENAS o texto transcrito, sem introduções, sem aspas, sem formatações extras e sem comentários."
-                    },
-                    new
-                    {
-                        role = "user",
-                        content = new object[]
-                        {
-                            new { type = "text", text = "Por favor, transcreva o áudio a seguir:" },
-                            new { type = "image_url", image_url = new { url = dataUri } }
-                        }
-                    }
+                    new { role = "system", content = "Você é um transcritor. Transcreva fielmente o áudio. Retorne APENAS o texto." },
+                    new { role = "user", content = new object[] { new { type = "text", text = "Transcreva:" }, new { type = "image_url", image_url = new { url = dataUri } } } }
                 }
             };
 
-            var content = new StringContent(
-                JsonSerializer.Serialize(requestBody),
-                Encoding.UTF8,
-                "application/json");
-
-            using var requestMessage = new HttpRequestMessage(HttpMethod.Post, endpoint)
-            {
-                Content = content
-            };
+            var content = new StringContent(JsonSerializer.Serialize(requestBody), Encoding.UTF8, "application/json");
+            using var requestMessage = new HttpRequestMessage(HttpMethod.Post, endpoint) { Content = content };
             requestMessage.Headers.Authorization = new AuthenticationHeaderValue("Bearer", apiKey);
 
             var response = await client.SendAsync(requestMessage);
-            if (!response.IsSuccessStatusCode)
-            {
-                var errorBody = await response.Content.ReadAsStringAsync();
-                throw new HttpRequestException($"Erro na transcrição via Gemini ({response.StatusCode}): {errorBody}");
-            }
-
             var jsonResponse = await response.Content.ReadAsStringAsync();
             using var doc = JsonDocument.Parse(jsonResponse);
-
-            var transcription = doc.RootElement
-                .GetProperty("choices")[0]
-                .GetProperty("message")
-                .GetProperty("content")
-                .GetString() ?? string.Empty;
-
-            return transcription.Trim();
+            return doc.RootElement.GetProperty("choices")[0].GetProperty("message").GetProperty("content").GetString()?.Trim() ?? string.Empty;
         }
 
-        private string FormatarRespostaParaWhatsApp(
-            MealAnalysisResponseDto aiResult,
-            DailyStatusResponseDto? statusDoDia)
+        // 🚀 NOVO MÉTODO PARA EXTRAÇÃO DE PERFIL ESTRUTURADO COM JSON
+        private async Task<SetupProfileDto> ExtrairPerfilComGeminiAsync(string userText)
         {
-            bool isSystemError = aiResult.ClarificationQuestion != null &&
-                               aiResult.ClarificationQuestion.Contains("serviços de IA estão instáveis", StringComparison.OrdinalIgnoreCase);
+            var apiKey = _configuration["GeminiApiKey"] ?? _configuration["Gemini:ApiKey"];
+            var endpoint = _configuration["Gemini:Endpoint"] ?? "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions";
+            var model = _configuration["Model"] ?? "gemini-3.1-flash-lite";
 
-            if (isSystemError)
+            var client = _httpClientFactory.CreateClient();
+
+            var systemPrompt = @"Você é um especialista em triagem nutricional. Leia o texto e extraia os dados estritamente em formato JSON válido:
             {
-                return "⚠️ *Ops! Nossos serviços estão instáveis no momento.*\n\n" +
-                       "Por favor, tente enviar sua foto ou descrição novamente em instantes.";
+                ""TargetCalories"": <número inteiro da meta de calorias. Se não informado, use 2000>,
+                ""MainGoal"": ""<string com o objetivo. Ex: 'Emagrecimento'. Se não informado, use 'Não informado'>"",
+                ""MedicalRestrictions"": ""<string com as alergias separadas por vírgula. Se não houver, vazio>"",
+                ""FoodAversions"": ""<string com aversões alimentares separadas por vírgula. Se não houver, vazio>""
             }
+            Apenas devolva o JSON e nada mais.";
+
+            var requestBody = new
+            {
+                model = model,
+                temperature = 0.0,
+                response_format = new { type = "json_object" }, // Garante que a IA responda em JSON puro
+                messages = new object[]
+                {
+                    new { role = "system", content = systemPrompt },
+                    new { role = "user", content = userText }
+                }
+            };
+
+            var content = new StringContent(JsonSerializer.Serialize(requestBody), Encoding.UTF8, "application/json");
+            using var requestMessage = new HttpRequestMessage(HttpMethod.Post, endpoint) { Content = content };
+            requestMessage.Headers.Authorization = new AuthenticationHeaderValue("Bearer", apiKey);
+
+            try
+            {
+                var response = await client.SendAsync(requestMessage);
+                if (response.IsSuccessStatusCode)
+                {
+                    var jsonResponse = await response.Content.ReadAsStringAsync();
+                    using var doc = JsonDocument.Parse(jsonResponse);
+                    var jsonContent = doc.RootElement.GetProperty("choices")[0].GetProperty("message").GetProperty("content").GetString();
+
+                    if (!string.IsNullOrWhiteSpace(jsonContent))
+                    {
+                        var options = new JsonSerializerOptions { PropertyNameCaseInsensitive = true };
+                        return JsonSerializer.Deserialize<SetupProfileDto>(jsonContent, options) ?? new SetupProfileDto();
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Erro ao extrair perfil estruturado com Gemini. Usando fallback.");
+            }
+
+            // Fallback seguro caso a IA falhe
+            return new SetupProfileDto
+            {
+                TargetCalories = 2000,
+                MainGoal = "Não identificado automaticamente",
+                MedicalRestrictions = userText,
+                FoodAversions = ""
+            };
+        }
+
+        private string FormatarRespostaParaWhatsApp(MealAnalysisResponseDto aiResult, DailyStatusResponseDto? statusDoDia)
+        {
+            if (aiResult.ClarificationQuestion != null && aiResult.ClarificationQuestion.Contains("instáveis", StringComparison.OrdinalIgnoreCase))
+                return "⚠️ *Ops! Nossos serviços estão instáveis no momento.*\nPor favor, tente novamente em instantes.";
 
             if (aiResult.IsAdvice)
-            {
-                var conselho = !string.IsNullOrWhiteSpace(aiResult.AdviceText)
-                    ? aiResult.AdviceText
-                    : "Estou aqui para ajudar com sua dieta! Como posso orientar sua próxima escolha?";
-
-                return $"💡 *Conselho do Nutri:*\n\n{conselho}";
-            }
+                return $"💡 *Conselho do Nutri:*\n\n{(!string.IsNullOrWhiteSpace(aiResult.AdviceText) ? aiResult.AdviceText : "Como posso ajudar?")}";
 
             if (aiResult.RequiresUserClarification)
-            {
                 return $"🤔 *Fiquei na dúvida sobre o seu prato:*\n{aiResult.ClarificationQuestion}";
-            }
 
             var prato = !string.IsNullOrWhiteSpace(aiResult.DishName) ? aiResult.DishName : aiResult.MealType;
             var calorias = aiResult.TotalMeal?.Calories ?? 0;
@@ -584,27 +525,14 @@ namespace LabelWise.Api.Controllers
             var carbo = aiResult.TotalMeal?.CarbsG ?? 0;
             var gordura = aiResult.TotalMeal?.FatG ?? 0;
 
-            var msg = $"✅ *Refeição registrada:* {prato}\n" +
-                      $"🔥 *Calorias:* {calorias} kcal\n" +
-                      $"🥩 *Proteínas:* {proteina}g\n" +
-                      $"🍞 *Carboidratos:* {carbo}g\n" +
-                      $"🥑 *Gorduras:* {gordura}g\n\n";
+            var msg = $"✅ *Refeição registrada:* {prato}\n🔥 *Calorias:* {calorias} kcal\n🥩 *Proteínas:* {proteina}g\n🍞 *Carboidratos:* {carbo}g\n🥑 *Gorduras:* {gordura}g\n\n";
 
             if (statusDoDia != null)
             {
-                if (statusDoDia.StreakDays > 0)
-                {
-                    msg += $"🔥 *OFENSIVA:* {statusDoDia.StreakDays} dia(s) seguidos no foco! 🚀\n\n";
-                }
-
-                msg += $"📊 *SEU RESUMO DE HOJE*\n" +
-                       $"• *Calorias:* {statusDoDia.Consumed.Calories} / {statusDoDia.Target.Calories} kcal\n";
-
+                if (statusDoDia.StreakDays > 0) msg += $"🔥 *OFENSIVA:* {statusDoDia.StreakDays} dia(s) seguidos no foco! 🚀\n\n";
+                msg += $"📊 *SEU RESUMO DE HOJE*\n• *Calorias:* {statusDoDia.Consumed.Calories} / {statusDoDia.Target.Calories} kcal\n";
                 var faltamCal = statusDoDia.Remaining.Calories;
-                msg += faltamCal <= 0
-                    ? $"_⚠️ Você atingiu ou ultrapassou sua meta diária de calorias!_\n"
-                    : $"_Faltam {faltamCal} kcal_\n";
-
+                msg += faltamCal <= 0 ? $"_⚠️ Você atingiu ou ultrapassou sua meta!_\n" : $"_Faltam {faltamCal} kcal_\n";
                 msg += $"• *Proteínas:* {statusDoDia.Consumed.ProteinG:F0}g / {statusDoDia.Target.ProteinG:F0}g\n" +
                        $"• *Carboidratos:* {statusDoDia.Consumed.CarbsG:F0}g / {statusDoDia.Target.CarbsG:F0}g\n" +
                        $"• *Gorduras:* {statusDoDia.Consumed.FatG:F0}g / {statusDoDia.Target.FatG:F0}g\n";
@@ -612,14 +540,19 @@ namespace LabelWise.Api.Controllers
                 if (faltamCal > 100 && statusDoDia.Suggestions != null && statusDoDia.Suggestions.Any())
                 {
                     msg += "\n💡 *SUGESTÕES PARA A PRÓXIMA REFEIÇÃO:*\n";
-                    foreach (var sugestao in statusDoDia.Suggestions)
-                    {
-                        msg += $"• {sugestao}\n";
-                    }
+                    foreach (var sugestao in statusDoDia.Suggestions) msg += $"• {sugestao}\n";
                 }
             }
-
             return msg;
+        }
+
+        // DTO Interno para deserialização limpa
+        private class SetupProfileDto
+        {
+            public int TargetCalories { get; set; } = 2000;
+            public string MainGoal { get; set; } = "";
+            public string MedicalRestrictions { get; set; } = "";
+            public string FoodAversions { get; set; } = "";
         }
     }
 
