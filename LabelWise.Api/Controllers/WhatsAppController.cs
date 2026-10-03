@@ -91,9 +91,12 @@ namespace LabelWise.Api.Controllers
                 string? textoBruto = messageType == "text" ? messagingEvent?.Text?.Body?.Trim() : null;
                 string textoLower = textoBruto?.ToLowerInvariant() ?? "";
 
-                // 1. Verifica se é um paciente de clínica B2B real
-                var pacienteCadastrado = await _nutritionRepository.ObterPacientePorIdAsync(senderPhone);
-                bool isB2bPatient = pacienteCadastrado != null;
+                // 1. Valida se é um paciente B2B real (de clínica externa, ignorando o b2c_autonomous_user)
+                var patientsCollectionCheck = _database.GetCollection<MongoDB.Bson.BsonDocument>("Nutrition_Patients");
+                var patientDocCheck = await patientsCollectionCheck.Find(Builders<MongoDB.Bson.BsonDocument>.Filter.Eq("_id", senderPhone)).FirstOrDefaultAsync();
+                bool isB2bPatient = patientDocCheck != null &&
+                                    patientDocCheck.Contains("ProfessionalId") &&
+                                    patientDocCheck["ProfessionalId"].AsString != "b2c_autonomous_user";
 
                 // 2. Gestão B2C (Trial, Limites e Onboarding)
                 var trialCollection = _database.GetCollection<MongoDB.Bson.BsonDocument>("B2C_Trial_Users");
@@ -169,7 +172,6 @@ namespace LabelWise.Api.Controllers
                         }
 
                         // Gravação em Nutrition_Patients
-                        var patientsCollection = _database.GetCollection<MongoDB.Bson.BsonDocument>("Nutrition_Patients");
                         var patientDoc = new MongoDB.Bson.BsonDocument
                         {
                             { "_id", senderPhone },
@@ -178,7 +180,7 @@ namespace LabelWise.Api.Controllers
                             { "MedicalRestrictions", perfilExtraido.MedicalRestrictions },
                             { "FoodAversions", perfilExtraido.FoodAversions }
                         };
-                        await patientsCollection.ReplaceOneAsync(
+                        await patientsCollectionCheck.ReplaceOneAsync(
                             Builders<MongoDB.Bson.BsonDocument>.Filter.Eq("_id", senderPhone),
                             patientDoc,
                             new ReplaceOptions { IsUpsert = true }
@@ -248,7 +250,7 @@ namespace LabelWise.Api.Controllers
 
                     if (dailyCount >= 4)
                     {
-                        _logger.LogWarning("[WhatsApp B2C] ⚠️ Limite diário de mensagens atingido para: {Phone}", senderPhone);
+                        _logger.LogWarning("[WhatsApp B2C] ⚠️️ Limite diário de mensagens atingido para: {Phone}", senderPhone);
                         await _whatsAppSender.SendTextMessageAsync(
                             senderPhone,
                             "⚠️ Atingiu o limite de 4 interações gratuitas para hoje. O seu saldo diário será renovado amanhã! ⏰"
