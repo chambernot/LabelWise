@@ -120,7 +120,7 @@ namespace LabelWise.Api.Controllers
                         };
                         await trialCollection.InsertOneAsync(userDoc);
 
-                        string mensagemBoasVindas = "🎉 *Bem-vindo ao LabelWise (Versão de Teste - 15 dias)!* 🥗\n\n" +
+                        string mensagemBoasVindas = "🎉 *Bem-vindo ao Nutrição facil (Versão de Teste - 15 dias)!* 🥗\n\n" +
                                                     "Para começarmos a personalizar a sua IA e garantir total segurança com **alergias e restrições**, por favor envie uma mensagem com o seu objetivo e preferências.\n\n" +
                                                     "📝 *Exemplo de texto para enviar agora:*\n" +
                                                     "_'Meu objetivo é emagrecimento, meta de 1800 calorias, sou alérgico a amendoim e não gosto de ovo.'_\n\n" +
