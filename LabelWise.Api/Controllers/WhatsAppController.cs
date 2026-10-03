@@ -182,7 +182,7 @@ namespace LabelWise.Api.Controllers
                             return Ok();
                         }
 
-                        // 🛡️ GRAVAÇÃO ROBUSTA NA TABELA Nutrition_Patients (Com Upsert garantido)
+                        // Gravação robusta na tabela Nutrition_Patients
                         var patientsCollection = _database.GetCollection<MongoDB.Bson.BsonDocument>("Nutrition_Patients");
                         var patientDoc = new MongoDB.Bson.BsonDocument
                         {
@@ -198,7 +198,7 @@ namespace LabelWise.Api.Controllers
                             new ReplaceOptions { IsUpsert = true }
                         );
 
-                        // 🛡️️ GRAVAÇÃO ROBUSTA NA TABELA DailyGoals (Com Upsert garantido por UserId)
+                        // Gravação robusta na tabela DailyGoals
                         var goalsCollection = _database.GetCollection<MongoDB.Bson.BsonDocument>("DailyGoals");
                         var goalFilter = Builders<MongoDB.Bson.BsonDocument>.Filter.Eq("UserId", senderPhone);
                         var existingGoal = await goalsCollection.Find(goalFilter).FirstOrDefaultAsync();
@@ -223,7 +223,6 @@ namespace LabelWise.Api.Controllers
                         };
                         await goalsCollection.ReplaceOneAsync(goalFilter, goalDoc, new ReplaceOptions { IsUpsert = true });
 
-                        // Marca o perfil como 100% configurado
                         var updateTrialConfig = Builders<MongoDB.Bson.BsonDocument>.Update.Set("ProfileConfigured", true);
                         await trialCollection.UpdateOneAsync(filterTrial, updateTrialConfig);
 
@@ -239,7 +238,7 @@ namespace LabelWise.Api.Controllers
                         return Ok();
                     }
 
-                    // --- PASSO 3: VALIDAÇÕES DE TRIAL ---
+                    // --- PASSO 3: VALIDAÇÕES DE TRIAL E CONTROLO DE MENSAGENS DIÁRIAS ---
                     var trialStartDate = userDoc["TrialStartDate"].ToUniversalTime();
                     if ((now - trialStartDate).TotalDays > 15)
                     {
@@ -270,6 +269,7 @@ namespace LabelWise.Api.Controllers
                         return Ok();
                     }
 
+                    // 🚀 INCREMENTO GARANTIDO DO CONTADOR DIÁRIO DE MENSAGENS
                     dailyCount++;
                     var updateB2C = Builders<MongoDB.Bson.BsonDocument>.Update
                         .Set("LastInteractionDate", lastInteractionDate)
@@ -330,9 +330,14 @@ namespace LabelWise.Api.Controllers
 
                 if (contextoPendente != null)
                 {
-                    textoFinalParaIa = $"[Descrição anterior: {contextoPendente.OriginalTextInput}] " +
-                                       $"[Pergunta de dúvida feita: {contextoPendente.ClarificationQuestion}] " +
-                                       $"[Resposta complementar do usuário: {textoDigitado}]";
+                    _logger.LogInformation("[WhatsAppController] 🔄 Resposta de clarificação detectada para o usuário {Phone}", senderPhone);
+
+                    // 🚀 FORÇA A IA A INTERPRETAR A CONFIRMAÇÃO COMO PARTE DA REFEIÇÃO, EVITANDO O MODO CONSELHO
+                    textoFinalParaIa = $"[Contexto Anterior da Refeição: {contextoPendente.OriginalTextInput}] " +
+                                       $"[Alerta de Restrição Enviado: {contextoPendente.ClarificationQuestion}] " +
+                                       $"[Confirmação / Resposta do Utilizador: {textoDigitado}] " +
+                                       $"Instrução: Processe e registre definitivamente esta refeição considerando a resposta do utilizador.";
+
                     imagemFinalParaIa ??= contextoPendente.OriginalBase64Image;
                     await _nutritionRepository.RemoverClarificacaoPendenteAsync(senderPhone);
                 }
