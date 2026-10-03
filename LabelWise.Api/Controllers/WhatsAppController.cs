@@ -167,7 +167,7 @@ namespace LabelWise.Api.Controllers
                         var textoConfig = messagingEvent?.Text?.Body ?? string.Empty;
 
                         // 🚀 EXTRAÇÃO INTELIGENTE DE CALORIAS VIA REGEX (ex: "1500 calorias" ou "1800 kcal")
-                        int targetCalories = 2000; // Valor padrão caso não informe
+                        int targetCalories = 2000;
                         var calorieMatch = Regex.Match(textoConfig, @"(\d{3,4})\s*(calorias|kcal|Kcal)", RegexOptions.IgnoreCase);
                         if (calorieMatch.Success && int.TryParse(calorieMatch.Groups[1].Value, out var parsedCals))
                         {
@@ -233,7 +233,7 @@ namespace LabelWise.Api.Controllers
                                                 "👉 *Agora já pode enviar as suas refeições* por texto, foto ou áudio (ex: _'Comi frango com batata doce'_).";
 
                         await _whatsAppSender.SendTextMessageAsync(senderPhone, respostaConfig);
-                        return Ok();
+                        return Ok(); // 🛑 INTERROMPE AQUI PARA NÃO PROCESSAR A CONFIGURAÇÃO COMO REFEIÇÃO!
                     }
 
                     // --- PASSO 3: VALIDAÇÕES DE TRIAL E LIMITES DIÁRIOS ---
@@ -267,7 +267,7 @@ namespace LabelWise.Api.Controllers
                         return Ok();
                     }
 
-                    // Incrementa o contador diário de mensagens válidas
+                    // Incrementa o contador diário de mensagens válidas (apenas para refeições/interações reais)
                     dailyCount++;
                     var updateB2C = Builders<MongoDB.Bson.BsonDocument>.Update
                         .Set("LastInteractionDate", lastInteractionDate)
