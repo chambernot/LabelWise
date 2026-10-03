@@ -109,7 +109,7 @@ namespace LabelWise.Api.Controllers
                             { "TrialStartDate", now },
                             { "LastInteractionDate", now.Date },
                             { "DailyMessageCount", 0 },
-                            { "ProfileConfigured", false } // Ainda não configurado
+                            { "ProfileConfigured", false }
                         };
                         await trialCollection.InsertOneAsync(userDoc);
 
@@ -154,7 +154,23 @@ namespace LabelWise.Api.Controllers
                                                     "Assim que enviar este texto, o seu perfil estará pronto e poderá começar a registrar as suas refeições! ✨";
 
                         await _whatsAppSender.SendTextMessageAsync(senderPhone, mensagemBoasVindas);
-                        return Ok(); // Encerra aqui na estreia
+                        return Ok();
+                    }
+
+                    // 🚀 COMANDO DE ATALHO: Se o utilizador digitar "meta", "perfil" ou "configurar", reabre a configuração!
+                    if (messageType == "text")
+                    {
+                        var textoBruto = messagingEvent?.Text?.Body?.Trim().ToLowerInvariant() ?? "";
+                        if (textoBruto == "meta" || textoBruto == "perfil" || textoBruto == "configurar" || textoBruto == "ajustar")
+                        {
+                            var resetConfig = Builders<MongoDB.Bson.BsonDocument>.Update.Set("ProfileConfigured", false);
+                            await trialCollection.UpdateOneAsync(filterTrial, resetConfig);
+
+                            string mensagemReset = "⚙️ *Reconfiguração de Perfil Iniciada!*\n\n" +
+                                                   "Por favor, envie novamente o seu objetivo, meta de calorias e restrições alérgicas (ex: _'Quero emagrecer, 1600 calorias, alérgico a amendoim'_).";
+                            await _whatsAppSender.SendTextMessageAsync(senderPhone, mensagemReset);
+                            return Ok();
+                        }
                     }
 
                     // --- PASSO 2: EXTRAÇÃO ESTRUTURADA DO PERFIL (VIA IA) ---
@@ -171,7 +187,7 @@ namespace LabelWise.Api.Controllers
                                                   "Para a IA funcionar corretamente, por favor envie uma frase com o seu objetivo e preferências.\n\n" +
                                                   "📝 *Exemplo:* _'Quero emagrecer, 1500 kcal, sou alérgico a amendoim e não gosto de ovo.'_";
                             await _whatsAppSender.SendTextMessageAsync(senderPhone, msgErroCurta);
-                            return Ok(); // Interrompe para o utilizador tentar de novo
+                            return Ok();
                         }
 
                         await _whatsAppSender.SendTextMessageAsync(senderPhone, "⚙️ Processando o seu perfil...");
@@ -186,7 +202,7 @@ namespace LabelWise.Api.Controllers
                                                "Por favor, tente ser um pouco mais específico sobre a sua meta e eventuais restrições.\n\n" +
                                                "📝 *Exemplo:* _'Meu objetivo é hipertrofia, 2500 calorias, não gosto de ovo.'_";
                             await _whatsAppSender.SendTextMessageAsync(senderPhone, msgErroIA);
-                            return Ok(); // Interrompe para o utilizador tentar de novo
+                            return Ok();
                         }
 
                         // Atualiza as tabelas com os dados limpos extraídos pela IA
@@ -217,10 +233,11 @@ namespace LabelWise.Api.Controllers
                                                 $"🔥 **Calorias Diárias:** {perfilExtraido.TargetCalories} kcal\n" +
                                                 $"🛡️ **Alergias/Restrições:** {(string.IsNullOrWhiteSpace(perfilExtraido.MedicalRestrictions) ? "Nenhuma" : perfilExtraido.MedicalRestrictions)}\n" +
                                                 $"🚫 **Aversões:** {(string.IsNullOrWhiteSpace(perfilExtraido.FoodAversions) ? "Nenhuma" : perfilExtraido.FoodAversions)}\n\n" +
-                                                "👉 *Tudo pronto! Já pode enviar as suas refeições* por texto, foto ou áudio (ex: _'Comi frango com batata doce'_).";
+                                                "👉 *Tudo pronto! Já pode enviar as suas refeições* por texto, foto ou áudio (ex: _'Comi frango com batata doce'_).\n\n" +
+                                                "_💡 Dica: Se quiser alterar suas metas no futuro, basta digitar *meta* a qualquer momento!_";
 
                         await _whatsAppSender.SendTextMessageAsync(senderPhone, respostaConfig);
-                        return Ok(); // Encerra aqui a etapa de configuração
+                        return Ok();
                     }
 
                     // --- PASSO 3: VALIDAÇÕES DE TRIAL (15 DIAS E 3 MENSAGENS) ---
@@ -427,10 +444,6 @@ namespace LabelWise.Api.Controllers
             return StatusCode(500, new { success = false, message = "Falha ao enviar lembrete." });
         }
 
-        // =========================================================================
-        // MÉTODOS AUXILIARES: INTEGRAÇÕES COM O GEMINI
-        // =========================================================================
-
         private async Task<string> TranscreverAudioComGeminiAsync(byte[] audioBytes)
         {
             var apiKey = _configuration["GeminiApiKey"] ?? _configuration["Gemini:ApiKey"];
@@ -554,10 +567,10 @@ namespace LabelWise.Api.Controllers
                        $"• *Carboidratos:* {statusDoDia.Consumed.CarbsG:F0}g / {statusDoDia.Target.CarbsG:F0}g\n" +
                        $"• *Gorduras:* {statusDoDia.Consumed.FatG:F0}g / {statusDoDia.Target.FatG:F0}g\n";
 
-                if (faltamCal > 100 && statusDoDia.Suggestions != null && statusDoDia.Suggestions.Any())
+                if (faltamCal > 100 && statusDocDia.Suggestions != null && statusDocDia.Suggestions.Any())
                 {
                     msg += "\n💡 *SUGESTÕES PARA A PRÓXIMA REFEIÇÃO:*\n";
-                    foreach (var sugestao in statusDoDia.Suggestions) msg += $"• {sugestao}\n";
+                    foreach (var sugestao in statusDocDia.Suggestions) msg += $"• {sugestao}\n";
                 }
             }
             return msg;
