@@ -129,7 +129,7 @@ namespace LabelWise.Api.Controllers
                                     patientDocCheck.Contains("ProfessionalId") &&
                                     patientDocCheck["ProfessionalId"].AsString != "b2c_autonomous_user";
 
-                // 2. Gestão B2C (Trial, Limites e Onboarding Guiado)
+                // 2. Gestão B2C (Trial, Limites e Onboarding Guiado com Opções Validadas)
                 var trialCollection = _database.GetCollection<MongoDB.Bson.BsonDocument>("B2C_Trial_Users");
                 var filterTrial = Builders<MongoDB.Bson.BsonDocument>.Filter.Eq("_id", senderPhone);
                 var userDoc = await trialCollection.Find(filterTrial).FirstOrDefaultAsync();
@@ -155,7 +155,10 @@ namespace LabelWise.Api.Controllers
                         string mensagemBoasVindas = "🎉 *Bem-vindo ao LabelWise (Versão de Teste - 15 dias)!* 🥗\n\n" +
                                                     "Vamos configurar o seu perfil com um formulário rápido e guiado passo a passo.\n\n" +
                                                     "🎯 **Passo 1 de 4:** Qual é o seu principal objetivo?\n" +
-                                                    "_(Ex: Emagrecimento, Hipertrofia, Manutenção)_";
+                                                    "*1️⃣* Emagrecimento\n" +
+                                                    "*2️⃣* Hipertrofia\n" +
+                                                    "*3️⃣* Manutenção\n\n" +
+                                                    "_(Responda apenas com o número correspondente)_";
 
                         await _whatsAppSender.SendTextMessageAsync(senderPhone, mensagemBoasVindas);
                         return Ok();
@@ -171,12 +174,15 @@ namespace LabelWise.Api.Controllers
 
                         string mensagemReset = "⚙️ *Reconfiguração de Perfil Iniciada!*\n\n" +
                                                "🎯 **Passo 1 de 4:** Qual é o seu principal objetivo?\n" +
-                                               "_(Ex: Emagrecimento, Hipertrofia, Manutenção)_";
+                                               "*1️⃣* Emagrecimento\n" +
+                                               "*2️⃣* Hipertrofia\n" +
+                                               "*3️⃣* Manutenção\n\n" +
+                                               "_(Responda apenas com o número correspondente)_";
                         await _whatsAppSender.SendTextMessageAsync(senderPhone, mensagemReset);
                         return Ok();
                     }
 
-                    // --- C. FORMULÁRIO GUIADO PASSO A PASSO ---
+                    // --- C. FORMULÁRIO GUIADO PASSO A PASSO COM VALIDAÇÃO DE DOMÍNIOS ---
                     bool profileConfigured = userDoc.Contains("ProfileConfigured") && userDoc["ProfileConfigured"].AsBoolean;
 
                     if (!profileConfigured)
@@ -186,34 +192,44 @@ namespace LabelWise.Api.Controllers
                         switch (step)
                         {
                             case "WaitingForGoal":
-                                if (string.IsNullOrWhiteSpace(textoBruto))
+                                var objetivosValidos = new Dictionary<int, string>
                                 {
-                                    await _whatsAppSender.SendTextMessageAsync(senderPhone, "⚠️ Por favor, digite o seu objetivo principal (Ex: Emagrecimento, Hipertrofia):");
-                                    return Ok();
+                                    { 1, "Emagrecimento" },
+                                    { 2, "Hipertrofia" },
+                                    { 3, "Manutenção" }
+                                };
+
+                                if (int.TryParse(textoLimpoCmd, out int optGoal) && objetivosValidos.ContainsKey(optGoal))
+                                {
+                                    string goalSelecionado = objetivosValidos[optGoal];
+                                    var updateGoal = Builders<MongoDB.Bson.BsonDocument>.Update
+                                        .Set("TempGoal", goalSelecionado)
+                                        .Set("OnboardingStep", "WaitingForCalories");
+                                    await trialCollection.UpdateOneAsync(filterTrial, updateGoal);
+
+                                    await _whatsAppSender.SendTextMessageAsync(senderPhone, "🔥 **Passo 2 de 4:** Qual é a sua meta de calorias diárias?\n_(Digite apenas um número inteiro válido, ex: 1800)_");
                                 }
-
-                                var updateGoal = Builders<MongoDB.Bson.BsonDocument>.Update
-                                    .Set("TempGoal", textoBruto)
-                                    .Set("OnboardingStep", "WaitingForCalories");
-                                await trialCollection.UpdateOneAsync(filterTrial, updateGoal);
-
-                                await _whatsAppSender.SendTextMessageAsync(senderPhone, "🔥 **Passo 2 de 4:** Qual é a sua meta de calorias diárias?\n_(Digite um número, ex: 1800, ou digite 2000 como padrão)_");
+                                else
+                                {
+                                    await _whatsAppSender.SendTextMessageAsync(senderPhone, "❌ Opção inválida.\n\n🎯 **Passo 1 de 4:** Escolha o número correspondente ao seu principal objetivo:\n*1️⃣* Emagrecimento\n*2️⃣* Hipertrofia\n*3️⃣* Manutenção");
+                                }
                                 return Ok();
 
                             case "WaitingForCalories":
-                                int targetCalories = 2000;
                                 var matchCal = Regex.Match(textoBruto, @"\d+");
-                                if (matchCal.Success && int.TryParse(matchCal.Value, out int parsedCal) && parsedCal > 500 && parsedCal < 6000)
+                                if (matchCal.Success && int.TryParse(matchCal.Value, out int parsedCal) && parsedCal >= 800 && parsedCal <= 5000)
                                 {
-                                    targetCalories = parsedCal;
+                                    var updateCal = Builders<MongoDB.Bson.BsonDocument>.Update
+                                        .Set("TempCalories", parsedCal)
+                                        .Set("OnboardingStep", "WaitingForRestrictions");
+                                    await trialCollection.UpdateOneAsync(filterTrial, updateCal);
+
+                                    await _whatsAppSender.SendTextMessageAsync(senderPhone, "🛡️ **Passo 3 de 4:** Tem alguma alergia ou restrição médica?\n_(Ex: Alergia a amendoim, intolerância à lactose, ou digite 'Nenhuma')_");
                                 }
-
-                                var updateCal = Builders<MongoDB.Bson.BsonDocument>.Update
-                                    .Set("TempCalories", targetCalories)
-                                    .Set("OnboardingStep", "WaitingForRestrictions");
-                                await trialCollection.UpdateOneAsync(filterTrial, updateCal);
-
-                                await _whatsAppSender.SendTextMessageAsync(senderPhone, "🛡️ **Passo 3 de 4:** Tem alguma alergia ou restrição médica?\n_(Ex: Alergia a amendoim, intolerância à lactose, ou digite 'Nenhuma')_");
+                                else
+                                {
+                                    await _whatsAppSender.SendTextMessageAsync(senderPhone, "❌ Valor de calorias inválido. Por favor, digite apenas um número numérico válido entre 800 e 5000 (ex: 1800):");
+                                }
                                 return Ok();
 
                             case "WaitingForRestrictions":
@@ -412,7 +428,7 @@ namespace LabelWise.Api.Controllers
 
                         string respostaRemocao = $"✅ *Refeição removida com sucesso!* \n" +
                                                  $"🗑️ _{refeicaoParaExcluir.DishName ?? refeicaoParaExcluir.MealType}_\n\n" +
-                                                 $"📊 *O SEU RESUMO DE HOJE*\n" +
+                                                 $"📊 *O SEU NOVO RESUMO DE HOJE*\n" +
                                                  $"• *Calorias:* {statusAtualizado.Consumed.Calories} / {statusAtualizado.Target.Calories} kcal\n" +
                                                  $"_Faltam {statusAtualizado.Remaining.Calories} kcal_";
 
@@ -444,7 +460,7 @@ namespace LabelWise.Api.Controllers
                 }
 
                 // =========================================================================
-                // 🛡️️ FILTRO DE SAUDAÇÕES E CONVERSA FIADA
+                // 🛡️ FILTRO DE SAUDAÇÕES E CONVERSA FIADA
                 // =========================================================================
                 var saudacoesOuConversa = new[] { "oi", "ola", "olá", "tudo bem", "bom dia", "boa tarde", "boa noite", "eae", "hey", "obrigado", "obrigada", "valeu" };
                 if (saudacoesOuConversa.Contains(textoLimpoCmd))
