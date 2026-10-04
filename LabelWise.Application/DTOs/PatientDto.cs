@@ -5,8 +5,9 @@ public record PatientDto(
     string ProfessionalId,
     string Name,
     string WhatsAppNumber,
-    // 🚀 NOVOS CAMPOS CLÍNICOS (Com valores padrão para não quebrar instâncias existentes)
+    // 🚀 CAMPOS CLÍNICOS E GUARDRAILS
     string MainGoal = "Manutenção Saudável",
     string MedicalRestrictions = "Nenhuma",
-    string FoodAversions = "Nenhuma"
+    string FoodAversions = "Nenhuma",
+    string ClinicalProtocol = "" // 🛡️ Adicionado aqui para o MongoDB conseguir mapear o documento!
 );
