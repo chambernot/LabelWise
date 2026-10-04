@@ -122,12 +122,20 @@ namespace LabelWise.Api.Controllers
                 // 🛡 LIMPEZA ROBUSTA DE COMANDOS
                 string textoLimpoCmd = Regex.Replace(textoBruto, "[^a-zA-Z0-9áéíóúâêîôûãõçÁÉÍÓÚÂÊÎÔÛÃÕÇ ]", "").Trim().ToLowerInvariant();
 
-                // 1. Valida se é um paciente B2B real
+                // 1. Valida se é um paciente B2B real e obtém os dados do paciente (incluindo Protocolo Clínico)
                 var patientsCollectionCheck = _database.GetCollection<MongoDB.Bson.BsonDocument>("Nutrition_Patients");
                 var patientDocCheck = await patientsCollectionCheck.Find(Builders<MongoDB.Bson.BsonDocument>.Filter.Eq("_id", senderPhone)).FirstOrDefaultAsync();
+
                 bool isB2bPatient = patientDocCheck != null &&
                                     patientDocCheck.Contains("ProfessionalId") &&
                                     patientDocCheck["ProfessionalId"].AsString != "b2c_autonomous_user";
+
+                // 🛡️ EXTRAÇÃO DO PROTOCOLO CLÍNICO (GUARDRAILS)
+                string? protocoloClinico = null;
+                if (patientDocCheck != null && patientDocCheck.Contains("ClinicalProtocol"))
+                {
+                    protocoloClinico = patientDocCheck["ClinicalProtocol"].AsString;
+                }
 
                 // 2. Gestão B2C (Trial, Limites e Onboarding Guiado com Opções Validadas)
                 var trialCollection = _database.GetCollection<MongoDB.Bson.BsonDocument>("B2C_Trial_Users");
@@ -333,7 +341,7 @@ namespace LabelWise.Api.Controllers
                         _logger.LogWarning("[WhatsApp B2C] ⚠️ Limite diário de mensagens atingido para: {Phone}", senderPhone);
                         await _whatsAppSender.SendTextMessageAsync(
                             senderPhone,
-                            "⚠️ Atingiu o limite de 4 interações gratuitas para hoje. O seu saldo diário será renovado amanhã! ⏰"
+                            "⚠️️ Atingiu o limite de 4 interações gratuitas para hoje. O seu saldo diário será renovado amanhã! ⏰"
                         );
                         return Ok();
                     }
@@ -496,12 +504,14 @@ namespace LabelWise.Api.Controllers
 
                 await _nutritionRepository.SalvarMensagemHistoricoAsync(senderPhone, "user", textoFinalParaIa);
 
+                // 🛡️ Passagem do Protocolo Clínico recolhido do banco para o Request DTO
                 var request = new ParseMealRequestDto(
                     senderPhone,
                     TextInput: textoFinalParaIa,
                     Base64Image: imagemFinalParaIa,
                     AudioUrl: null,
-                    LocalTime: DateTime.UtcNow
+                    LocalTime: DateTime.UtcNow,
+                    ClinicalProtocol: protocoloClinico
                 );
 
                 var result = await _nutritionService.ProcessMealEntryAsync(request);
@@ -639,7 +649,7 @@ namespace LabelWise.Api.Controllers
                 return "⚠️ *Ops! Os nossos serviços estão instáveis no momento.*\nPor favor, tente novamente em instantes.";
 
             if (aiResult.IsAdvice)
-                return $"💡 *Conselho do Nutri:*\n\n{(!string.IsNullOrWhiteSpace(aiResult.AdviceText) ? aiResult.AdviceText : "Como posso ajudar?")}";
+                return $"💡 *Conselho do Nutri:* \n\n{(!string.IsNullOrWhiteSpace(aiResult.AdviceText) ? aiResult.AdviceText : "Como posso ajudar?")}";
 
             if (aiResult.RequiresUserClarification)
                 return $"🤔 *Fiquei na dúvida sobre o seu prato:*\n{aiResult.ClarificationQuestion}";

@@ -112,15 +112,24 @@ namespace LabelWise.Application.Services.Nutrition
 
             int remainingCal = Math.Max(0, targetCal - consumedCal);
 
-            // 🚀 4. MONTAR O SUPER-CONTEXTO PARA A IA
+            // 🚀 4. MONTAR O SUPER-CONTEXTO PARA A IA COM GUARDRAILS CLÍNICOS
             string objetivo = paciente?.MainGoal ?? "Manter a saúde e o peso atual";
             string restricoes = paciente?.MedicalRestrictions ?? "Nenhuma";
             string aversoes = paciente?.FoodAversions ?? "Nenhuma";
 
+            // Dá prioridade ao protocolo enviado no request, caso contrário usa o do objeto paciente ou omite
+            string protocoloClinico = !string.IsNullOrWhiteSpace(request.ClinicalProtocol)
+                ? request.ClinicalProtocol
+                : (paciente != null && paciente.GetType().GetProperty("ClinicalProtocol") != null
+                    ? (string)(paciente.GetType().GetProperty("ClinicalProtocol")?.GetValue(paciente) ?? "Nenhum protocolo restrito adicional")
+                    : "Nenhum protocolo restrito adicional");
+
             string contextoPaciente = $"\n\n[PERFIL CLÍNICO E CONTEXTO DO PACIENTE HOJE]:\n" +
                                       $"- Objetivo Principal: {objetivo}\n" +
-                                      $"- Restrições Médicas/Alergias: {restricoes} (⚠️ REGRA ABSOLUTA: NUNCA recomende NADA que viole isso)\n" +
+                                      $"- Restrições Médicas/Alergias: {restricoes}\n" +
                                       $"- Aversões Alimentares: {aversoes}\n" +
+                                      $"- ⚠️ PROTOCOLO CLÍNICO / GUARDRAILS DO NUTRICIONISTA (REGRA ABSOLUTA): {protocoloClinico}\n" +
+                                      $"  (Instrução rígida para a IA: Suas análises, recomendações e sugestões DEVEM respeitar estritamente este protocolo. NUNCA sugira alimentos proibidos pelo nutricionista, mesmo que faltem macronutrientes no dia).\n" +
                                       $"- Meta Calórica Diária: {targetCal} kcal (Já consumidas: {consumedCal} kcal | Restam: {remainingCal} kcal)\n" +
                                       $"- Metas de Macros: Proteína {targetProt}g (Consumido: {consumedProt:F0}g), " +
                                       $"Carboidratos {targetCarb}g (Consumido: {consumedCarb:F0}g), " +
@@ -135,7 +144,8 @@ namespace LabelWise.Application.Services.Nutrition
                 textoEnriquecido,
                 request.Base64Image,
                 request.AudioUrl,
-                request.LocalTime
+                request.LocalTime,
+                request.ClinicalProtocol
             );
 
             // 5. Delega a análise para o agente de IA enviando o histórico conversacional junto
