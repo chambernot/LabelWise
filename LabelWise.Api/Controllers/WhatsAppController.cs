@@ -160,7 +160,7 @@ namespace LabelWise.Api.Controllers
                         };
                         await trialCollection.InsertOneAsync(userDoc);
 
-                        string mensagemBoasVindas = "🎉 *Bem-vindo ao LabelWise (Versão de Teste - 15 dias)!* 🥗\n\n" +
+                        string mensagemBoasVindas = "🎉 *Bem-vindo ao Nutrição Facil (Versão de Teste - 15 dias)!* 🥗\n\n" +
                                                     "Vamos configurar o seu perfil com um formulário rápido e guiado passo a passo.\n\n" +
                                                     "🎯 **Passo 1 de 4:** Qual é o seu principal objetivo?\n" +
                                                     "*1️⃣* Emagrecimento\n" +
@@ -473,7 +473,7 @@ namespace LabelWise.Api.Controllers
                 var saudacoesOuConversa = new[] { "oi", "ola", "olá", "tudo bem", "bom dia", "boa tarde", "boa noite", "eae", "hey", "obrigado", "obrigada", "valeu" };
                 if (saudacoesOuConversa.Contains(textoLimpoCmd))
                 {
-                    string respostaSaudacao = "👋 Olá! Sou o seu assistente nutricional do LabelWise.\n\n" +
+                    string respostaSaudacao = "👋 Olá! Sou o seu assistente nutricional do Nutrição Facil.\n\n" +
                                               "Pode enviar-me uma **foto**, um **áudio** ou o **texto** do que comeu para eu registar a refeição. 🥗\n\n" +
                                               "💡 *Dica:* Diga *remover* para ver a lista de refeições de hoje ou *minha dieta* para ver o seu plano completo!";
 

@@ -448,7 +448,7 @@ public class NutritionistPortalController : ControllerBase
             </style>
         </head>
         <body>
-            <h1>🥗 LabelWise - Relatório Pré-Consulta</h1>
+            <h1>🥗 Nutrição Facil - Relatório Pré-Consulta</h1>
             <p><strong>Paciente (WhatsApp):</strong> {phone}</p>
             <p><strong>Objetivo Principal:</strong> {mainGoal}</p>
             <p><strong>Data de Emissão:</strong> {DateTime.UtcNow.AddHours(-3):dd/MM/yyyy HH:mm}</p>
