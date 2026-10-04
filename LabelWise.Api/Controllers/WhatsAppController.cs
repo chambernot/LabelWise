@@ -119,7 +119,7 @@ namespace LabelWise.Api.Controllers
                     return Ok();
                 }
 
-                // 🛡️ LIMPEZA ROBUSTA DE COMANDOS (Remove pontuação gerada por áudio/texto: pontos, vírgulas, etc.)
+                // 🛡 LIMPEZA ROBUSTA DE COMANDOS
                 string textoLimpoCmd = Regex.Replace(textoBruto, "[^a-zA-Z0-9áéíóúâêîôûãõçÁÉÍÓÚÂÊÎÔÛÃÕÇ ]", "").Trim().ToLowerInvariant();
 
                 // 1. Valida se é um paciente B2B real
@@ -282,7 +282,7 @@ namespace LabelWise.Api.Controllers
                         _logger.LogWarning("[WhatsApp B2C] ⚠️ Limite diário de mensagens atingido para: {Phone}", senderPhone);
                         await _whatsAppSender.SendTextMessageAsync(
                             senderPhone,
-                            "⚠️ Atingiu o limite de 4 interações gratuitas para hoje. O seu saldo diário será renovado amanhã! ⏰"
+                            "⚠️️ Atingiu o limite de 4 interações gratuitas para hoje. O seu saldo diário será renovado amanhã! ⏰"
                         );
                         return Ok();
                     }
@@ -296,8 +296,10 @@ namespace LabelWise.Api.Controllers
                 }
 
                 // =========================================================================
-                // 🗑️ GESTÃO DE REMOÇÃO DE REFEIÇÕES (COMANDO LIMPO E SEGURO)
+                // 🗑️ GESTÃO DE REMOÇÃO DE REFEIÇÕES (SUPORTA TEXTO, ÁUDIO E NÚMEROS ISOLADOS)
                 // =========================================================================
+                bool isNumeroIsolado = int.TryParse(textoLimpoCmd, out int numeroIsoladoVal);
+
                 if (textoLimpoCmd == "remover" || textoLimpoCmd == "apagar" || textoLimpoCmd == "excluir" || textoLimpoCmd == "listar refeicoes" || textoLimpoCmd == "remover refeicao")
                 {
                     var dataHojeBr = DateTime.UtcNow.AddHours(-3);
@@ -317,58 +319,76 @@ namespace LabelWise.Api.Controllers
                         sbLista.AppendLine($"*{index}️⃣* {r.DishName ?? r.MealType} ({horaStr})");
                         index++;
                     }
-                    sbLista.AppendLine("\n💡 *Para remover*, diga ou digite o comando seguido do número (Ex: *remover 1* ou *apagar 2*).");
+                    sbLista.AppendLine("\n💡 *Para remover*, diga ou digite o número correspondente (Ex: *1*, *2* ou *remover 1*).");
 
                     await _whatsAppSender.SendTextMessageAsync(senderPhone, sbLista.ToString());
                     return Ok();
                 }
 
-                if (textoLimpoCmd.StartsWith("remover ") || textoLimpoCmd.StartsWith("apagar ") || textoLimpoCmd.StartsWith("excluir "))
+                if (textoLimpoCmd.StartsWith("remover ") || textoLimpoCmd.StartsWith("apagar ") || textoLimpoCmd.StartsWith("excluir ") || isNumeroIsolado)
                 {
                     var dataHojeBr = DateTime.UtcNow.AddHours(-3);
                     var refeicoesHoje = await _nutritionRepository.ObterRefeicoesDoDiaAsync(senderPhone, dataHojeBr);
-                    var partes = textoBruto.Split(' ', 2, StringSplitOptions.RemoveEmptyEntries);
 
-                    if (partes.Length > 1 && refeicoesHoje != null && refeicoesHoje.Any())
+                    if (refeicoesHoje == null || !refeicoesHoje.Any())
                     {
-                        var argumento = partes[1].Trim();
-                        var refeicoesOrdenadas = refeicoesHoje.OrderBy(x => x.LoggedAt).ToList();
-                        MealLog? refeicaoParaExcluir = null;
+                        await _whatsAppSender.SendTextMessageAsync(senderPhone, "⚠️ Não tem nenhuma refeição registada hoje para remover.");
+                        return Ok();
+                    }
 
-                        if (int.TryParse(argumento, out int numeroRefeicao))
+                    var refeicoesOrdenadas = refeicoesHoje.OrderBy(x => x.LoggedAt).ToList();
+                    MealLog? refeicaoParaExcluir = null;
+
+                    if (isNumeroIsolado)
+                    {
+                        int idx = numeroIsoladoVal - 1;
+                        if (idx >= 0 && idx < refeicoesOrdenadas.Count)
                         {
-                            int idx = numeroRefeicao - 1;
-                            if (idx >= 0 && idx < refeicoesOrdenadas.Count)
+                            refeicaoParaExcluir = refeicoesOrdenadas[idx];
+                        }
+                    }
+                    else
+                    {
+                        var partes = textoBruto.Split(' ', 2, StringSplitOptions.RemoveEmptyEntries);
+                        if (partes.Length > 1)
+                        {
+                            var argumento = partes[1].Trim();
+                            if (int.TryParse(argumento, out int numeroRefeicao))
                             {
-                                refeicaoParaExcluir = refeicoesOrdenadas[idx];
+                                int idx = numeroRefeicao - 1;
+                                if (idx >= 0 && idx < refeicoesOrdenadas.Count)
+                                {
+                                    refeicaoParaExcluir = refeicoesOrdenadas[idx];
+                                }
+                            }
+                            else
+                            {
+                                refeicaoParaExcluir = refeicoesOrdenadas.FirstOrDefault(r =>
+                                    (r.DishName ?? "").Contains(argumento, StringComparison.OrdinalIgnoreCase) ||
+                                    (r.MealType ?? "").Contains(argumento, StringComparison.OrdinalIgnoreCase));
                             }
                         }
-                        else
-                        {
-                            refeicaoParaExcluir = refeicoesOrdenadas.FirstOrDefault(r =>
-                                (r.DishName ?? "").Contains(argumento, StringComparison.OrdinalIgnoreCase) ||
-                                (r.MealType ?? "").Contains(argumento, StringComparison.OrdinalIgnoreCase));
-                        }
+                    }
 
-                        if (refeicaoParaExcluir != null)
-                        {
-                            await _nutritionRepository.ExcluirMealLogAsync(refeicaoParaExcluir.Id);
-                            var statusAtualizado = await _nutritionService.GetDailyStatusAndSuggestionAsync(senderPhone, dataHojeBr);
+                    if (refeicaoParaExcluir != null)
+                    {
+                        await _nutritionRepository.ExcluirMealLogAsync(refeicaoParaExcluir.Id);
+                        var statusAtualizado = await _nutritionService.GetDailyStatusAndSuggestionAsync(senderPhone, dataHojeBr);
 
-                            string respostaRemocao = $"✅ *Refeição removida com sucesso!* \n" +
-                                                     $"🗑️ _{refeicaoParaExcluir.DishName ?? refeicaoParaExcluir.MealType}_\n\n" +
-                                                     $"📊 *O SEU NOVO RESUMO DE HOJE*\n" +
-                                                     $"• *Calorias:* {statusAtualizado.Consumed.Calories} / {statusAtualizado.Target.Calories} kcal\n" +
-                                                     $"_Faltam {statusAtualizado.Remaining.Calories} kcal_";
+                        string respostaRemocao = $"✅ *Refeição removida com sucesso!* \n" +
+                                                 $"🗑️ _{refeicaoParaExcluir.DishName ?? refeicaoParaExcluir.MealType}_\n\n" +
+                                                 $"📊 *O SEU RESUMO DE HOJE*\n" +
+                                                 $"• *Calorias:* {statusAtualizado.Consumed.Calories} / {statusAtualizado.Target.Calories} kcal\n" +
+                                                 $"_Faltam {statusAtualizado.Remaining.Calories} kcal_";
 
-                            await _whatsAppSender.SendTextMessageAsync(senderPhone, respostaRemocao);
-                            return Ok();
-                        }
-                        else
-                        {
-                            await _whatsAppSender.SendTextMessageAsync(senderPhone, "❌ Não encontrei nenhuma refeição com esse número ou nome. Diga *remover* para ver a lista atualizada.");
-                            return Ok();
-                        }
+                        await _whatsAppSender.SendTextMessageAsync(senderPhone, respostaRemocao);
+                        return Ok();
+                    }
+                    else
+                    {
+                        // Se enviou apenas um número mas está fora do intervalo ou não há correspondência, orienta em vez de chamar a IA
+                        await _whatsAppSender.SendTextMessageAsync(senderPhone, "❌ Número inválido. Diga *remover* para ver a lista atualizada das suas refeições.");
+                        return Ok();
                     }
                 }
 
@@ -386,6 +406,21 @@ namespace LabelWise.Api.Controllers
                                        "_Dica: Guarde esta página nos favoritos do seu telemóvel para consultar sempre que precisar!_ ✨";
 
                     await _whatsAppSender.SendTextMessageAsync(senderPhone, respostaLink);
+                    return Ok();
+                }
+
+                // =========================================================================
+                // 🛡️ FILTRO DE SAUDAÇÕES E CONVERSA FIADA (Poupa Tokens e chamadas à IA)
+                // =========================================================================
+                var saudacoesOuConversa = new[] { "oi", "ola", "olá", "tudo bem", "bom dia", "boa tarde", "boa noite", "eae", "hey", "obrigado", "obrigada", "valeu" };
+                if (saudacoesOuConversa.Contains(textoLimpoCmd))
+                {
+                    string respostaSaudacao = "👋 Olá! Sou o seu assistente nutricional do LabelWise.\n\n" +
+                                              "Pode enviar-me uma **foto**, um **áudio** ou o **texto** do que comeu para eu registar a refeição. 🥗\n\n" +
+                                              "💡 *Dica:* Diga *remover* para ver a lista de refeições de hoje ou *minha dieta* para ver o seu plano completo!";
+
+                    await _whatsAppSender.SendTextMessageAsync(senderPhone, respostaSaudacao);
+                    await _nutritionRepository.SalvarMensagemHistoricoAsync(senderPhone, "assistant", respostaSaudacao);
                     return Ok();
                 }
 
