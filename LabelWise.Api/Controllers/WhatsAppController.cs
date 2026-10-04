@@ -16,6 +16,7 @@ using System.Net.Http;
 using System.Net.Http.Headers;
 using System.Text;
 using System.Text.Json;
+using System.Text.RegularExpressions;
 using System.Threading.Tasks;
 
 namespace LabelWise.Api.Controllers
@@ -98,13 +99,13 @@ namespace LabelWise.Api.Controllers
                 }
                 else if (messageType == "audio" && messagingEvent?.Audio?.Id != null)
                 {
-                    await _whatsAppSender.SendTextMessageAsync(senderPhone, "🎙 Ouvindo o seu áudio e transcrevendo...");
+                    await _whatsAppSender.SendTextMessageAsync(senderPhone, "🎙 A ouvir o seu áudio e a transcrever...");
                     var audioBytes = await _metaMediaService.DownloadMediaAsBytesAsync(messagingEvent.Audio.Id);
                     textoBruto = await TranscreverAudioComGeminiAsync(audioBytes);
                 }
                 else if (messageType == "image" && messagingEvent?.Image?.Id != null)
                 {
-                    await _whatsAppSender.SendTextMessageAsync(senderPhone, "📸 Analisando o seu prato, só um instante...");
+                    await _whatsAppSender.SendTextMessageAsync(senderPhone, "📸 A analisar o seu prato, só um instante...");
                     imagemBase64 = await _metaMediaService.DownloadMediaAsBase64Async(messagingEvent.Image.Id);
                     textoBruto = "Analise esta refeição da imagem.";
                 }
@@ -118,7 +119,8 @@ namespace LabelWise.Api.Controllers
                     return Ok();
                 }
 
-                string textoLower = textoBruto?.ToLowerInvariant() ?? "";
+                // 🛡️ LIMPEZA ROBUSTA DE COMANDOS (Remove pontuação gerada por áudio/texto: pontos, vírgulas, etc.)
+                string textoLimpoCmd = Regex.Replace(textoBruto, "[^a-zA-Z0-9áéíóúâêîôûãõçÁÉÍÓÚÂÊÎÔÛÃÕÇ ]", "").Trim().ToLowerInvariant();
 
                 // 1. Valida se é um paciente B2B real
                 var patientsCollectionCheck = _database.GetCollection<MongoDB.Bson.BsonDocument>("Nutrition_Patients");
@@ -153,14 +155,14 @@ namespace LabelWise.Api.Controllers
                                                     "Para começarmos a personalizar a sua IA e garantir total segurança com **alergias e restrições**, por favor envie uma mensagem com o seu objetivo e preferências.\n\n" +
                                                     "📝 *Exemplo de texto para enviar agora:*\n" +
                                                     "_'Meu objetivo é emagrecimento, meta de 1800 calorias, sou alérgico a amendoim e não gosto de ovo.'_\n\n" +
-                                                    "Assim que enviar este texto, o seu perfil estará pronto e poderá começar a registrar as suas refeições! ✨";
+                                                    "Assim que enviar este texto, o seu perfil estará pronto e poderá começar a registar as suas refeições! ✨";
 
                         await _whatsAppSender.SendTextMessageAsync(senderPhone, mensagemBoasVindas);
                         return Ok();
                     }
 
                     // --- B. COMANDO GLOBAL DE RECONFIGURAÇÃO ("meta", "perfil", etc.) ---
-                    if (textoLower == "meta" || textoLower == "perfil" || textoLower == "configurar" || textoLower == "ajustar")
+                    if (textoLimpoCmd == "meta" || textoLimpoCmd == "perfil" || textoLimpoCmd == "configurar" || textoLimpoCmd == "ajustar")
                     {
                         var resetConfig = Builders<MongoDB.Bson.BsonDocument>.Update.Set("ProfileConfigured", false);
                         await trialCollection.UpdateOneAsync(filterTrial, resetConfig);
@@ -187,7 +189,7 @@ namespace LabelWise.Api.Controllers
                             return Ok();
                         }
 
-                        await _whatsAppSender.SendTextMessageAsync(senderPhone, "⚙️ Processando o seu perfil...");
+                        await _whatsAppSender.SendTextMessageAsync(senderPhone, "⚙️ A processar o seu perfil...");
 
                         var perfilExtraido = await ExtrairPerfilComGeminiAsync(textoConfig);
 
@@ -277,7 +279,7 @@ namespace LabelWise.Api.Controllers
 
                     if (dailyCount >= 4)
                     {
-                        _logger.LogWarning("[WhatsApp B2C] ⚠️️ Limite diário de mensagens atingido para: {Phone}", senderPhone);
+                        _logger.LogWarning("[WhatsApp B2C] ⚠️ Limite diário de mensagens atingido para: {Phone}", senderPhone);
                         await _whatsAppSender.SendTextMessageAsync(
                             senderPhone,
                             "⚠️ Atingiu o limite de 4 interações gratuitas para hoje. O seu saldo diário será renovado amanhã! ⏰"
@@ -294,9 +296,9 @@ namespace LabelWise.Api.Controllers
                 }
 
                 // =========================================================================
-                // 🗑️ GESTÃO DE REMOÇÃO DE REFEIÇÕES (VIA TEXTO OU ÁUDIO TRANSCCRITO)
+                // 🗑️ GESTÃO DE REMOÇÃO DE REFEIÇÕES (COMANDO LIMPO E SEGURO)
                 // =========================================================================
-                if (textoLower == "remover" || textoLower == "apagar" || textoLower == "excluir" || textoLower == "listar refeicoes" || textoLower == "remover refeição")
+                if (textoLimpoCmd == "remover" || textoLimpoCmd == "apagar" || textoLimpoCmd == "excluir" || textoLimpoCmd == "listar refeicoes" || textoLimpoCmd == "remover refeicao")
                 {
                     var dataHojeBr = DateTime.UtcNow.AddHours(-3);
                     var refeicoesHoje = await _nutritionRepository.ObterRefeicoesDoDiaAsync(senderPhone, dataHojeBr);
@@ -307,7 +309,7 @@ namespace LabelWise.Api.Controllers
                         return Ok();
                     }
 
-                    var sbLista = new StringBuilder("🗑️ *Suas refeições registadas hoje:*\n\n");
+                    var sbLista = new StringBuilder("🗑️ *As suas refeições registadas hoje:*\n\n");
                     int index = 1;
                     foreach (var r in refeicoesHoje.OrderBy(x => x.LoggedAt))
                     {
@@ -315,13 +317,13 @@ namespace LabelWise.Api.Controllers
                         sbLista.AppendLine($"*{index}️⃣* {r.DishName ?? r.MealType} ({horaStr})");
                         index++;
                     }
-                    sbLista.AppendLine("\n💡 *Para remover*, digite ou diga o comando seguido do número (Ex: *remover 1* ou *apagar 2*).");
+                    sbLista.AppendLine("\n💡 *Para remover*, diga ou digite o comando seguido do número (Ex: *remover 1* ou *apagar 2*).");
 
                     await _whatsAppSender.SendTextMessageAsync(senderPhone, sbLista.ToString());
                     return Ok();
                 }
 
-                if (textoLower.StartsWith("remover ") || textoLower.StartsWith("apagar ") || textoLower.StartsWith("excluir "))
+                if (textoLimpoCmd.StartsWith("remover ") || textoLimpoCmd.StartsWith("apagar ") || textoLimpoCmd.StartsWith("excluir "))
                 {
                     var dataHojeBr = DateTime.UtcNow.AddHours(-3);
                     var refeicoesHoje = await _nutritionRepository.ObterRefeicoesDoDiaAsync(senderPhone, dataHojeBr);
@@ -355,7 +357,7 @@ namespace LabelWise.Api.Controllers
 
                             string respostaRemocao = $"✅ *Refeição removida com sucesso!* \n" +
                                                      $"🗑️ _{refeicaoParaExcluir.DishName ?? refeicaoParaExcluir.MealType}_\n\n" +
-                                                     $"📊 *SEU NOVO RESUMO DE HOJE*\n" +
+                                                     $"📊 *O SEU NOVO RESUMO DE HOJE*\n" +
                                                      $"• *Calorias:* {statusAtualizado.Consumed.Calories} / {statusAtualizado.Target.Calories} kcal\n" +
                                                      $"_Faltam {statusAtualizado.Remaining.Calories} kcal_";
 
@@ -373,15 +375,15 @@ namespace LabelWise.Api.Controllers
                 // =========================================================================
                 // ATALHOS DE DIETA
                 // =========================================================================
-                if (textoLower == "minha dieta" || textoLower == "cardápio" || textoLower == "cardapio" || textoLower == "menu" || textoLower == "dieta")
+                if (textoLimpoCmd == "minha dieta" || textoLimpoCmd == "cardapio" || textoLimpoCmd == "menu" || textoLimpoCmd == "dieta")
                 {
                     var baseUrl = $"{Request.Scheme}://{Request.Host}";
                     var magicLink = $"{baseUrl}/paciente.html?phone={senderPhone}";
 
-                    var respostaLink = "🥗 *Seu Plano Alimentar Interativo está pronto!*\n\n" +
+                    var respostaLink = "🥗 *O seu Plano Alimentar Interativo está pronto!*\n\n" +
                                        "Toque no link abaixo para ver o seu progresso de calorias de hoje, os macronutrientes e o seu cardápio completo:\n\n" +
                                        $"👉 {magicLink}\n\n" +
-                                       "_Dica: Salve essa página nos favoritos do seu celular para consultar sempre que precisar!_ ✨";
+                                       "_Dica: Guarde esta página nos favoritos do seu telemóvel para consultar sempre que precisar!_ ✨";
 
                     await _whatsAppSender.SendTextMessageAsync(senderPhone, respostaLink);
                     return Ok();
@@ -396,12 +398,12 @@ namespace LabelWise.Api.Controllers
 
                 if (contextoPendente != null)
                 {
-                    _logger.LogInformation("[WhatsAppController] 🔄 Resposta de clarificação detectada para o usuário {Phone}", senderPhone);
+                    _logger.LogInformation("[WhatsAppController] 🔄 Resposta de clarificação detetada para o utilizador {Phone}", senderPhone);
 
                     textoFinalParaIa = $"[Contexto Anterior da Refeição: {contextoPendente.OriginalTextInput}] " +
                                        $"[Alerta de Restrição Enviado: {contextoPendente.ClarificationQuestion}] " +
                                        $"[Confirmação / Resposta do Utilizador: {textoBruto}] " +
-                                       $"Instrução: Processe e registre definitivamente esta refeição considerando a resposta do utilizador.";
+                                       $"Instrução: Processe e registe definitivamente esta refeição considerando a resposta do utilizador.";
 
                     imagemFinalParaIa ??= contextoPendente.OriginalBase64Image;
                     await _nutritionRepository.RemoverClarificacaoPendenteAsync(senderPhone);
@@ -429,7 +431,7 @@ namespace LabelWise.Api.Controllers
                         userId: senderPhone,
                         originalTextInput: textoFinalParaIa,
                         originalBase64Image: imagemFinalParaIa,
-                        clarificationQuestion: result.ClarificationQuestion ?? "Pode detalhar melhor sua refeição?"
+                        clarificationQuestion: result.ClarificationQuestion ?? "Pode detalhar melhor a sua refeição?"
                     );
 
                     await _nutritionRepository.SalvarClarificacaoPendenteAsync(novaClarificacao);
@@ -607,7 +609,7 @@ namespace LabelWise.Api.Controllers
         private string FormatarRespostaParaWhatsApp(MealAnalysisResponseDto aiResult, DailyStatusResponseDto? statusDoDia)
         {
             if (aiResult.ClarificationQuestion != null && aiResult.ClarificationQuestion.Contains("instáveis", StringComparison.OrdinalIgnoreCase))
-                return "⚠️ *Ops! Nossos serviços estão instáveis no momento.*\nPor favor, tente novamente em instantes.";
+                return "⚠️ *Ops! Os nossos serviços estão instáveis no momento.*\nPor favor, tente novamente em instantes.";
 
             if (aiResult.IsAdvice)
                 return $"💡 *Conselho do Nutri:*\n\n{(!string.IsNullOrWhiteSpace(aiResult.AdviceText) ? aiResult.AdviceText : "Como posso ajudar?")}";
@@ -621,14 +623,14 @@ namespace LabelWise.Api.Controllers
             var carbo = aiResult.TotalMeal?.CarbsG ?? 0;
             var gordura = aiResult.TotalMeal?.FatG ?? 0;
 
-            var msg = $"✅ *Refeição registrada:* {prato}\n🔥 *Calorias:* {calorias} kcal\n🥩 *Proteínas:* {proteina}g\n🍞 *Carboidratos:* {carbo}g\n🥑 *Gorduras:* {gordura}g\n\n";
+            var msg = $"✅ *Refeição registada:* {prato}\n🔥 *Calorias:* {calorias} kcal\n🥩 *Proteínas:* {proteina}g\n🍞 *Carboidratos:* {carbo}g\n🥑 *Gorduras:* {gordura}g\n\n";
 
             if (statusDoDia != null)
             {
                 if (statusDoDia.StreakDays > 0) msg += $"🔥 *OFENSIVA:* {statusDoDia.StreakDays} dia(s) seguidos no foco! 🚀\n\n";
-                msg += $"📊 *SEU RESUMO DE HOJE*\n• *Calorias:* {statusDoDia.Consumed.Calories} / {statusDoDia.Target.Calories} kcal\n";
+                msg += $"📊 *O SEU RESUMO DE HOJE*\n• *Calorias:* {statusDoDia.Consumed.Calories} / {statusDoDia.Target.Calories} kcal\n";
                 var faltamCal = statusDoDia.Remaining.Calories;
-                msg += faltamCal <= 0 ? $"_⚠️ Você atingiu ou ultrapassou sua meta!_\n" : $"_Faltam {faltamCal} kcal_\n";
+                msg += faltamCal <= 0 ? $"_⚠️ Atingiu ou ultrapassou a sua meta!_\n" : $"_Faltam {faltamCal} kcal_\n";
                 msg += $"• *Proteínas:* {statusDoDia.Consumed.ProteinG:F0}g / {statusDoDia.Target.ProteinG:F0}g\n" +
                        $"• *Carboidratos:* {statusDoDia.Consumed.CarbsG:F0}g / {statusDoDia.Target.CarbsG:F0}g\n" +
                        $"• *Gorduras:* {statusDoDia.Consumed.FatG:F0}g / {statusDoDia.Target.FatG:F0}g\n";
