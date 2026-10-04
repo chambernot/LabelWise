@@ -105,9 +105,9 @@
                                    class="w-full px-3 py-2 rounded-lg border border-gray-200 text-sm focus:ring-2 focus:ring-emerald-500 focus:outline-none">
                         </div>
 
-                        <!-- PERFIL CLÍNICO -->
+                        <!-- PERFIL CLÍNICO & GUARDRAILS -->
                         <div class="pt-2 pb-1 border-t border-gray-100">
-                            <h3 class="text-xs font-bold text-gray-800 mb-3 uppercase tracking-wider">Perfil Clínico</h3>
+                            <h3 class="text-xs font-bold text-gray-800 mb-3 uppercase tracking-wider">Perfil Clínico e Segurança</h3>
 
                             <div class="mb-3">
                                 <label class="block text-xs font-semibold uppercase text-gray-600 mb-1">Objetivo Principal</label>
@@ -119,17 +119,26 @@
                                 </select>
                             </div>
 
-                            <div class="mb-3">
-                                <label class="block text-xs font-semibold uppercase text-gray-600 mb-1 flex items-center">
-                                    Restrições Médicas / Alergias <span class="text-red-500 ml-1" title="A IA nunca recomendará nada que viole isso">*</span>
+                            <!-- 🛡️ CAMPO DE GUARDRAILS ADICIONADO -->
+                            <div class="mb-3 p-3 bg-red-50/40 rounded-xl border border-red-100">
+                                <label class="block text-xs font-bold uppercase text-red-800 mb-1 flex items-center justify-between">
+                                    <span>🛡️ Guardrails / Protocolo da IA</span>
+                                    <span class="text-[10px] text-red-500 font-normal">Estrito</span>
                                 </label>
-                                <input type="text" x-model="form.dietaryRestrictions" placeholder="Ex: Intolerância a lactose, Doença celíaca..."
-                                       class="w-full px-3 py-2 rounded-lg border border-gray-200 text-sm focus:ring-2 focus:ring-red-300 focus:outline-none bg-red-50/30">
+                                <p class="text-[10px] text-gray-500 mb-2">Instrução restrita que o assistente de IA deve seguir obrigatoriamente nas sugestões.</p>
+                                <textarea x-model="form.clinicalProtocol" rows="2" placeholder="Ex: Dieta Low FODMAP estrita. Proibido sugerir maçã, alho, cebola, feijão ou leite de vaca."
+                                          class="w-full px-3 py-2 rounded-lg border border-red-200 text-xs focus:ring-2 focus:ring-red-400 focus:outline-none bg-white"></textarea>
                             </div>
 
                             <div class="mb-3">
-                                <label class="block text-xs font-semibold uppercase text-gray-600 mb-1">Aversões / Alimentos Favoritos</label>
-                                <input type="text" x-model="form.favoriteFoods" placeholder="Ex: Não gosta de ovo, prefere frango..."
+                                <label class="block text-xs font-semibold uppercase text-gray-600 mb-1">Restrições Médicas / Alergias</label>
+                                <input type="text" x-model="form.dietaryRestrictions" placeholder="Ex: Intolerância a lactose..."
+                                       class="w-full px-3 py-2 rounded-lg border border-gray-200 text-sm focus:ring-2 focus:ring-emerald-500 focus:outline-none">
+                            </div>
+
+                            <div class="mb-3">
+                                <label class="block text-xs font-semibold uppercase text-gray-600 mb-1">Aversões Alimentares</label>
+                                <input type="text" x-model="form.favoriteFoods" placeholder="Ex: Não gosta de ovo..."
                                        class="w-full px-3 py-2 rounded-lg border border-gray-200 text-sm focus:ring-2 focus:ring-emerald-500 focus:outline-none">
                             </div>
                         </div>
@@ -218,7 +227,7 @@
                         <div class="p-4 sm:p-6 border-b border-gray-100 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
                             <div>
                                 <h2 class="text-lg font-bold text-gray-900">Seus Pacientes</h2>
-                                <p class="text-xs text-gray-500">Acompanhe a dieta e retenção da carteira.</p>
+                                <p class="text-xs text-gray-500">Acompanhe a dieta, restrições e guardrails da IA.</p>
                             </div>
                             <div class="flex space-x-2">
                                 <input type="text" x-model="searchQuery" placeholder="Buscar telefone..."
@@ -236,7 +245,7 @@
                                     <div class="flex justify-between items-start mb-2">
                                         <div>
                                             <h3 class="font-bold text-gray-800 text-sm" x-text="patient.userId"></h3>
-                                            <p class="text-[10px] text-gray-500" x-text="patient.dietaryRestrictions ? '⚠️ ' + patient.dietaryRestrictions : 'Sem restrições'"></p>
+                                            <p class="text-[10px] text-red-600 font-medium" x-text="patient.clinicalProtocol ? '🛡️ ' + patient.clinicalProtocol : 'Sem guardrails'"></p>
                                         </div>
                                         <a :href="'https://wa.me/' + patient.userId" target="_blank"
                                            class="bg-green-100 hover:bg-green-200 text-green-700 p-1.5 rounded-full flex items-center justify-center transition">
@@ -264,7 +273,7 @@
                                 <thead>
                                     <tr class="bg-gray-50/50 text-[11px] uppercase font-bold text-gray-400 tracking-wider border-b border-gray-100">
                                         <th class="py-3 px-6">Paciente</th>
-                                        <th class="py-3 px-6">Restrições / Observações</th>
+                                        <th class="py-3 px-6">Guardrails / Protocolo da IA</th>
                                         <th class="py-3 px-6">Meta Diária</th>
                                         <th class="py-3 px-6 text-right">Ações</th>
                                     </tr>
@@ -281,11 +290,8 @@
                                                     </a>
                                                 </div>
                                             </td>
-                                            <td class="py-4 px-6 text-xs text-gray-600">
-                                                <div class="flex flex-col">
-                                                    <span class="font-medium text-gray-800" x-text="patient.dietaryRestrictions || 'Nenhuma restrição'"></span>
-                                                    <span class="text-[10px] text-gray-400 mt-0.5 truncate max-w-[180px]" x-text="patient.favoriteFoods ? 'Fav: ' + patient.favoriteFoods : ''"></span>
-                                                </div>
+                                            <td class="py-4 px-6 text-xs text-gray-700 max-w-xs">
+                                                <span class="font-medium text-red-700 bg-red-50 px-2 py-1 rounded border border-red-100 block truncate" x-text="patient.clinicalProtocol || 'Nenhum guardrail definido'"></span>
                                             </td>
                                             <td class="py-4 px-6">
                                                 <div class="flex flex-col">
@@ -441,6 +447,7 @@
                     carbs: 200,
                     fat: 60,
                     mainGoal: 'Emagrecimento',
+                    clinicalProtocol: '', // 🛡️ Adicionado no form
                     dietaryRestrictions: '',
                     favoriteFoods: '',
                     prescribedMealPlan: ''
@@ -536,8 +543,6 @@
                         const result = await response.json();
 
                         if (response.ok && result.success) {
-                            // 🚀 CORREÇÃO 1: Mapeamento "Case-Insensitive" para garantir
-                            // que a leitura da tabela sempre funcione (Maiúscula ou Minúscula)
                             this.patients = (result.data || []).map(p => ({
                                 userId: p.userId || p.UserId,
                                 targetCalories: p.targetCalories || p.TargetCalories,
@@ -545,6 +550,7 @@
                                 targetCarbsG: p.targetCarbsG || p.TargetCarbsG,
                                 targetFatG: p.targetFatG || p.TargetFatG,
                                 mainGoal: p.mainGoal || p.MainGoal,
+                                clinicalProtocol: p.clinicalProtocol || p.ClinicalProtocol || '', // 🛡️ Mapeado
                                 dietaryRestrictions: p.dietaryRestrictions || p.DietaryRestrictions,
                                 favoriteFoods: p.favoriteFoods || p.FavoriteFoods,
                                 prescribedMealPlan: p.prescribedMealPlan || p.PrescribedMealPlan
@@ -598,7 +604,6 @@
                             this.form.protein = data.targetProteinG || this.form.protein;
                             this.form.carbs = data.targetCarbsG || this.form.carbs;
                             this.form.fat = data.targetFatG || this.form.fat;
-
                             this.form.dietaryRestrictions = data.dietaryRestrictions || '';
                             this.form.favoriteFoods = data.favoriteFoods || '';
                             this.form.prescribedMealPlan = data.prescribedMealPlan || '';
@@ -671,12 +676,10 @@
                         return;
                     }
 
-                    this.feedbackMessage = 'Salvando dieta e perfil clínico...';
+                    this.feedbackMessage = 'Salvando dieta e protocolo clínico...';
                     this.feedbackError = false;
 
                     try {
-                        // 🚀 CORREÇÃO 2: Forçando a Montagem do Payload Exatamente no Formato DTO (PascalCase)
-                        // Isso resolve definitivamente o problema do ASP.NET não reconhecer os campos de texto no Body.
                         const payload = {
                             PatientPhone: this.form.patientPhone,
                             NutritionistId: this.form.nutritionistId,
@@ -685,6 +688,7 @@
                             Carbs: parseFloat(this.form.carbs) || 0,
                             Fat: parseFloat(this.form.fat) || 0,
                             MainGoal: this.form.mainGoal,
+                            ClinicalProtocol: this.form.clinicalProtocol, // 🛡️ Enviado ao Back-end
                             DietaryRestrictions: this.form.dietaryRestrictions,
                             FavoriteFoods: this.form.favoriteFoods,
                             PrescribedMealPlan: this.form.prescribedMealPlan
@@ -702,7 +706,7 @@
                         const result = await response.json();
 
                         if (response.ok) {
-                            this.feedbackMessage = this.isEditing ? '✅ Dieta e perfil atualizados com sucesso!' : '✅ Paciente cadastrado com sucesso!';
+                            this.feedbackMessage = this.isEditing ? '✅ Dieta e guardrails atualizados com sucesso!' : '✅ Paciente cadastrado com sucesso!';
                             this.feedbackError = false;
                             this.loadPatients();
 
@@ -726,8 +730,8 @@
                     this.form.carbs = p.targetCarbsG;
                     this.form.fat = p.targetFatG;
 
-                    // 🚀 CORREÇÃO 3: Lendo de forma segura caso a API devolva em maiúsculo ou minúsculo
                     this.form.mainGoal = p.mainGoal || 'Emagrecimento';
+                    this.form.clinicalProtocol = p.clinicalProtocol || ''; // 🛡️ Preenchido na edição
                     this.form.dietaryRestrictions = p.dietaryRestrictions || '';
                     this.form.favoriteFoods = p.favoriteFoods || '';
                     this.form.prescribedMealPlan = p.prescribedMealPlan || '';
@@ -746,6 +750,7 @@
                     this.form.fat = 60;
 
                     this.form.mainGoal = 'Emagrecimento';
+                    this.form.clinicalProtocol = '';
                     this.form.dietaryRestrictions = '';
                     this.form.favoriteFoods = '';
                     this.form.prescribedMealPlan = '';

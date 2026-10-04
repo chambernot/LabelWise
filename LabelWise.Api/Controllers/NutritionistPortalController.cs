@@ -35,9 +35,6 @@ public class NutritionistPortalController : ControllerBase
         _nutriKey = configuration["NutritionistDefaultKey"] ?? "nutri_secret_123";
     }
 
-    /// <summary>
-    /// Método auxiliar centralizado que valida a chave e retorna os dados da sessão autenticada.
-    /// </summary>
     private async Task<AuthenticatedNutri?> ObterNutricionistaAutenticadoAsync(string key)
     {
         if (string.IsNullOrWhiteSpace(key)) return null;
@@ -165,6 +162,9 @@ public class NutritionistPortalController : ControllerBase
             var logsCollection = _database.GetCollection<MealLog>("Nutrition_MealLogs");
             await logsCollection.DeleteManyAsync(x => x.UserId == phone);
 
+            var patientsCollection = _database.GetCollection<MongoDB.Bson.BsonDocument>("Nutrition_Patients");
+            await patientsCollection.DeleteOneAsync(Builders<MongoDB.Bson.BsonDocument>.Filter.Eq("_id", phone));
+
             return Ok(new { success = true, message = "Paciente excluído com sucesso." });
         }
         catch (Exception ex)
@@ -189,12 +189,49 @@ public class NutritionistPortalController : ControllerBase
                 ? Builders<DailyNutritionGoal>.Filter.Empty
                 : Builders<DailyNutritionGoal>.Filter.Eq(x => x.NutritionistId, nutri.Id);
 
-            var patients = await _goalsCollection
+            var goals = await _goalsCollection
                 .Find(filter)
                 .SortByDescending(x => x.TargetDate)
                 .ToListAsync();
 
-            return Ok(new { success = true, data = patients });
+            // 🛡️ Consultar a coleção de pacientes para extrair Protocolo e Objetivo
+            var patientsCollection = _database.GetCollection<MongoDB.Bson.BsonDocument>("Nutrition_Patients");
+            var resultList = new System.Collections.Generic.List<object>();
+
+            foreach (var g in goals)
+            {
+                string clinicalProtocol = "";
+                string mainGoal = "Emagrecimento"; // Valor padrão caso não encontre
+
+                var patientDoc = await patientsCollection.Find(Builders<MongoDB.Bson.BsonDocument>.Filter.Eq("_id", g.UserId)).FirstOrDefaultAsync();
+                if (patientDoc != null)
+                {
+                    if (patientDoc.Contains("ClinicalProtocol"))
+                    {
+                        clinicalProtocol = patientDoc["ClinicalProtocol"].AsString;
+                    }
+                    if (patientDoc.Contains("MainGoal"))
+                    {
+                        mainGoal = patientDoc["MainGoal"].AsString;
+                    }
+                }
+
+                resultList.Add(new
+                {
+                    UserId = g.UserId,
+                    TargetCalories = g.TargetCalories,
+                    TargetProteinG = g.TargetProteinG,
+                    TargetCarbsG = g.TargetCarbsG,
+                    TargetFatG = g.TargetFatG,
+                    MainGoal = mainGoal, // 🛡️ Atribuído corretamente a partir do BsonDocument
+                    DietaryRestrictions = g.DietaryRestrictions,
+                    FavoriteFoods = g.FavoriteFoods,
+                    PrescribedMealPlan = g.PrescribedMealPlan,
+                    ClinicalProtocol = clinicalProtocol
+                });
+            }
+
+            return Ok(new { success = true, data = resultList });
         }
         catch (Exception ex)
         {
@@ -270,9 +307,6 @@ public class NutritionistPortalController : ControllerBase
         [FromHeader(Name = "X-Nutri-Key")] string key,
         [FromBody] ConfirmDietRequestDto dto)
     {
-        _logger.LogInformation("📥 DTO Recebido (Confirm): Phone={Phone}, Calories={Cal}, MainGoal={Goal}, Restrições={Rest}, Prefs={Pref}, Plano={Plan}",
-            dto.PatientPhone, dto.Calories, dto.MainGoal, dto.DietaryRestrictions, dto.FavoriteFoods, dto.PrescribedMealPlan);
-
         var nutri = await ObterNutricionistaAutenticadoAsync(key);
         if (nutri == null)
         {
@@ -289,7 +323,8 @@ public class NutritionistPortalController : ControllerBase
             dto.MainGoal,
             dto.DietaryRestrictions,
             dto.FavoriteFoods,
-            dto.PrescribedMealPlan
+            dto.PrescribedMealPlan,
+            dto.ClinicalProtocol // 🛡️ Guardrail
         );
     }
 
@@ -314,7 +349,8 @@ public class NutritionistPortalController : ControllerBase
             dto.MainGoal,
             dto.DietaryRestrictions,
             dto.FavoriteFoods,
-            dto.PrescribedMealPlan
+            dto.PrescribedMealPlan,
+            dto.ClinicalProtocol // 🛡️ Guardrail
         );
     }
 
@@ -362,17 +398,19 @@ public class NutritionistPortalController : ControllerBase
         string? mainGoal,
         string? dietaryRestrictions,
         string? favoriteFoods,
-        string? prescribedMealPlan)
+        string? prescribedMealPlan,
+        string? clinicalProtocol) // 🛡️ Novo parâmetro
     {
         try
         {
-            // 1. FORÇAR A GRAVAÇÃO NA TABELA DE PACIENTES VIA UPDATE DIRETO (Bypass de Entity)
+            // 1. FORÇAR A GRAVAÇÃO NA TABELA DE PACIENTES COM O PROTOCOLO CLÍNICO (GUARDRAILS)
             var patientsCollection = _database.GetCollection<MongoDB.Bson.BsonDocument>("Nutrition_Patients");
             var patientUpdate = Builders<MongoDB.Bson.BsonDocument>.Update
                 .Set("ProfessionalId", nutri.Id)
                 .Set("MainGoal", mainGoal ?? "Emagrecimento")
                 .Set("MedicalRestrictions", dietaryRestrictions ?? "")
-                .Set("FoodAversions", favoriteFoods ?? "");
+                .Set("FoodAversions", favoriteFoods ?? "")
+                .Set("ClinicalProtocol", clinicalProtocol ?? ""); // 🛡️ O Guardrail gravado aqui
 
             await patientsCollection.UpdateOneAsync(
                 Builders<MongoDB.Bson.BsonDocument>.Filter.Eq("_id", patientPhone),
@@ -407,8 +445,7 @@ public class NutritionistPortalController : ControllerBase
                 await _goalsCollection.InsertOneAsync(novaMeta);
             }
 
-            // 3. O SEGREDO AQUI: Update forçado no banco ignorando bloqueios da classe C#
-            // Isso garante que os campos sejam preenchidos no Compass mesmo que a entidade tenha bugs.
+            // 3. UPDATE FORÇADO NO BANCO DE DADOS
             var forceUpdate = Builders<DailyNutritionGoal>.Update
                 .Set(x => x.TargetCalories, calories)
                 .Set(x => x.TargetProteinG, protein)
@@ -421,9 +458,9 @@ public class NutritionistPortalController : ControllerBase
 
             await _goalsCollection.UpdateOneAsync(filter, forceUpdate);
 
-            _logger.LogInformation("✅ Dieta e perfil FORÇADOS com sucesso no DB para o paciente {Phone}", patientPhone);
+            _logger.LogInformation("✅ Dieta e Protocolo Clínico (Guardrails) gravados para o paciente {Phone}", patientPhone);
 
-            return Ok(new { success = true, message = "Dieta e perfil atualizados com sucesso!" });
+            return Ok(new { success = true, message = "Dieta e protocolo clínico atualizados com sucesso!" });
         }
         catch (Exception ex)
         {
@@ -457,7 +494,8 @@ public record ConfirmDietRequestDto(
     string? MainGoal,
     string? DietaryRestrictions,
     string? FavoriteFoods,
-    string? PrescribedMealPlan
+    string? PrescribedMealPlan,
+    string? ClinicalProtocol // 🛡️ Novo campo DTO
 );
 
 public record ImportDietDto(
@@ -470,5 +508,6 @@ public record ImportDietDto(
     string? MainGoal,
     string? DietaryRestrictions,
     string? FavoriteFoods,
-    string? PrescribedMealPlan
+    string? PrescribedMealPlan,
+    string? ClinicalProtocol // 🛡️ Novo campo DTO
 );
