@@ -3,6 +3,7 @@ using LabelWise.Application.Interfaces;
 using LabelWise.Application.Interfaces.Persistence;
 using LabelWise.Domain.Entities;
 using LabelWise.Domain.Entities.Nutrition;
+using MongoDB.Bson;
 using MongoDB.Driver;
 using System;
 using System.Collections.Generic;
@@ -18,6 +19,8 @@ namespace LabelWise.Infrastructure.Repositories
         private readonly IMongoCollection<MealLog> _mealLogs;
         private readonly IMongoCollection<DailyNutritionGoal> _dailyGoals;
         private readonly IMongoCollection<ChatMessageLog> _chatHistory; // 👈 Declarado
+
+        private readonly IMongoCollection<BsonDocument> _trialUsers; // 👈 Coleção de utilizadores Trial B2C
         public async Task<PatientDto?> ObterPacientePorIdAsync(string patientId)
         {
             return await _patients.Find(x => x.Id == patientId).FirstOrDefaultAsync();
@@ -31,6 +34,7 @@ namespace LabelWise.Infrastructure.Repositories
 
             // 🚀 CORRIGIDO: Inicialização ativada para evitar o NullReferenceException
             _chatHistory = database.GetCollection<ChatMessageLog>("WhatsAppChatHistory");
+            _trialUsers = database.GetCollection<BsonDocument>("B2C_Trial_Users"); // 👈 Inicialização da coleção trial
         }
 
         public async Task InserirPacienteAsync(PatientDto paciente)
@@ -46,12 +50,30 @@ namespace LabelWise.Infrastructure.Repositories
 
         public async Task<List<string>> ObterTelefonesAtivosAsync()
         {
-            using var cursor = await _dailyGoals.DistinctAsync(
+            // 1. Telefones com metas cadastradas (B2B / principais)
+            using var cursorGoals = await _dailyGoals.DistinctAsync(
                 x => x.UserId,
-                MongoDB.Driver.Builders<DailyNutritionGoal>.Filter.Empty);
+                Builders<DailyNutritionGoal>.Filter.Empty);
 
-            var telefones = await cursor.ToListAsync();
-            return telefones.Where(t => !string.IsNullOrWhiteSpace(t)).ToList();
+            var telefonesGoals = await cursorGoals.ToListAsync();
+
+            // 2. Telefones dos utilizadores em trial ativo (dentro do prazo de 15 dias)
+            var limiteTrial = DateTime.UtcNow.AddDays(-15);
+            var filterTrial = Builders<BsonDocument>.Filter.Gte("TrialStartDate", limiteTrial);
+            var trialDocs = await _trialUsers.Find(filterTrial).ToListAsync();
+
+            var telefonesTrial = trialDocs
+                .Select(doc => doc.Contains("_id") ? doc["_id"].AsString : string.Empty)
+                .ToList();
+
+            // 3. Combina as duas listas, remove nulos/vazios e elimina duplicados
+            var telefonesAtivos = telefonesGoals
+                .Concat(telefonesTrial)
+                .Where(t => !string.IsNullOrWhiteSpace(t))
+                .Distinct()
+                .ToList();
+
+            return telefonesAtivos;
         }
 
         public async Task<MealClarificationContext?> ObterClarificacaoPendenteAsync(string userId)

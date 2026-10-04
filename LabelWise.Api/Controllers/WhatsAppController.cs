@@ -88,10 +88,39 @@ namespace LabelWise.Api.Controllers
                     return Ok();
                 }
 
-                string? textoBruto = messageType == "text" ? messagingEvent?.Text?.Body?.Trim() : null;
+                string? textoBruto = null;
+                string? imagemBase64 = null;
+
+                // 🎙️ EXTRAÇÃO UNIFICADA ANTECIPADA (Texto, Áudio transcrito ou Imagem)
+                if (messageType == "text")
+                {
+                    textoBruto = messagingEvent?.Text?.Body?.Trim();
+                }
+                else if (messageType == "audio" && messagingEvent?.Audio?.Id != null)
+                {
+                    await _whatsAppSender.SendTextMessageAsync(senderPhone, "🎙 Ouvindo o seu áudio e transcrevendo...");
+                    var audioBytes = await _metaMediaService.DownloadMediaAsBytesAsync(messagingEvent.Audio.Id);
+                    textoBruto = await TranscreverAudioComGeminiAsync(audioBytes);
+                }
+                else if (messageType == "image" && messagingEvent?.Image?.Id != null)
+                {
+                    await _whatsAppSender.SendTextMessageAsync(senderPhone, "📸 Analisando o seu prato, só um instante...");
+                    imagemBase64 = await _metaMediaService.DownloadMediaAsBase64Async(messagingEvent.Image.Id);
+                    textoBruto = "Analise esta refeição da imagem.";
+                }
+                else
+                {
+                    return Ok();
+                }
+
+                if (string.IsNullOrWhiteSpace(textoBruto) && string.IsNullOrWhiteSpace(imagemBase64))
+                {
+                    return Ok();
+                }
+
                 string textoLower = textoBruto?.ToLowerInvariant() ?? "";
 
-                // 1. Valida se é um paciente B2B real (de clínica externa, ignorando o b2c_autonomous_user)
+                // 1. Valida se é um paciente B2B real
                 var patientsCollectionCheck = _database.GetCollection<MongoDB.Bson.BsonDocument>("Nutrition_Patients");
                 var patientDocCheck = await patientsCollectionCheck.Find(Builders<MongoDB.Bson.BsonDocument>.Filter.Eq("_id", senderPhone)).FirstOrDefaultAsync();
                 bool isB2bPatient = patientDocCheck != null &&
@@ -120,7 +149,7 @@ namespace LabelWise.Api.Controllers
                         };
                         await trialCollection.InsertOneAsync(userDoc);
 
-                        string mensagemBoasVindas = "🎉 *Bem-vindo ao Nutrição facil (Versão de Teste - 15 dias)!* 🥗\n\n" +
+                        string mensagemBoasVindas = "🎉 *Bem-vindo ao LabelWise (Versão de Teste - 15 dias)!* 🥗\n\n" +
                                                     "Para começarmos a personalizar a sua IA e garantir total segurança com **alergias e restrições**, por favor envie uma mensagem com o seu objetivo e preferências.\n\n" +
                                                     "📝 *Exemplo de texto para enviar agora:*\n" +
                                                     "_'Meu objetivo é emagrecimento, meta de 1800 calorias, sou alérgico a amendoim e não gosto de ovo.'_\n\n" +
@@ -171,7 +200,6 @@ namespace LabelWise.Api.Controllers
                             return Ok();
                         }
 
-                        // Gravação em Nutrition_Patients
                         var patientDoc = new MongoDB.Bson.BsonDocument
                         {
                             { "_id", senderPhone },
@@ -186,7 +214,6 @@ namespace LabelWise.Api.Controllers
                             new ReplaceOptions { IsUpsert = true }
                         );
 
-                        // Gravação em DailyGoals
                         var goalsCollection = _database.GetCollection<MongoDB.Bson.BsonDocument>("DailyGoals");
                         var goalFilter = Builders<MongoDB.Bson.BsonDocument>.Filter.Eq("UserId", senderPhone);
                         var existingGoal = await goalsCollection.Find(goalFilter).FirstOrDefaultAsync();
@@ -258,7 +285,6 @@ namespace LabelWise.Api.Controllers
                         return Ok();
                     }
 
-                    // Incrementa e atualiza obrigatoriamente no MongoDB
                     dailyCount++;
                     var updateB2C = Builders<MongoDB.Bson.BsonDocument>.Update
                         .Set("LastInteractionDate", lastInteractionDate)
@@ -268,53 +294,104 @@ namespace LabelWise.Api.Controllers
                 }
 
                 // =========================================================================
-                // FLUXO NORMAL DE PROCESSAMENTO DE REFEIÇÕES (IA)
+                // 🗑️ GESTÃO DE REMOÇÃO DE REFEIÇÕES (VIA TEXTO OU ÁUDIO TRANSCCRITO)
                 // =========================================================================
-                string? textoDigitado = textoBruto;
-                string? imagemBase64 = null;
-
-                if (messageType == "text")
+                if (textoLower == "remover" || textoLower == "apagar" || textoLower == "excluir" || textoLower == "listar refeicoes" || textoLower == "remover refeição")
                 {
-                    if (!string.IsNullOrWhiteSpace(textoDigitado))
+                    var dataHojeBr = DateTime.UtcNow.AddHours(-3);
+                    var refeicoesHoje = await _nutritionRepository.ObterRefeicoesDoDiaAsync(senderPhone, dataHojeBr);
+
+                    if (refeicoesHoje == null || !refeicoesHoje.Any())
                     {
-                        var textoLimpo = textoDigitado.Trim().ToLowerInvariant();
-                        if (textoLimpo == "minha dieta" || textoLimpo == "cardápio" || textoLimpo == "cardapio" || textoLimpo == "menu" || textoLimpo == "dieta")
+                        await _whatsAppSender.SendTextMessageAsync(senderPhone, "⚠️ Não encontrei nenhuma refeição registada para hoje.");
+                        return Ok();
+                    }
+
+                    var sbLista = new StringBuilder("🗑️ *Suas refeições registadas hoje:*\n\n");
+                    int index = 1;
+                    foreach (var r in refeicoesHoje.OrderBy(x => x.LoggedAt))
+                    {
+                        var horaStr = r.LoggedAt.AddHours(-3).ToString("HH:mm");
+                        sbLista.AppendLine($"*{index}️⃣* {r.DishName ?? r.MealType} ({horaStr})");
+                        index++;
+                    }
+                    sbLista.AppendLine("\n💡 *Para remover*, digite ou diga o comando seguido do número (Ex: *remover 1* ou *apagar 2*).");
+
+                    await _whatsAppSender.SendTextMessageAsync(senderPhone, sbLista.ToString());
+                    return Ok();
+                }
+
+                if (textoLower.StartsWith("remover ") || textoLower.StartsWith("apagar ") || textoLower.StartsWith("excluir "))
+                {
+                    var dataHojeBr = DateTime.UtcNow.AddHours(-3);
+                    var refeicoesHoje = await _nutritionRepository.ObterRefeicoesDoDiaAsync(senderPhone, dataHojeBr);
+                    var partes = textoBruto.Split(' ', 2, StringSplitOptions.RemoveEmptyEntries);
+
+                    if (partes.Length > 1 && refeicoesHoje != null && refeicoesHoje.Any())
+                    {
+                        var argumento = partes[1].Trim();
+                        var refeicoesOrdenadas = refeicoesHoje.OrderBy(x => x.LoggedAt).ToList();
+                        MealLog? refeicaoParaExcluir = null;
+
+                        if (int.TryParse(argumento, out int numeroRefeicao))
                         {
-                            var baseUrl = $"{Request.Scheme}://{Request.Host}";
-                            var magicLink = $"{baseUrl}/paciente.html?phone={senderPhone}";
+                            int idx = numeroRefeicao - 1;
+                            if (idx >= 0 && idx < refeicoesOrdenadas.Count)
+                            {
+                                refeicaoParaExcluir = refeicoesOrdenadas[idx];
+                            }
+                        }
+                        else
+                        {
+                            refeicaoParaExcluir = refeicoesOrdenadas.FirstOrDefault(r =>
+                                (r.DishName ?? "").Contains(argumento, StringComparison.OrdinalIgnoreCase) ||
+                                (r.MealType ?? "").Contains(argumento, StringComparison.OrdinalIgnoreCase));
+                        }
 
-                            var respostaLink = "🥗 *Seu Plano Alimentar Interativo está pronto!*\n\n" +
-                                               "Toque no link abaixo para ver o seu progresso de calorias de hoje, os macronutrientes e o seu cardápio completo:\n\n" +
-                                               $"👉 {magicLink}\n\n" +
-                                               "_Dica: Salve essa página nos favoritos do seu celular para consultar sempre que precisar!_ ✨";
+                        if (refeicaoParaExcluir != null)
+                        {
+                            await _nutritionRepository.ExcluirMealLogAsync(refeicaoParaExcluir.Id);
+                            var statusAtualizado = await _nutritionService.GetDailyStatusAndSuggestionAsync(senderPhone, dataHojeBr);
 
-                            await _whatsAppSender.SendTextMessageAsync(senderPhone, respostaLink);
+                            string respostaRemocao = $"✅ *Refeição removida com sucesso!* \n" +
+                                                     $"🗑️ _{refeicaoParaExcluir.DishName ?? refeicaoParaExcluir.MealType}_\n\n" +
+                                                     $"📊 *SEU NOVO RESUMO DE HOJE*\n" +
+                                                     $"• *Calorias:* {statusAtualizado.Consumed.Calories} / {statusAtualizado.Target.Calories} kcal\n" +
+                                                     $"_Faltam {statusAtualizado.Remaining.Calories} kcal_";
+
+                            await _whatsAppSender.SendTextMessageAsync(senderPhone, respostaRemocao);
+                            return Ok();
+                        }
+                        else
+                        {
+                            await _whatsAppSender.SendTextMessageAsync(senderPhone, "❌ Não encontrei nenhuma refeição com esse número ou nome. Diga *remover* para ver a lista atualizada.");
                             return Ok();
                         }
                     }
                 }
-                else if (messageType == "image" && messagingEvent?.Image?.Id != null)
+
+                // =========================================================================
+                // ATALHOS DE DIETA
+                // =========================================================================
+                if (textoLower == "minha dieta" || textoLower == "cardápio" || textoLower == "cardapio" || textoLower == "menu" || textoLower == "dieta")
                 {
-                    await _whatsAppSender.SendTextMessageAsync(senderPhone, "📸 Analisando o seu prato, só um instante...");
-                    imagemBase64 = await _metaMediaService.DownloadMediaAsBase64Async(messagingEvent.Image.Id);
-                    textoDigitado = "Analise esta refeição da imagem.";
-                }
-                else if (messageType == "audio" && messagingEvent?.Audio?.Id != null)
-                {
-                    await _whatsAppSender.SendTextMessageAsync(senderPhone, "🎙 Ouvindo o seu áudio e transcrevendo...");
-                    var audioBytes = await _metaMediaService.DownloadMediaAsBytesAsync(messagingEvent.Audio.Id);
-                    textoDigitado = await TranscreverAudioComGeminiAsync(audioBytes);
-                }
-                else
-                {
+                    var baseUrl = $"{Request.Scheme}://{Request.Host}";
+                    var magicLink = $"{baseUrl}/paciente.html?phone={senderPhone}";
+
+                    var respostaLink = "🥗 *Seu Plano Alimentar Interativo está pronto!*\n\n" +
+                                       "Toque no link abaixo para ver o seu progresso de calorias de hoje, os macronutrientes e o seu cardápio completo:\n\n" +
+                                       $"👉 {magicLink}\n\n" +
+                                       "_Dica: Salve essa página nos favoritos do seu celular para consultar sempre que precisar!_ ✨";
+
+                    await _whatsAppSender.SendTextMessageAsync(senderPhone, respostaLink);
                     return Ok();
                 }
 
-                if (string.IsNullOrWhiteSpace(textoDigitado) && string.IsNullOrWhiteSpace(imagemBase64))
-                    return Ok();
-
+                // =========================================================================
+                // FLUXO DE PROCESSAMENTO DE REFEIÇÕES (IA)
+                // =========================================================================
                 var contextoPendente = await _nutritionRepository.ObterClarificacaoPendenteAsync(senderPhone);
-                string textoFinalParaIa = textoDigitado ?? string.Empty;
+                string textoFinalParaIa = textoBruto;
                 string? imagemFinalParaIa = imagemBase64;
 
                 if (contextoPendente != null)
@@ -323,7 +400,7 @@ namespace LabelWise.Api.Controllers
 
                     textoFinalParaIa = $"[Contexto Anterior da Refeição: {contextoPendente.OriginalTextInput}] " +
                                        $"[Alerta de Restrição Enviado: {contextoPendente.ClarificationQuestion}] " +
-                                       $"[Confirmação / Resposta do Utilizador: {textoDigitado}] " +
+                                       $"[Confirmação / Resposta do Utilizador: {textoBruto}] " +
                                        $"Instrução: Processe e registre definitivamente esta refeição considerando a resposta do utilizador.";
 
                     imagemFinalParaIa ??= contextoPendente.OriginalBase64Image;
