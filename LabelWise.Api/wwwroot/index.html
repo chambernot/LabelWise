@@ -119,7 +119,7 @@
                                 </select>
                             </div>
 
-                            <!-- 🛡️ CAMPO DE GUARDRAILS ADICIONADO -->
+                            <!-- 🛡️ CAMPO DE GUARDRAILS -->
                             <div class="mb-3 p-3 bg-red-50/40 rounded-xl border border-red-100">
                                 <label class="block text-xs font-bold uppercase text-red-800 mb-1 flex items-center justify-between">
                                     <span>🛡️ Guardrails / Protocolo da IA</span>
@@ -256,9 +256,10 @@
                                         <span class="bg-gray-100 text-gray-700 px-2 py-1 rounded text-[10px] font-bold" x-text="'🎯 ' + patient.targetCalories + ' kcal'"></span>
                                         <span class="bg-gray-100 text-gray-600 px-2 py-1 rounded text-[10px]" x-text="'P:' + patient.targetProteinG + ' C:' + patient.targetCarbsG + ' G:' + patient.targetFatG"></span>
                                     </div>
-                                    <div class="grid grid-cols-2 gap-2 mt-2">
-                                        <button @click="viewLogs(patient.userId)" class="w-full bg-blue-50 hover:bg-blue-100 text-blue-700 py-2 rounded-lg text-xs font-bold transition">📊 Consumo</button>
-                                        <button @click="editPatient(patient)" class="w-full bg-emerald-50 hover:bg-emerald-100 text-emerald-700 py-2 rounded-lg text-xs font-bold transition">✏️ Editar</button>
+                                    <div class="grid grid-cols-3 gap-1.5 mt-2">
+                                        <button @click="viewLogs(patient.userId)" class="w-full bg-blue-50 hover:bg-blue-100 text-blue-700 py-1.5 rounded-lg text-[11px] font-bold transition">📊 Consumo</button>
+                                        <button @click="editPatient(patient)" class="w-full bg-emerald-50 hover:bg-emerald-100 text-emerald-700 py-1.5 rounded-lg text-[11px] font-bold transition">✏️ Editar</button>
+                                        <button @click="downloadReport(patient.userId)" class="w-full bg-purple-50 hover:bg-purple-100 text-purple-700 py-1.5 rounded-lg text-[11px] font-bold transition">📄 PDF</button>
                                     </div>
                                 </div>
                             </template>
@@ -299,14 +300,17 @@
                                                     <span class="text-[10px] text-gray-500 mt-1" x-text="'P: ' + patient.targetProteinG + 'g | C: ' + patient.targetCarbsG + 'g | G: ' + patient.targetFatG + 'g'"></span>
                                                 </div>
                                             </td>
-                                            <td class="py-4 px-6 text-right space-x-2">
-                                                <button @click="viewLogs(patient.userId)" class="text-blue-600 hover:text-blue-800 font-medium text-xs bg-blue-50 hover:bg-blue-100 px-3 py-1.5 rounded-lg transition">
-                                                    Ver Consumo
+                                            <td class="py-4 px-6 text-right space-x-1">
+                                                <button @click="viewLogs(patient.userId)" class="text-blue-600 hover:text-blue-800 font-medium text-xs bg-blue-50 hover:bg-blue-100 px-2.5 py-1.5 rounded-lg transition">
+                                                    Consumo
                                                 </button>
-                                                <button @click="editPatient(patient)" class="text-emerald-600 hover:text-emerald-800 font-medium text-xs bg-emerald-50 hover:bg-emerald-100 px-3 py-1.5 rounded-lg transition">
-                                                    Editar Dieta
+                                                <button @click="editPatient(patient)" class="text-emerald-600 hover:text-emerald-800 font-medium text-xs bg-emerald-50 hover:bg-emerald-100 px-2.5 py-1.5 rounded-lg transition">
+                                                    Editar
                                                 </button>
-                                                <button @click="deletePatient(patient.userId)" class="text-red-600 hover:text-red-800 font-medium text-xs bg-red-50 hover:bg-red-100 px-3 py-1.5 rounded-lg transition">
+                                                <button @click="downloadReport(patient.userId)" class="text-purple-600 hover:text-purple-800 font-medium text-xs bg-purple-50 hover:bg-purple-100 px-2.5 py-1.5 rounded-lg transition">
+                                                    📄 PDF
+                                                </button>
+                                                <button @click="deletePatient(patient.userId)" class="text-red-600 hover:text-red-800 font-medium text-xs bg-red-50 hover:bg-red-100 px-2.5 py-1.5 rounded-lg transition">
                                                     Excluir
                                                 </button>
                                             </td>
@@ -447,7 +451,7 @@
                     carbs: 200,
                     fat: 60,
                     mainGoal: 'Emagrecimento',
-                    clinicalProtocol: '', // 🛡️ Adicionado no form
+                    clinicalProtocol: '',
                     dietaryRestrictions: '',
                     favoriteFoods: '',
                     prescribedMealPlan: ''
@@ -550,7 +554,7 @@
                                 targetCarbsG: p.targetCarbsG || p.TargetCarbsG,
                                 targetFatG: p.targetFatG || p.TargetFatG,
                                 mainGoal: p.mainGoal || p.MainGoal,
-                                clinicalProtocol: p.clinicalProtocol || p.ClinicalProtocol || '', // 🛡️ Mapeado
+                                clinicalProtocol: p.clinicalProtocol || p.ClinicalProtocol || '',
                                 dietaryRestrictions: p.dietaryRestrictions || p.DietaryRestrictions,
                                 favoriteFoods: p.favoriteFoods || p.FavoriteFoods,
                                 prescribedMealPlan: p.prescribedMealPlan || p.PrescribedMealPlan
@@ -651,6 +655,32 @@
                     }
                 },
 
+                // 📄 FUNÇÃO PARA GERAR E DESCARREGAR O RELATÓRIO PDF/HTML
+                async downloadReport(phone) {
+                    try {
+                        const response = await fetch(`/api/nutritionist/patient-report/${phone}`, {
+                            method: 'GET',
+                            headers: { 'X-Nutri-Key': this.apiKey }
+                        });
+
+                        if (response.ok) {
+                            const blob = await response.blob();
+                            const url = window.URL.createObjectURL(blob);
+                            const a = document.createElement('a');
+                            a.href = url;
+                            a.download = `Relatorio_Paciente_${phone}.html`;
+                            document.body.appendChild(a);
+                            a.click();
+                            window.URL.revokeObjectURL(url);
+                        } else {
+                            alert('❌ Erro ao gerar o relatório do paciente.');
+                        }
+                    } catch (err) {
+                        console.error('Erro ao descarregar relatório', err);
+                        alert('❌ Erro de conexão com o servidor.');
+                    }
+                },
+
                 calculateDayTotal(logs) {
                     return logs.reduce((sum, item) => sum + (item.calories || 0), 0);
                 },
@@ -688,7 +718,7 @@
                             Carbs: parseFloat(this.form.carbs) || 0,
                             Fat: parseFloat(this.form.fat) || 0,
                             MainGoal: this.form.mainGoal,
-                            ClinicalProtocol: this.form.clinicalProtocol, // 🛡️ Enviado ao Back-end
+                            ClinicalProtocol: this.form.clinicalProtocol,
                             DietaryRestrictions: this.form.dietaryRestrictions,
                             FavoriteFoods: this.form.favoriteFoods,
                             PrescribedMealPlan: this.form.prescribedMealPlan
@@ -731,7 +761,7 @@
                     this.form.fat = p.targetFatG;
 
                     this.form.mainGoal = p.mainGoal || 'Emagrecimento';
-                    this.form.clinicalProtocol = p.clinicalProtocol || ''; // 🛡️ Preenchido na edição
+                    this.form.clinicalProtocol = p.clinicalProtocol || '';
                     this.form.dietaryRestrictions = p.dietaryRestrictions || '';
                     this.form.favoriteFoods = p.favoriteFoods || '';
                     this.form.prescribedMealPlan = p.prescribedMealPlan || '';

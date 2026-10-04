@@ -386,6 +386,138 @@ public class NutritionistPortalController : ControllerBase
         }
     }
 
+    [HttpGet("patient-report/{phone}")]
+    public async Task<IActionResult> GeneratePatientReport(
+    [FromHeader(Name = "X-Nutri-Key")] string key,
+    string phone)
+    {
+        var nutri = await ObterNutricionistaAutenticadoAsync(key);
+        if (nutri == null)
+        {
+            return Unauthorized(new { success = false, message = "Chave de acesso inválida." });
+        }
+
+        try
+        {
+            // 1. Buscar dados do paciente e protocolo
+            var patientsCollection = _database.GetCollection<MongoDB.Bson.BsonDocument>("Nutrition_Patients");
+            var patientDoc = await patientsCollection.Find(Builders<MongoDB.Bson.BsonDocument>.Filter.Eq("_id", phone)).FirstOrDefaultAsync();
+
+            string nomePaciente = phone; // Pode ajustar se tiver campo Name na collection
+            string clinicalProtocol = patientDoc != null && patientDoc.Contains("ClinicalProtocol") ? patientDoc["ClinicalProtocol"].AsString : "Nenhum protocolo definido.";
+            string mainGoal = patientDoc != null && patientDoc.Contains("MainGoal") ? patientDoc["MainGoal"].AsString : "Não especificado";
+
+            // 2. Buscar metas diárias
+            var goal = await _goalsCollection
+                .Find(x => x.UserId == phone)
+                .SortByDescending(x => x.TargetDate)
+                .FirstOrDefaultAsync();
+
+            int targetCal = goal?.TargetCalories ?? 2000;
+            decimal targetProt = goal?.TargetProteinG ?? 150;
+            decimal targetCarb = goal?.TargetCarbsG ?? 200;
+            decimal targetFat = goal?.TargetFatG ?? 60;
+
+            // 3. Buscar logs dos últimos 30 dias
+            var logsCollection = _database.GetCollection<MealLog>("Nutrition_MealLogs");
+            var thirtyDaysAgo = DateTime.UtcNow.AddDays(-30).Date;
+            var logs = await logsCollection
+                .Find(x => x.UserId == phone && x.LoggedAt >= thirtyDaysAgo)
+                .SortByDescending(x => x.LoggedAt)
+                .ToListAsync();
+
+            int totalRefeicoes = logs.Count;
+            int mediaCalorias = totalRefeicoes > 0 ? (int)logs.Average(x => x.Calories) : 0;
+
+            // 4. Construir um Relatório em HTML formatado para Impressão/PDF
+            var htmlReport = $@"
+        <!DOCTYPE html>
+        <html lang='pt-BR'>
+        <head>
+            <meta charset='UTF-8'>
+            <title>Relatório Pré-Consulta - {phone}</title>
+            <style>
+                body {{ font-family: Arial, sans-serif; margin: 40px; color: #333; }}
+                h1 {{ color: #059669; border-bottom: 2px solid #059669; padding-bottom: 10px; }}
+                .section {{ margin-top: 20px; padding: 15px; background: #f9fafb; border-radius: 8px; border: 1px solid #e5e7eb; }}
+                .grid {{ display: flex; gap: 20px; }}
+                .card {{ flex: 1; background: #fff; padding: 15px; border-radius: 6px; border: 1px solid #d1d5db; text-align: center; }}
+                table {{ width: 100%; border-collapse: collapse; margin-top: 15px; }}
+                th, td {{ border: 1px solid #d1d5db; padding: 8px; text-align: left; font-size: 12px; }}
+                th {{ background: #059669; color: white; }}
+            </style>
+        </head>
+        <body>
+            <h1>🥗 LabelWise - Relatório Pré-Consulta</h1>
+            <p><strong>Paciente (WhatsApp):</strong> {phone}</p>
+            <p><strong>Objetivo Principal:</strong> {mainGoal}</p>
+            <p><strong>Data de Emissão:</strong> {DateTime.UtcNow.AddHours(-3):dd/MM/yyyy HH:mm}</p>
+
+            <div class='section'>
+                <h3>🛡️ Protocolo Clínico & Guardrails Ativos</h3>
+                <p><em>{clinicalProtocol}</em></p>
+            </div>
+
+            <div class='grid' style='margin-top: 20px;'>
+                <div class='card'>
+                    <h4>Meta Calórica</h4>
+                    <p style='font-size: 20px; font-weight: bold; color: #059669;'>{targetCal} kcal</p>
+                </div>
+                <div class='card'>
+                    <h4>Média Consumida (30d)</h4>
+                    <p style='font-size: 20px; font-weight: bold; color: #2563eb;'>{mediaCalorias} kcal</p>
+                </div>
+                <div class='card'>
+                    <h4>Total de Registos</h4>
+                    <p style='font-size: 20px; font-weight: bold; color: #7c3aed;'>{totalRefeicoes} refeições</p>
+                </div>
+            </div>
+
+            <div class='section'>
+                <h3>📊 Histórico Recente de Refeições</h3>
+                <table>
+                    <thead>
+                        <tr>
+                            <th>Data/Hora</th>
+                            <th>Tipo</th>
+                            <th>Prato / Alimento</th>
+                            <th>Calorias</th>
+                            <th>Macros (P / C / G)</th>
+                        </tr>
+                    </thead>
+                    <tbody>";
+
+            foreach (var l in logs.Take(20))
+            {
+                htmlReport += $@"
+                        <tr>
+                            <td>{l.LoggedAt.AddHours(-3):dd/MM/yyyy HH:mm}</td>
+                            <td>{l.MealType}</td>
+                            <td>{l.DishName}</td>
+                            <td><strong>{l.Calories} kcal</strong></td>
+                            <td>{l.ProteinG}g / {l.CarbsG}g / {l.FatG}g</td>
+                        </tr>";
+            }
+
+            htmlReport += $@"
+                    </tbody>
+                </table>
+            </div>
+            <script>
+                window.onload = function() {{ window.print(); }}
+            </script>
+        </body>
+        </html>";
+
+            var bytes = System.Text.Encoding.UTF8.GetBytes(htmlReport);
+            return File(bytes, "text/html", $"Relatorio_Paciente_{phone}.html");
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Erro ao gerar relatório para o paciente {Phone}", phone);
+            return StatusCode(500, new { success = false, message = "Erro interno ao gerar relatório." });
+        }
+    }
     public record UpdateLimitDto(int NewMaxPatients);
 
     private async Task<IActionResult> SalvarOuAtualizarDietaAsync(
