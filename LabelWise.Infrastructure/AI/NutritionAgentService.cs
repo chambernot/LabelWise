@@ -39,18 +39,26 @@ namespace LabelWise.Infrastructure.Services
             "Diga exatamente com base no saldo calórico dele (ex: 'Como ainda te restam X calorias hoje...'). Responda no campo 'adviceText' e defina 'isAdvice': true.\n" +
             "Retorne APENAS um JSON válido, sem texto fora dele, sem markdown de bloco de código (```json).";
 
-        private const string UserPromptInstructions = @"TAREFA: Analisar a entrada atual do usuário considerando o histórico da conversa e retornar o JSON correspondente.
+        // 🚀 AQUI ESTÁ O NOVO PROMPT RIGOROSO DE IMAGENS E GUARDRAILS
+        private const string UserPromptInstructions = @"TAREFA: Analisar a entrada atual do usuário considerando o histórico da conversa e o contexto clínico, retornando o JSON correspondente.
+
+INSTRUÇÕES RIGOROSAS PARA AVALIAÇÃO DE IMAGENS E REFEIÇÕES:
+1. Identifique minuciosamente todos os alimentos visíveis (inclusive molhos, queijos ralados e temperos).
+2. Estime o PESO REAL EM GRAMAS (g) de cada porção baseando-se na proporção visual do prato/copo.
+3. Considere GORDURAS DE COCÇÃO OCULTAS (ex: óleo, azeite, manteiga) no cálculo de calorias e gorduras.
+4. Cruze a refeição com o [CONTEXTO CLÍNICO E GUARDRAILS] fornecidos. Se houver alguma violação (ex: contém glúten, contém item proibido ou restrição violada), ative o alerta.
+5. Seja conservador e realista nos macros.
 
 ESTRUTURA DE SAÍDA OBRIGATÓRIA (JSON PURO)
 {
   ""isAdvice"": boolean,
-  ""adviceText"": ""string ou null (preencher apenas se for dúvida/pergunta do usuário)"",
+  ""adviceText"": ""string ou null (preencher se for dúvida do usuário OU se houver um ALERTA DE GUARDRAIL/RESTRIÇÃO CLÍNICA na refeição)"",
   ""mealType"": ""Café da Manhã"" | ""Almoço"" | ""Lanche"" | ""Jantar"" | ""Ceia"" | ""Indefinido"",
   ""dishName"": ""string"",
   ""items"": [
     {
       ""foodName"": ""string"",
-      ""portionDescription"": ""string"",
+      ""portionDescription"": ""string (incluir peso estimado em gramas e modo de preparo)"",
       ""estimatedWeightG"": number,
       ""calories"": number,
       ""proteinG"": number,
@@ -66,7 +74,7 @@ ESTRUTURA DE SAÍDA OBRIGATÓRIA (JSON PURO)
     ""fatG"": number
   },
   ""requiresUserClarification"": boolean,
-  ""clarificationQuestion"": ""string ou null""
+  ""clarificationQuestion"": ""string ou null (preencher se a foto for ambígua. Ex: 'O bife foi feito no óleo ou na airfryer?')""
 }";
 
         private const string DietReaderSystemPrompt = @"Você é um Assistente Clínico Especialista em Nutrição e Extração de Dados.
@@ -143,13 +151,11 @@ FORMATO DE SAÍDA OBRIGATÓRIO:
             }
         }
 
-        // 🚀 1. Implementa a interface INutritionAgentService (Exigida pelo compilador)
         public async Task<MealAnalysisResponseDto> ExtractMealDataAsync(ParseMealRequestDto request)
         {
             return await ExtractMealDataAsync(request, null);
         }
 
-        // 🚀 2. Sobrecarga estendida que aceita o histórico de conversas do chat
         public async Task<MealAnalysisResponseDto> ExtractMealDataAsync(ParseMealRequestDto request, List<ChatMessageLog>? chatHistory)
         {
             try
@@ -261,6 +267,7 @@ FORMATO DE SAÍDA OBRIGATÓRIO:
             return originalBody;
         }
 
+        // 🚀 AQUI É ONDE O CONTEXTO CLÍNICO É INJETADO NAS MENSAGENS DA IA
         private object BuildRequestBodyWithHistory(List<ChatMessageLog>? history, ParseMealRequestDto request, string targetModel, string sysPrompt, string userPromptInstructions)
         {
             var messagesList = new List<object>
@@ -268,6 +275,16 @@ FORMATO DE SAÍDA OBRIGATÓRIO:
                 new { role = "system", content = $"{sysPrompt}\n\n{userPromptInstructions}" }
             };
 
+            // INJEÇÃO DOS GUARDRAILS E METAS DO PACIENTE
+            string contextPaciente = $@"
+[CONTEXTO CLÍNICO DO PACIENTE HOJE]
+- Meta Calórica Diária: {request.TargetCalories ?? 0} kcal
+- Guardrails (Protocolo Estrito): {(string.IsNullOrWhiteSpace(request.ClinicalProtocol) ? "Nenhum" : request.ClinicalProtocol)}
+- Alergias/Aversões: {(string.IsNullOrWhiteSpace(request.DietaryRestrictions) ? "Nenhuma" : request.DietaryRestrictions)}";
+
+            messagesList.Add(new { role = "system", content = contextPaciente });
+
+            // Injeção do Histórico (mantido do original)
             if (history != null && history.Any())
             {
                 foreach (var h in history)
@@ -344,4 +361,4 @@ FORMATO DE SAÍDA OBRIGATÓRIO:
             return null;
         }
     }
-}   
+}

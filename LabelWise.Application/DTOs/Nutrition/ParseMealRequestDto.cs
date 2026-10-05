@@ -6,6 +6,13 @@
         string? Base64Image,
         string? AudioUrl,
         DateTime LocalTime,
-        string? ClinicalProtocol = null // 🛡️ NOVO: O protocolo clínico do nutricionista
+        string? ClinicalProtocol = null,
+        int? TargetCalories = 0,
+        string? DietaryRestrictions = null
+
+
+
+
+
     );
 }
