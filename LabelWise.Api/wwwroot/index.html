@@ -3,10 +3,12 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Butrição Facil - Portal da Nutricionista</title>
+    <title>Nutrição Facil - Portal da Nutricionista</title>
     <!-- Tailwind CSS -->
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js" defer></script>
+    <!-- Chart.js para os gráficos de progresso -->
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 </head>
 <body class="bg-gray-50 font-sans antialiased" x-data="nutriApp()">
 
@@ -362,6 +364,11 @@
                 </div>
             </div>
 
+            <!-- 📊 GRÁFICO DE ADERÊNCIA -->
+            <div class="bg-white p-4 rounded-xl border border-gray-100 shadow-sm my-4">
+                <canvas id="caloriesChart" height="100"></canvas>
+            </div>
+
             <div class="py-4 overflow-y-auto flex-1 space-y-4 pr-2">
                 <template x-for="(group, dateStr) in groupedLogs" :key="dateStr">
                     <div class="border border-gray-100 rounded-xl overflow-hidden shadow-sm">
@@ -433,6 +440,7 @@
                 selectedFileBase64: null,
                 selectedFileName: '',
                 patients: [],
+                chartInstance: null, // 📊 Instância do Chart.js
 
                 mobileTab: 'list',
                 searchQuery: '',
@@ -649,10 +657,78 @@
                         if (response.ok && result.success) {
                             this.selectedPatientLogs = result.data || [];
                             this.targetCalories = result.targetCalories || 2000;
+
+                            // 📊 Renderizar o gráfico após carregar os dados
+                            this.$nextTick(() => {
+                                this.renderAdherenceChart();
+                            });
                         }
                     } catch (err) {
                         console.error('Erro ao buscar logs do paciente', err);
                     }
+                },
+
+                // 📊 Renderizar Gráfico de Aderência com Chart.js
+                renderAdherenceChart() {
+                    const ctx = document.getElementById('caloriesChart');
+                    if (!ctx) return;
+
+                    const groups = this.groupedLogs;
+                    const labels = Object.keys(groups).sort((a, b) => new Date(a) - new Date(b));
+                    const dataValues = labels.map(dateStr => this.calculateDayTotal(groups[dateStr]));
+                    const targetLine = labels.map(() => this.targetCalories);
+
+                    if (this.chartInstance) {
+                        this.chartInstance.destroy();
+                    }
+
+                    this.chartInstance = new Chart(ctx, {
+                        type: 'line',
+                        data: {
+                            labels: labels.map(d => {
+                                const parts = d.split('-');
+                                return parts.length === 3 ? `${parts[2]}/${parts[1]}` : d;
+                            }),
+                            datasets: [
+                                {
+                                    label: 'Calorias Consumidas',
+                                    data: dataValues,
+                                    borderColor: '#059669',
+                                    backgroundColor: 'rgba(5, 150, 105, 0.1)',
+                                    borderWidth: 2,
+                                    fill: true,
+                                    tension: 0.3
+                                },
+                                {
+                                    label: 'Meta Diária',
+                                    data: targetLine,
+                                    borderColor: '#ef4444',
+                                    borderWidth: 1.5,
+                                    borderDash: [5, 5],
+                                    pointRadius: 0,
+                                    fill: false
+                                }
+                            ]
+                        },
+                        options: {
+                            responsive: true,
+                            plugins: {
+                                legend: {
+                                    position: 'bottom',
+                                    labels: { boxWidth: 12, font: { size: 11 } }
+                                }
+                            },
+                            scales: {
+                                y: {
+                                    beginAtZero: true,
+                                    grid: { color: '#f3f4f6' }
+                                },
+                                x: {
+                                    grid: { display: false }
+                                }
+                            }
+                        }
+                    });
                 },
 
                 // 📄 FUNÇÃO PARA GERAR E DESCARREGAR O RELATÓRIO PDF/HTML
