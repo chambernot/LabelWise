@@ -50,9 +50,9 @@ namespace LabelWise.Infrastructure.Repositories
 
         public async Task<List<string>> ObterTelefonesAtivosAsync()
         {
-            // 1. Telefones com metas cadastradas (B2B / principais)
-            using var cursorGoals = await _dailyGoals.DistinctAsync(
-                x => x.UserId,
+            // 1. Telefones com metas cadastradas (B2B / principais) usando string explícita
+            using var cursorGoals = await _dailyGoals.DistinctAsync<string>(
+                "UserId",
                 Builders<DailyNutritionGoal>.Filter.Empty);
 
             var telefonesGoals = await cursorGoals.ToListAsync();
