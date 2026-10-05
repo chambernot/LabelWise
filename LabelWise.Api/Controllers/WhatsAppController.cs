@@ -304,7 +304,7 @@ namespace LabelWise.Api.Controllers
                                 string respostaConfig = $"✅ *Formulário concluído com sucesso!* 🥗\n\n" +
                                                         $"🎯 **Objetivo:** {goal}\n" +
                                                         $"🔥 **Calorias Diárias:** {calories} kcal\n" +
-                                                        $"🛡️ **Alergias/Restrições:** {(string.IsNullOrWhiteSpace(medRest) ? "Nenhuma" : medRest)}\n" +
+                                                        $"🛡️️ **Alergias/Restrições:** {(string.IsNullOrWhiteSpace(medRest) ? "Nenhuma" : medRest)}\n" +
                                                         $"🚫 **Aversões:** {(string.IsNullOrWhiteSpace(aversions) ? "Nenhuma" : aversions)}\n\n" +
                                                         "👉 *Tudo pronto! Já pode enviar as suas refeições* por texto, foto ou áudio.\n\n" +
                                                         "_💡 Dica: Se quiser alterar suas metas no futuro, basta digitar *meta* a qualquer momento!_";
@@ -341,7 +341,7 @@ namespace LabelWise.Api.Controllers
                         _logger.LogWarning("[WhatsApp B2C] ⚠️ Limite diário de mensagens atingido para: {Phone}", senderPhone);
                         await _whatsAppSender.SendTextMessageAsync(
                             senderPhone,
-                            "⚠️️ Atingiu o limite de 4 interações gratuitas para hoje. O seu saldo diário será renovado amanhã! ⏰"
+                            "⚠ Atingiu o limite de 4 interações gratuitas para hoje. O seu saldo diário será renovado amanhã! ⏰"
                         );
                         return Ok();
                     }
@@ -598,6 +598,62 @@ namespace LabelWise.Api.Controllers
             }
         }
 
+        // 🤖 ENDPOINT PARA ENVIO DO FEEDBACK AUTOMÁTICO DE FIM DE DIA
+        [HttpPost("send-end-of-day-feedback")]
+        public async Task<IActionResult> SendEndOfDayFeedback([FromHeader(Name = "X-Cron-Secret")] string secret)
+        {
+            var expectedSecret = _configuration["CronSecret"];
+            if (string.IsNullOrEmpty(secret) || secret != expectedSecret)
+            {
+                return Unauthorized(new { success = false, message = "Acesso negado." });
+            }
+
+            try
+            {
+                var dataHojeBr = DateTime.UtcNow.AddHours(-3).Date;
+                var telefones = await _nutritionRepository.ObterTelefonesAtivosAsync();
+                int enviados = 0, falhas = 0;
+
+                foreach (var phone in telefones)
+                {
+                    try
+                    {
+                        var goal = await _nutritionRepository.ObterMetaDiariaAsync(phone, dataHojeBr);
+                        var logs = await _nutritionRepository.ObterRefeicoesDoDiaAsync(phone, dataHojeBr);
+
+                        int targetCal = goal?.TargetCalories ?? 2000;
+                        decimal targetProt = goal?.TargetProteinG ?? 150;
+
+                        int consumedCal = logs.Sum(x => x.Calories);
+                        decimal consumedProt = logs.Sum(x => x.ProteinG);
+
+                        var pratos = logs.Select(x => x.DishName).Where(d => !string.IsNullOrWhiteSpace(d)).ToList();
+
+                        string feedbackMsg = await GerarFeedbackDiarioComGeminiAsync(
+                            goal?.PrescribedMealPlan ?? "Manter a saúde",
+                            targetCal, consumedCal, targetProt, consumedProt, pratos
+                        );
+
+                        string mensagemFinal = $"🌙 *Resumo do seu dia*\n\n{feedbackMsg}";
+
+                        await _whatsAppSender.SendTextMessageAsync(phone, mensagemFinal);
+                        enviados++;
+                    }
+                    catch
+                    {
+                        falhas++;
+                    }
+                }
+
+                return Ok(new { success = true, message = $"Feedback diário concluído. Enviados: {enviados}, Falhas: {falhas}" });
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Erro no envio de feedback diário.");
+                return StatusCode(500, new { success = false, message = "Erro ao processar feedbacks diários." });
+            }
+        }
+
         [HttpPost("send-reminder")]
         public async Task<IActionResult> SendReminder([FromQuery] string phone, [FromQuery] string userName = "Anderson", [FromQuery] string mealTime = "café da manhã")
         {
@@ -605,6 +661,87 @@ namespace LabelWise.Api.Controllers
             bool enviado = await _whatsAppSender.SendTemplateReminderAsync(phone, userName, mealTime);
             if (enviado) return Ok(new { success = true, message = $"Lembrete enviado para {phone}!" });
             return StatusCode(500, new { success = false, message = "Falha ao enviar lembrete." });
+        }
+
+        private async Task<string> GerarFeedbackDiarioComGeminiAsync(
+            string patientGoal,
+            int targetCalories,
+            int consumedCalories,
+            decimal targetProtein,
+            decimal consumedProtein,
+            List<string> mealsLogged)
+        {
+            try
+            {
+                var apiKey = _configuration["GeminiApiKey"] ?? _configuration["Gemini:ApiKey"];
+                var endpoint = _configuration["Gemini:Endpoint"] ?? "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions";
+                var model = _configuration["Model"] ?? "gemini-1.5-flash";
+
+                var mealsSummary = (mealsLogged != null && mealsLogged.Any())
+                    ? string.Join(", ", mealsLogged)
+                    : "Nenhuma refeição registrada hoje.";
+
+                int diff = targetCalories - consumedCalories;
+                string statusCalorico = diff switch
+                {
+                    > 200 => $"Faltaram {diff} kcal para atingir a meta.",
+                    < -200 => $"Ultrapassou a meta em {Math.Abs(diff)} kcal.",
+                    _ => "Atingiu a meta calórica com excelente precisão!"
+                };
+
+                var prompt = $@"
+Você é um assistente nutricional motivacional, empático e amigável enviando uma mensagem no WhatsApp ao final do dia.
+DADOS DO DIA DO PACIENTE:
+- Objetivo: {patientGoal}
+- Meta de Calorias: {targetCalories} kcal | Consumido: {consumedCalories} kcal ({statusCalorico})
+- Meta Proteína: {targetProtein}g | Consumido: {consumedProtein:F0}g
+- Refeições Registradas: {mealsSummary}
+
+INSTRUÇÕES:
+1. Escreva uma mensagem curta (máximo 3 a 4 frases) para o WhatsApp com emojis.
+2. Seja encorajador se ele esteve perto da meta, ou acolhedor se ele ultrapassou/esqueceu de registrar.
+3. Não use termos técnicos complexos. Termine com uma palavra de incentivo para o dia seguinte.
+Retorne APENAS o texto da mensagem pronto para envio.
+";
+
+                var client = _httpClientFactory.CreateClient("Gemini");
+                var requestBody = new
+                {
+                    model = model,
+                    temperature = 0.7,
+                    messages = new object[]
+                    {
+                        new { role = "user", content = prompt }
+                    }
+                };
+
+                var content = new StringContent(JsonSerializer.Serialize(requestBody), Encoding.UTF8, "application/json");
+                using var requestMessage = new HttpRequestMessage(HttpMethod.Post, endpoint) { Content = content };
+                requestMessage.Headers.Authorization = new AuthenticationHeaderValue("Bearer", apiKey);
+
+                var response = await client.SendAsync(requestMessage);
+                if (!response.IsSuccessStatusCode)
+                {
+                    return "🌙 Boa noite! Passando para lembrar de conferir suas refeições registradas de hoje. Amanhã seguimos juntos no foco! 🥗";
+                }
+
+                var jsonResponse = await response.Content.ReadAsStringAsync();
+                using var doc = JsonDocument.Parse(jsonResponse);
+                var rawText = doc.RootElement.GetProperty("choices")[0].GetProperty("message").GetProperty("content").GetString()?.Trim() ?? string.Empty;
+
+                if (rawText.StartsWith("```"))
+                {
+                    var lines = rawText.Split('\n').Skip(1).Where(l => !l.StartsWith("```"));
+                    rawText = string.Join("\n", lines);
+                }
+
+                return rawText.Trim();
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Erro ao gerar feedback diário com Gemini.");
+                return "🌙 Boa noite! Passando para lembrar de conferir suas refeições registradas de hoje. Amanhã seguimos juntos no foco! 🥗";
+            }
         }
 
         private async Task<string> TranscreverAudioComGeminiAsync(byte[] audioBytes)

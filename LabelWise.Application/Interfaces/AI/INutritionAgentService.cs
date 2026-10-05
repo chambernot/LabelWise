@@ -15,5 +15,13 @@ namespace LabelWise.Application.Interfaces.AI
         Task<MealAnalysisResponseDto> ExtractMealDataAsync(ParseMealRequestDto request, List<ChatMessageLog>? chatHistory);
 
         Task<ExtractDietGoalResponseDto> ExtractDietGoalsFromDocumentAsync(ExtractDietGoalRequestDto request);
+
+        Task<string> GenerateDailyFeedbackMessageAsync(
+    string patientGoal,
+    int targetCalories,
+    int consumedCalories,
+    decimal targetProtein,
+    decimal consumedProtein,
+    List<string> mealsLogged);
     }
 }

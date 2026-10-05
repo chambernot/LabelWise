@@ -186,6 +186,65 @@ FORMATO DE SAÍDA OBRIGATÓRIO:
             }
         }
 
+        public async Task<string> GenerateDailyFeedbackMessageAsync(
+    string patientGoal,
+    int targetCalories,
+    int consumedCalories,
+    decimal targetProtein,
+    decimal consumedProtein,
+    List<string> mealsLogged)
+        {
+            try
+            {
+                var mealsSummary = (mealsLogged != null && mealsLogged.Any())
+                    ? string.Join(", ", mealsLogged)
+                    : "Nenhuma refeição registrada hoje.";
+
+                int diff = targetCalories - consumedCalories;
+                string statusCalorico = diff switch
+                {
+                    > 200 => $"Faltaram {diff} kcal para atingir a meta.",
+                    < -200 => $"Ultrapassou a meta em {Math.Abs(diff)} kcal.",
+                    _ => "Atingiu a meta calórica com excelente precisão!"
+                };
+
+                var prompt = $@"
+Você é um assistente nutricional motivacional, empático e amigável enviando uma mensagem no WhatsApp ao final do dia.
+DADOS DO DIA DO PACIENTE:
+- Objetivo: {patientGoal}
+- Meta de Calorias: {targetCalories} kcal | Consumido: {consumedCalories} kcal ({statusCalorico})
+- Meta Proteína: {targetProtein}g | Consumido: {consumedProtein:F0}g
+- Refeições Registradas: {mealsSummary}
+
+INSTRUÇÕES:
+1. Escreva uma mensagem curta (máximo 3 a 4 frases) para o WhatsApp com emojis.
+2. Seja encorajador se ele esteve perto da meta, ou acolhedor se ele ultrapassou/esqueceu de registrar.
+3. Não use termos técnicos complexos. Termine com uma palavra de incentivo para o dia seguinte.
+Retorne APENAS o texto da mensagem pronto para envio.
+";
+
+                var requestBody = new
+                {
+                    model = _geminiModel,
+                    temperature = 0.7,
+                    messages = new object[]
+                    {
+                new { role = "user", content = prompt }
+                    }
+                };
+
+                var responseString = await ExecuteWithFailoverAsync(
+                    _geminiEndpoint, _geminiApiKey, _geminiModel, "Gemini",
+                    _openAiEndpoint, _openAiApiKey, _openAiModel, "OpenAiVision", requestBody);
+
+                return ExtractJsonFromResponse(responseString).Replace("\"", "").Trim();
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Erro ao gerar feedback diário com IA.");
+                return "🌙 Boa noite! Passando para lembrar de conferir suas refeições registradas de hoje. Amanhã seguimos juntos no foco! 🥗";
+            }
+        }
         public async Task<ExtractDietGoalResponseDto> ExtractDietGoalsFromDocumentAsync(ExtractDietGoalRequestDto request)
         {
             var userContentList = new List<object>

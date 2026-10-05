@@ -6,6 +6,12 @@ using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
 using MongoDB.Driver;
 using System;
+using System.IO;
+using System.Linq;
+using System.Net.Http;
+using System.Net.Http.Headers;
+using System.Text;
+using System.Text.Json;
 using System.Threading.Tasks;
 
 namespace LabelWise.Api.Controllers;
@@ -19,19 +25,22 @@ public class NutritionistPortalController : ControllerBase
     private readonly IMongoCollection<DailyNutritionGoal> _goalsCollection;
     private readonly IConfiguration _configuration;
     private readonly ILogger<NutritionistPortalController> _logger;
+    private readonly IHttpClientFactory _httpClientFactory;
     private readonly string _nutriKey;
 
     public NutritionistPortalController(
         INutritionAgentService aiService,
         IMongoDatabase database,
         IConfiguration configuration,
-        ILogger<NutritionistPortalController> logger)
+        ILogger<NutritionistPortalController> logger,
+        IHttpClientFactory httpClientFactory)
     {
         _aiService = aiService;
         _database = database;
         _goalsCollection = _database.GetCollection<DailyNutritionGoal>("DailyGoals");
         _configuration = configuration;
         _logger = logger;
+        _httpClientFactory = httpClientFactory;
         _nutriKey = configuration["NutritionistDefaultKey"] ?? "nutri_secret_123";
     }
 
@@ -80,6 +89,80 @@ public class NutritionistPortalController : ControllerBase
         }
 
         return Ok(new { success = true, name = nutricionista.Name, nutritionistId = nutricionista.Id });
+    }
+
+    // 📋 NOVO ENDPOINT: GERADOR DE CARDÁPIO COM IA
+    [HttpPost("generate-meal-plan")]
+    public async Task<IActionResult> GenerateMealPlan(
+        [FromHeader(Name = "X-Nutri-Key")] string key,
+        [FromBody] GenerateMealPlanRequestDto dto)
+    {
+        var nutri = await ObterNutricionistaAutenticadoAsync(key);
+        if (nutri == null)
+        {
+            return Unauthorized(new { success = false, message = "Chave de acesso inválida." });
+        }
+
+        try
+        {
+            var apiKey = _configuration["GeminiApiKey"] ?? _configuration["Gemini:ApiKey"];
+            var endpoint = _configuration["Gemini:Endpoint"] ?? "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions";
+            var model = _configuration["Model"] ?? "gemini-1.5-flash";
+
+            var prompt = $@"
+Você é um Nutricionista Clínico Sênior criando uma prescrição de cardápio semanal/diário para um paciente.
+
+DADOS E METAS DO PACIENTE:
+- Objetivo: {dto.MainGoal}
+- Meta Calórica: {dto.TargetCalories} kcal
+- Macros Alvo: Proteína {dto.TargetProteinG}g | Carboidratos {dto.TargetCarbsG}g | Gorduras {dto.TargetFatG}g
+- Restrições Médicas/Alergias: {(string.IsNullOrEmpty(dto.DietaryRestrictions) ? "Nenhuma" : dto.DietaryRestrictions)}
+- Aversões Alimentares: {(string.IsNullOrEmpty(dto.FavoriteFoods) ? "Nenhuma" : dto.FavoriteFoods)}
+- 🛡️ Protocolo Clínico (Guardrails): {(string.IsNullOrEmpty(dto.ClinicalProtocol) ? "Nenhum" : dto.ClinicalProtocol)}
+
+INSTRUÇÕES:
+1. Monte um cardápio prático, variado e gostoso dividido em: Café da Manhã, Almoço, Lanche da Tarde e Jantar.
+2. Respeite OBRIGATORIAMENTE todas as restrições e o protocolo clínico.
+3. Formate o texto de forma limpa, elegante e organizada com tópicos.
+
+Retorne APENAS o texto do cardápio pronto para ser colado na prescrição.
+";
+
+            var client = _httpClientFactory.CreateClient("Gemini");
+            var requestBody = new
+            {
+                model = model,
+                temperature = 0.5,
+                messages = new object[] { new { role = "user", content = prompt } }
+            };
+
+            var content = new StringContent(JsonSerializer.Serialize(requestBody), Encoding.UTF8, "application/json");
+            using var requestMessage = new HttpRequestMessage(HttpMethod.Post, endpoint) { Content = content };
+            requestMessage.Headers.Authorization = new AuthenticationHeaderValue("Bearer", apiKey);
+
+            var response = await client.SendAsync(requestMessage);
+            if (!response.IsSuccessStatusCode)
+            {
+                return StatusCode((int)response.StatusCode, new { success = false, message = "Erro ao se comunicar com a IA para gerar o cardápio." });
+            }
+
+            var jsonResponse = await response.Content.ReadAsStringAsync();
+            using var doc = JsonDocument.Parse(jsonResponse);
+            string rawPlan = doc.RootElement.GetProperty("choices")[0].GetProperty("message").GetProperty("content").GetString()?.Trim() ?? "";
+
+            if (rawPlan.StartsWith("```"))
+            {
+                var lines = rawPlan.Split('\n').Skip(1).Where(l => !l.StartsWith("```"));
+                rawPlan = string.Join("\n", lines);
+            }
+
+            return Ok(new { success = true, generatedPlan = rawPlan.Trim() });
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Erro ao gerar cardápio com IA.");
+            return StatusCode(500, new { success = false, message = "Erro interno ao gerar cardápio com IA." });
+        }
     }
 
     [HttpGet("patient-logs/{phone}")]
@@ -194,14 +277,13 @@ public class NutritionistPortalController : ControllerBase
                 .SortByDescending(x => x.TargetDate)
                 .ToListAsync();
 
-            // 🛡️ Consultar a coleção de pacientes para extrair Protocolo e Objetivo
             var patientsCollection = _database.GetCollection<MongoDB.Bson.BsonDocument>("Nutrition_Patients");
             var resultList = new System.Collections.Generic.List<object>();
 
             foreach (var g in goals)
             {
                 string clinicalProtocol = "";
-                string mainGoal = "Emagrecimento"; // Valor padrão caso não encontre
+                string mainGoal = "Emagrecimento";
 
                 var patientDoc = await patientsCollection.Find(Builders<MongoDB.Bson.BsonDocument>.Filter.Eq("_id", g.UserId)).FirstOrDefaultAsync();
                 if (patientDoc != null)
@@ -223,7 +305,7 @@ public class NutritionistPortalController : ControllerBase
                     TargetProteinG = g.TargetProteinG,
                     TargetCarbsG = g.TargetCarbsG,
                     TargetFatG = g.TargetFatG,
-                    MainGoal = mainGoal, // 🛡️ Atribuído corretamente a partir do BsonDocument
+                    MainGoal = mainGoal,
                     DietaryRestrictions = g.DietaryRestrictions,
                     FavoriteFoods = g.FavoriteFoods,
                     PrescribedMealPlan = g.PrescribedMealPlan,
@@ -324,7 +406,7 @@ public class NutritionistPortalController : ControllerBase
             dto.DietaryRestrictions,
             dto.FavoriteFoods,
             dto.PrescribedMealPlan,
-            dto.ClinicalProtocol // 🛡️ Guardrail
+            dto.ClinicalProtocol
         );
     }
 
@@ -350,7 +432,7 @@ public class NutritionistPortalController : ControllerBase
             dto.DietaryRestrictions,
             dto.FavoriteFoods,
             dto.PrescribedMealPlan,
-            dto.ClinicalProtocol // 🛡️ Guardrail
+            dto.ClinicalProtocol
         );
     }
 
@@ -399,26 +481,19 @@ public class NutritionistPortalController : ControllerBase
 
         try
         {
-            // 1. Buscar dados do paciente e protocolo
             var patientsCollection = _database.GetCollection<MongoDB.Bson.BsonDocument>("Nutrition_Patients");
             var patientDoc = await patientsCollection.Find(Builders<MongoDB.Bson.BsonDocument>.Filter.Eq("_id", phone)).FirstOrDefaultAsync();
 
-            string nomePaciente = phone; // Pode ajustar se tiver campo Name na collection
             string clinicalProtocol = patientDoc != null && patientDoc.Contains("ClinicalProtocol") ? patientDoc["ClinicalProtocol"].AsString : "Nenhum protocolo definido.";
             string mainGoal = patientDoc != null && patientDoc.Contains("MainGoal") ? patientDoc["MainGoal"].AsString : "Não especificado";
 
-            // 2. Buscar metas diárias
             var goal = await _goalsCollection
                 .Find(x => x.UserId == phone)
                 .SortByDescending(x => x.TargetDate)
                 .FirstOrDefaultAsync();
 
             int targetCal = goal?.TargetCalories ?? 2000;
-            decimal targetProt = goal?.TargetProteinG ?? 150;
-            decimal targetCarb = goal?.TargetCarbsG ?? 200;
-            decimal targetFat = goal?.TargetFatG ?? 60;
 
-            // 3. Buscar logs dos últimos 30 dias
             var logsCollection = _database.GetCollection<MealLog>("Nutrition_MealLogs");
             var thirtyDaysAgo = DateTime.UtcNow.AddDays(-30).Date;
             var logs = await logsCollection
@@ -429,7 +504,6 @@ public class NutritionistPortalController : ControllerBase
             int totalRefeicoes = logs.Count;
             int mediaCalorias = totalRefeicoes > 0 ? (int)logs.Average(x => x.Calories) : 0;
 
-            // 4. Construir um Relatório em HTML formatado para Impressão/PDF
             var htmlReport = $@"
         <!DOCTYPE html>
         <html lang='pt-BR'>
@@ -518,7 +592,6 @@ public class NutritionistPortalController : ControllerBase
             return StatusCode(500, new { success = false, message = "Erro interno ao gerar relatório." });
         }
     }
-    public record UpdateLimitDto(int NewMaxPatients);
 
     private async Task<IActionResult> SalvarOuAtualizarDietaAsync(
         AuthenticatedNutri nutri,
@@ -531,18 +604,17 @@ public class NutritionistPortalController : ControllerBase
         string? dietaryRestrictions,
         string? favoriteFoods,
         string? prescribedMealPlan,
-        string? clinicalProtocol) // 🛡️ Novo parâmetro
+        string? clinicalProtocol)
     {
         try
         {
-            // 1. FORÇAR A GRAVAÇÃO NA TABELA DE PACIENTES COM O PROTOCOLO CLÍNICO (GUARDRAILS)
             var patientsCollection = _database.GetCollection<MongoDB.Bson.BsonDocument>("Nutrition_Patients");
             var patientUpdate = Builders<MongoDB.Bson.BsonDocument>.Update
                 .Set("ProfessionalId", nutri.Id)
                 .Set("MainGoal", mainGoal ?? "Emagrecimento")
                 .Set("MedicalRestrictions", dietaryRestrictions ?? "")
                 .Set("FoodAversions", favoriteFoods ?? "")
-                .Set("ClinicalProtocol", clinicalProtocol ?? ""); // 🛡️ O Guardrail gravado aqui
+                .Set("ClinicalProtocol", clinicalProtocol ?? "");
 
             await patientsCollection.UpdateOneAsync(
                 Builders<MongoDB.Bson.BsonDocument>.Filter.Eq("_id", patientPhone),
@@ -550,7 +622,6 @@ public class NutritionistPortalController : ControllerBase
                 new UpdateOptions { IsUpsert = true }
             );
 
-            // 2. BUSCAR A META E INSERIR CASO NÃO EXISTA
             var filter = Builders<DailyNutritionGoal>.Filter.Eq(x => x.UserId, patientPhone);
             var existingGoal = await _goalsCollection.Find(filter).FirstOrDefaultAsync();
 
@@ -577,7 +648,6 @@ public class NutritionistPortalController : ControllerBase
                 await _goalsCollection.InsertOneAsync(novaMeta);
             }
 
-            // 3. UPDATE FORÇADO NO BANCO DE DADOS
             var forceUpdate = Builders<DailyNutritionGoal>.Update
                 .Set(x => x.TargetCalories, calories)
                 .Set(x => x.TargetProteinG, protein)
@@ -616,6 +686,17 @@ public record RegisterNutritionistDto(
     string? ApiKey
 );
 
+public record GenerateMealPlanRequestDto(
+    string MainGoal,
+    int TargetCalories,
+    decimal TargetProteinG,
+    decimal TargetCarbsG,
+    decimal TargetFatG,
+    string? ClinicalProtocol,
+    string? DietaryRestrictions,
+    string? FavoriteFoods
+);
+
 public record ConfirmDietRequestDto(
     string PatientPhone,
     string NutritionistId,
@@ -627,7 +708,7 @@ public record ConfirmDietRequestDto(
     string? DietaryRestrictions,
     string? FavoriteFoods,
     string? PrescribedMealPlan,
-    string? ClinicalProtocol // 🛡️ Novo campo DTO
+    string? ClinicalProtocol
 );
 
 public record ImportDietDto(
@@ -641,5 +722,6 @@ public record ImportDietDto(
     string? DietaryRestrictions,
     string? FavoriteFoods,
     string? PrescribedMealPlan,
-    string? ClinicalProtocol // 🛡️ Novo campo DTO
+    string? ClinicalProtocol
 );
+public record UpdateLimitDto(int NewMaxPatients);

@@ -174,9 +174,17 @@
                             </div>
                         </div>
 
+                        <!-- 📋 CARDÁPIO DETALHADO + BOTÃO GERADOR COM IA -->
                         <div class="pt-2 border-t border-gray-100">
-                            <label class="block text-xs font-semibold uppercase text-gray-600 mb-1">Cardápio Detalhado</label>
-                            <textarea x-model="form.prescribedMealPlan" rows="3" placeholder="Ex: Café: 2 ovos + 1 pão..."
+                            <div class="flex items-center justify-between mb-1">
+                                <label class="block text-xs font-semibold uppercase text-gray-600">Cardápio Detalhado</label>
+                                <button type="button" @click="generateMealPlanWithAI" :disabled="isGeneratingPlan"
+                                        class="text-[11px] font-bold text-emerald-700 bg-emerald-100 hover:bg-emerald-200 px-2.5 py-1 rounded-lg transition flex items-center space-x-1 cursor-pointer">
+                                    <span x-show="!isGeneratingPlan">✨ Gerar com IA</span>
+                                    <span x-show="isGeneratingPlan">Gerando...</span>
+                                </button>
+                            </div>
+                            <textarea x-model="form.prescribedMealPlan" rows="4" placeholder="Ex: Café: 2 ovos + 1 pão..."
                                       class="w-full px-3 py-2 rounded-lg border border-gray-200 text-sm focus:ring-2 focus:ring-emerald-500 focus:outline-none"></textarea>
                         </div>
 
@@ -436,11 +444,12 @@
                 feedbackMessage: '',
                 feedbackError: false,
                 isExtracting: false,
+                isGeneratingPlan: false,
                 aiRawText: '',
                 selectedFileBase64: null,
                 selectedFileName: '',
                 patients: [],
-                chartInstance: null, // 📊 Instância do Chart.js
+                chartInstance: null,
 
                 mobileTab: 'list',
                 searchQuery: '',
@@ -634,6 +643,54 @@
                     }
                 },
 
+                // 📋 GERAR CARDÁPIO ASSISTIDO POR IA
+                async generateMealPlanWithAI() {
+                    if (!this.form.calories) {
+                        alert('Por favor, defina a meta de calorias antes de gerar o cardápio.');
+                        return;
+                    }
+
+                    this.isGeneratingPlan = true;
+                    this.feedbackMessage = '🤖 O Gemini está criando um cardápio personalizado com base nas metas e guardrails...';
+                    this.feedbackError = false;
+
+                    try {
+                        const response = await fetch('/api/nutritionist/generate-meal-plan', {
+                            method: 'POST',
+                            headers: {
+                                'Content-Type': 'application/json',
+                                'X-Nutri-Key': this.apiKey
+                            },
+                            body: JSON.stringify({
+                                mainGoal: this.form.mainGoal,
+                                targetCalories: Number(this.form.calories),
+                                targetProteinG: parseFloat(this.form.protein) || 0,
+                                targetCarbsG: parseFloat(this.form.carbs) || 0,
+                                targetFatG: parseFloat(this.form.fat) || 0,
+                                clinicalProtocol: this.form.clinicalProtocol,
+                                dietaryRestrictions: this.form.dietaryRestrictions,
+                                favoriteFoods: this.form.favoriteFoods
+                            })
+                        });
+
+                        const result = await response.json();
+
+                        if (response.ok && result.success && result.generatedPlan) {
+                            this.form.prescribedMealPlan = result.generatedPlan;
+                            this.feedbackMessage = '✨ Cardápio sugerido gerado com sucesso! Revise e ajuste conforme necessário.';
+                            this.feedbackError = false;
+                        } else {
+                            this.feedbackMessage = '❌ ' + (result.message || 'Erro ao gerar cardápio com IA.');
+                            this.feedbackError = true;
+                        }
+                    } catch (err) {
+                        this.feedbackMessage = '❌ Erro de conexão ao tentar gerar cardápio com IA.';
+                        this.feedbackError = true;
+                    } finally {
+                        this.isGeneratingPlan = false;
+                    }
+                },
+
                 async viewLogs(phone) {
                     this.selectedPatientPhone = phone;
                     this.showModal = true;
@@ -658,7 +715,6 @@
                             this.selectedPatientLogs = result.data || [];
                             this.targetCalories = result.targetCalories || 2000;
 
-                            // 📊 Renderizar o gráfico após carregar os dados
                             this.$nextTick(() => {
                                 this.renderAdherenceChart();
                             });
@@ -668,7 +724,6 @@
                     }
                 },
 
-                // 📊 Renderizar Gráfico de Aderência com Chart.js
                 renderAdherenceChart() {
                     const ctx = document.getElementById('caloriesChart');
                     if (!ctx) return;
@@ -731,7 +786,6 @@
                     });
                 },
 
-                // 📄 FUNÇÃO PARA GERAR E DESCARREGAR O RELATÓRIO PDF/HTML
                 async downloadReport(phone) {
                     try {
                         const response = await fetch(`/api/nutritionist/patient-report/${phone}`, {
