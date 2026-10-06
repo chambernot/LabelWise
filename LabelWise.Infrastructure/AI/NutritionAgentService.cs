@@ -126,7 +126,7 @@ FORMATO DE SAÍDA OBRIGATÓRIO:
                     model = _geminiModel,
                     temperature = 0.6,
                     max_tokens = 4000,
-                    response_format = new { type = "json_object" },
+                    // 💡 Removido o response_format para evitar JSON vazio do Gemini
                     messages = new object[]
                     {
                         new { role = "user", content = $"{systemPrompt}\n\n{userPrompt}" }
@@ -180,7 +180,7 @@ FORMATO DE SAÍDA OBRIGATÓRIO:
                 if (result == null)
                     throw new Exception("Falha ao desfragmentar JSON da refeição.");
 
-                // 🛡️ RECALCULADOR DE SEGURANÇA: Se o total vier zerado ou incompleto
+                // 🛡️ RECALCULADOR DE SEGURANÇA
                 int cal = result.TotalMeal?.Calories ?? 0;
                 decimal prot = result.TotalMeal?.ProteinG ?? 0;
                 decimal carb = result.TotalMeal?.CarbsG ?? 0;
@@ -196,11 +196,12 @@ FORMATO DE SAÍDA OBRIGATÓRIO:
 
                 var totalMealCorrigido = new MacroSummaryDto(cal, prot, carb, fat);
 
-                string dishNameCorrigido = !string.IsNullOrWhiteSpace(result.DishName)
+                // 🛡️ NOVO FALLBACK SEGURO: Se não vier nome do prato, força um nome genérico para NUNCA cuspir o perfil clínico
+                string dishNameCorrigido = !string.IsNullOrWhiteSpace(result.DishName) && result.DishName != "Indefinido"
                     ? result.DishName
                     : (result.Items != null && result.Items.Any()
                         ? string.Join(", ", result.Items.Select(i => i.FoodName))
-                        : (!string.IsNullOrWhiteSpace(request.TextInput) ? request.TextInput : "Refeição do dia"));
+                        : "Refeição Identificada");
 
                 string mealTypeCorrigido = (!string.IsNullOrWhiteSpace(result.MealType) && result.MealType != "Indefinido")
                     ? result.MealType
@@ -312,7 +313,7 @@ Retorne APENAS o texto da mensagem pronto para envio.
                 model = _geminiModel,
                 temperature = 0.1,
                 max_tokens = 1500,
-                response_format = new { type = "json_object" },
+                // 💡 Removido o response_format para evitar JSON vazio
                 messages = new object[]
                 {
                     new { role = "user", content = userContentList.ToArray() }
@@ -398,7 +399,6 @@ Retorne APENAS o texto da mensagem pronto para envio.
 
             object userContent;
 
-            // 💡 SE HOUVER IMAGEM: Usa estrutura multimodal
             if (!string.IsNullOrWhiteSpace(request.Base64Image))
             {
                 var imageBase64 = request.Base64Image.Contains(",") ? request.Base64Image : $"data:image/jpeg;base64,{request.Base64Image}";
@@ -414,7 +414,6 @@ Retorne APENAS o texto da mensagem pronto para envio.
             }
             else
             {
-                // 💡 SE FOR APENAS TEXTO: Envia como string direta para garantir compatibilidade 100% no Gemini
                 userContent = !string.IsNullOrWhiteSpace(request.TextInput) ? request.TextInput : "Analise esta refeição.";
             }
 
@@ -425,7 +424,7 @@ Retorne APENAS o texto da mensagem pronto para envio.
                 model = targetModel,
                 temperature = 0.2,
                 max_tokens = 3000,
-                response_format = new { type = "json_object" },
+                // 💡 Removido o response_format para evitar JSON vazio
                 messages = messagesList.ToArray()
             };
         }
