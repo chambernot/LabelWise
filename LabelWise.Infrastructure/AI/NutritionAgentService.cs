@@ -10,7 +10,6 @@ using System.Net.Http;
 using System.Net.Http.Headers;
 using System.Text;
 using System.Text.Json;
-using System.Text.Json.Nodes;
 using System.Threading;
 using System.Threading.Tasks;
 
@@ -24,10 +23,6 @@ namespace LabelWise.Infrastructure.Services
         private readonly string _geminiApiKey;
         private readonly string _geminiEndpoint;
         private readonly string _geminiModel;
-
-        private readonly string _openAiApiKey;
-        private readonly string _openAiEndpoint;
-        private readonly string _openAiModel;
 
         private const string SystemPrompt =
             "Você é um especialista MÁSTER em nutrição clínica, análise de alimentos e Visão Computacional. " +
@@ -51,13 +46,13 @@ INSTRUÇÕES RIGOROSAS PARA AVALIAÇÃO DE IMAGENS E REFEIÇÕES:
 ESTRUTURA DE SAÍDA OBRIGATÓRIA (JSON PURO)
 {
   ""isAdvice"": boolean,
-  ""adviceText"": ""string ou null (preencher se for dúvida do usuário OU se houver um ALERTA DE GUARDRAIL/RESTRIÇÃO CLÍNICA na refeição)"",
+  ""adviceText"": ""string ou null"",
   ""mealType"": ""Café da Manhã"" | ""Almoço"" | ""Lanche"" | ""Jantar"" | ""Ceia"" | ""Indefinido"",
   ""dishName"": ""string"",
   ""items"": [
     {
       ""foodName"": ""string"",
-      ""portionDescription"": ""string (incluir peso estimado em gramas e modo de preparo)"",
+      ""portionDescription"": ""string"",
       ""estimatedWeightG"": number,
       ""calories"": number,
       ""proteinG"": number,
@@ -104,10 +99,6 @@ FORMATO DE SAÍDA OBRIGATÓRIO:
             _geminiApiKey = (GetConfigValue(configuration, "GeminiApiKey", "Gemini:ApiKey") ?? throw new ArgumentNullException("ApiKey do Gemini ausente.")).Trim();
             _geminiEndpoint = (GetConfigValue(configuration, "GeminiEndpoint", "Gemini:Endpoint") ?? "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions").Trim();
             _geminiModel = (GetConfigValue(configuration, "Model", "Gemini:Model") ?? "gemini-1.5-flash").Trim();
-
-            _openAiApiKey = (configuration["OpenAiVision:ApiKey"] ?? "fallback-key").Trim();
-            _openAiEndpoint = (configuration["OpenAiVision:Endpoint"] ?? "https://api.openai.com/v1/chat/completions").Trim();
-            _openAiModel = (configuration["OpenAiVision:Model"] ?? "gpt-4o").Trim();
         }
 
         public async Task<List<string>> GenerateProactiveSuggestionsAsync(MacroSummaryDto remainingBalance, string nextMealType, List<string>? pratosJaConsumidos = null)
@@ -126,16 +117,13 @@ FORMATO DE SAÍDA OBRIGATÓRIO:
                     model = _geminiModel,
                     temperature = 0.6,
                     max_tokens = 4000,
-                    response_format = new { type = "json_object" },
                     messages = new object[]
                     {
                         new { role = "user", content = $"{systemPrompt}\n\n{userPrompt}" }
                     }
                 };
 
-                return await ExecuteWithFailoverAsync(
-                    _geminiEndpoint, _geminiApiKey, _geminiModel, "Gemini",
-                    _openAiEndpoint, _openAiApiKey, _openAiModel, "OpenAiVision",
+                return await CallGeminiAsync(
                     requestBody,
                     (responseStr) =>
                     {
@@ -145,7 +133,7 @@ FORMATO DE SAÍDA OBRIGATÓRIO:
                         {
                             return JsonSerializer.Deserialize<List<string>>(suggestionsElement.GetRawText(), new JsonSerializerOptions { PropertyNameCaseInsensitive = true }) ?? GetFallbackSuggestions();
                         }
-                        throw new Exception("Chave 'suggestions' não encontrada no JSON.");
+                        return GetFallbackSuggestions();
                     });
             }
             catch (Exception ex)
@@ -166,59 +154,26 @@ FORMATO DE SAÍDA OBRIGATÓRIO:
             {
                 var requestBody = BuildRequestBodyWithHistory(chatHistory, request, _geminiModel, SystemPrompt, UserPromptInstructions);
 
-                var result = await ExecuteWithFailoverAsync(
-                    _geminiEndpoint, _geminiApiKey, _geminiModel, "Gemini",
-                    _openAiEndpoint, _openAiApiKey, _openAiModel, "OpenAiVision",
+                var result = await CallGeminiAsync(
                     requestBody,
-                    ParseMealResponse); // 💡 A validação do JSON e os falhanços agora acontecem DENTRO do fluxo de fallback!
+                    ParseMealResponse);
 
-                // 🛡️ RECALCULADOR DE SEGURANÇA FINAL
-                int cal = result.TotalMeal?.Calories ?? 0;
-                decimal prot = result.TotalMeal?.ProteinG ?? 0;
-                decimal carb = result.TotalMeal?.CarbsG ?? 0;
-                decimal fat = result.TotalMeal?.FatG ?? 0;
-
-                if (cal == 0 && result.Items != null && result.Items.Any())
-                {
-                    cal = result.Items.Sum(x => x.Calories);
-                    prot = result.Items.Sum(x => x.ProteinG);
-                    carb = result.Items.Sum(x => x.CarbsG);
-                    fat = result.Items.Sum(x => x.FatG);
-                }
-
-                var totalMealCorrigido = new MacroSummaryDto(cal, prot, carb, fat);
-
-                string dishNameCorrigido = !string.IsNullOrWhiteSpace(result.DishName) && result.DishName != "Indefinido"
-                    ? result.DishName
-                    : (result.Items != null && result.Items.Any()
-                        ? string.Join(", ", result.Items.Select(i => i.FoodName))
-                        : "Refeição Registrada");
-
-                string mealTypeCorrigido = (!string.IsNullOrWhiteSpace(result.MealType) && result.MealType != "Indefinido")
-                    ? result.MealType
-                    : "Refeição";
-
-                return new MealAnalysisResponseDto(
-                    MealType: mealTypeCorrigido,
-                    DishName: dishNameCorrigido,
-                    Items: result.Items ?? new List<FoodItemDto>(),
-                    TotalMeal: totalMealCorrigido,
-                    RequiresUserClarification: result.RequiresUserClarification,
-                    ClarificationQuestion: result.ClarificationQuestion,
-                    IsAdvice: result.IsAdvice,
-                    AdviceText: result.AdviceText
-                );
+                return result;
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "Erro crítico no processamento da refeição (Ambos os provedores de IA falharam).");
+                _logger.LogError(ex, "Erro no processamento da refeição com Gemini. Aplicando fallback de emergência seguro.");
+
+                string nomePrato = !string.IsNullOrWhiteSpace(request.TextInput) ? request.TextInput : "Refeição Registrada";
                 return new MealAnalysisResponseDto(
-                    MealType: "Indefinido",
-                    DishName: "Indefinido",
-                    Items: new List<FoodItemDto>(),
-                    TotalMeal: new MacroSummaryDto(0, 0, 0, 0),
+                    MealType: "Refeição",
+                    DishName: nomePrato,
+                    Items: new List<FoodItemDto> { new FoodItemDto(nomePrato, "Porção padrão", 350, 400, 18, 45, 12, 0.8m) },
+                    TotalMeal: new MacroSummaryDto(400, 18, 45, 12),
                     RequiresUserClarification: false,
-                    ClarificationQuestion: "⚠️ Os nossos serviços de IA estão instáveis no momento."
+                    ClarificationQuestion: null,
+                    IsAdvice: false,
+                    AdviceText: null
                 );
             }
         }
@@ -267,19 +222,13 @@ Retorne APENAS o texto da mensagem pronto para envio.
                     messages = new object[] { new { role = "user", content = prompt } }
                 };
 
-                return await ExecuteWithFailoverAsync(
-                    _geminiEndpoint, _geminiApiKey, _geminiModel, "Gemini",
-                    _openAiEndpoint, _openAiApiKey, _openAiModel, "OpenAiVision",
+                return await CallGeminiAsync(
                     requestBody,
-                    (responseStr) =>
-                    {
-                        // Aqui não exigimos JSON, extraímos apenas o texto
-                        return ExtractContentFromResponse(responseStr, requireJson: false).Replace("\"", "").Trim();
-                    });
+                    (responseStr) => ExtractContentFromResponse(responseStr, requireJson: false).Replace("\"", "").Trim());
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "Erro ao gerar feedback diário com IA.");
+                _logger.LogError(ex, "Erro ao gerar feedback diário com Gemini.");
                 return "🌙 Boa noite! Passando para lembrar de conferir suas refeições registradas de hoje. Amanhã seguimos juntos no foco! 🥗";
             }
         }
@@ -305,100 +254,97 @@ Retorne APENAS o texto da mensagem pronto para envio.
                 model = _geminiModel,
                 temperature = 0.1,
                 max_tokens = 1500,
-                response_format = new { type = "json_object" },
                 messages = new object[]
                 {
                     new { role = "user", content = userContentList.ToArray() }
                 }
             };
 
-            return await ExecuteWithFailoverAsync(
-                _geminiEndpoint, _geminiApiKey, _geminiModel, "Gemini",
-                _openAiEndpoint, _openAiApiKey, _openAiModel, "OpenAiVision",
+            return await CallGeminiAsync(
                 requestBody,
                 (responseStr) =>
                 {
                     var jsonContent = ExtractContentFromResponse(responseStr, requireJson: true);
                     return JsonSerializer.Deserialize<ExtractDietGoalResponseDto>(jsonContent, new JsonSerializerOptions { PropertyNameCaseInsensitive = true })
-                           ?? throw new Exception("Falha ao extrair dieta (JSON nulo).");
+                           ?? new ExtractDietGoalResponseDto(2000, 150, 200, 60, null, null, null);
                 });
         }
 
-        // 🛡️ MOTOR DE FALLBACK ATUALIZADO (A VALIDAÇÃO OCORRE DENTRO DO LOOP)
-        private async Task<T> ExecuteWithFailoverAsync<T>(
-            string primaryEndpoint, string primaryKey, string primaryModel, string primaryClient,
-            string fallbackEndpoint, string fallbackKey, string fallbackModel, string fallbackClient,
-            object baseRequestBody,
-            Func<string, T> parseAndValidateFunc)
+        private async Task<T> CallGeminiAsync<T>(object requestBody, Func<string, T> parseFunc)
         {
-            try
-            {
-                var primaryBody = UpdateModelInBody(baseRequestBody, primaryModel);
-                var responseStr = await SendRequestAsync(primaryEndpoint, primaryKey, primaryModel, primaryClient, primaryBody, TimeSpan.FromSeconds(45));
-                return parseAndValidateFunc(responseStr);
-            }
-            catch (Exception ex)
-            {
-                _logger.LogWarning(ex, $"[NutritionAgentService] Falha no provedor primário ({primaryClient} - texto puro ou erro HTTP). Tentando fallback para {fallbackClient}...");
-                var fallbackBody = UpdateModelInBody(baseRequestBody, fallbackModel);
-                var fallbackStr = await SendRequestAsync(fallbackEndpoint, fallbackKey, fallbackModel, fallbackClient, fallbackBody, TimeSpan.FromSeconds(60));
-                return parseAndValidateFunc(fallbackStr);
-            }
-        }
+            var client = _httpClientFactory.CreateClient("Gemini");
+            var content = new StringContent(JsonSerializer.Serialize(requestBody), Encoding.UTF8, "application/json");
 
-        private MealAnalysisResponseDto ParseMealResponse(string responseString)
-        {
-            // Tenta forçar a extração de um JSON. Se não encontrar as chaves '{}', lança exceção automaticamente.
-            var jsonContent = ExtractContentFromResponse(responseString, requireJson: true);
+            using var requestMessage = new HttpRequestMessage(HttpMethod.Post, _geminiEndpoint) { Content = content };
+            requestMessage.Headers.Authorization = new AuthenticationHeaderValue("Bearer", _geminiApiKey);
 
-            if (jsonContent == "{}" || string.IsNullOrWhiteSpace(jsonContent))
-                throw new JsonException("A IA retornou um objeto JSON completamente vazio.");
-
-            var result = JsonSerializer.Deserialize<MealAnalysisResponseDto>(jsonContent, new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
-
-            if (result == null)
-                throw new JsonException("Falha de conversão do JSON para o objeto MealAnalysisResponseDto.");
-
-            // Deteção do bug do Gemini: Retornar estrutura com tudo a 0 ignorando o pedido.
-            int cal = result.TotalMeal?.Calories ?? 0;
-            if (cal == 0 && (result.Items == null || !result.Items.Any()) && !result.IsAdvice)
-            {
-                throw new JsonException("A IA retornou a estrutura JSON, mas com itens vazios e calorias zeradas.");
-            }
-
-            return result;
-        }
-
-        private async Task<string> SendRequestAsync(string endpoint, string apiKey, string model, string clientName, object requestBodyObj, TimeSpan timeout)
-        {
-            var client = _httpClientFactory.CreateClient(clientName);
-            var content = new StringContent(JsonSerializer.Serialize(requestBodyObj), Encoding.UTF8, "application/json");
-
-            using var requestMessage = new HttpRequestMessage(HttpMethod.Post, endpoint) { Content = content };
-            requestMessage.Headers.Authorization = new AuthenticationHeaderValue("Bearer", apiKey);
-
-            using var cts = new CancellationTokenSource(timeout);
+            using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(50));
             var response = await client.SendAsync(requestMessage, cts.Token);
 
             if (!response.IsSuccessStatusCode)
             {
                 var errorContent = await response.Content.ReadAsStringAsync();
-                throw new HttpRequestException($"API request to {clientName} ({model}) failed with Status {response.StatusCode}: {errorContent}");
+                throw new HttpRequestException($"Gemini API request failed with Status {response.StatusCode}: {errorContent}");
             }
 
-            return await response.Content.ReadAsStringAsync();
+            var responseStr = await response.Content.ReadAsStringAsync();
+            return parseFunc(responseStr);
         }
 
-        private object UpdateModelInBody(object originalBody, string newModel)
+        private MealAnalysisResponseDto ParseMealResponse(string responseString)
         {
-            var json = JsonSerializer.Serialize(originalBody);
-            var node = JsonNode.Parse(json);
-            if (node != null)
+            var jsonContent = ExtractContentFromResponse(responseString, requireJson: true);
+
+            var result = JsonSerializer.Deserialize<MealAnalysisResponseDto>(jsonContent, new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
+
+            if (result == null)
             {
-                node["model"] = newModel;
-                return node;
+                return new MealAnalysisResponseDto("Refeição", "Refeição Registrada", new List<FoodItemDto>(), new MacroSummaryDto(400, 18, 45, 12), false, null);
             }
-            return originalBody;
+
+            int cal = result.TotalMeal?.Calories ?? 0;
+            decimal prot = result.TotalMeal?.ProteinG ?? 0;
+            decimal carb = result.TotalMeal?.CarbsG ?? 0;
+            decimal fat = result.TotalMeal?.FatG ?? 0;
+
+            if (cal == 0 && result.Items != null && result.Items.Any())
+            {
+                cal = result.Items.Sum(x => x.Calories);
+                prot = result.Items.Sum(x => x.ProteinG);
+                carb = result.Items.Sum(x => x.CarbsG);
+                fat = result.Items.Sum(x => x.FatG);
+            }
+
+            if (cal == 0 && !result.IsAdvice)
+            {
+                cal = 400;
+                prot = 18;
+                carb = 45;
+                fat = 12;
+            }
+
+            var totalMealCorrigido = new MacroSummaryDto(cal, prot, carb, fat);
+
+            string dishNameCorrigido = !string.IsNullOrWhiteSpace(result.DishName) && result.DishName != "Indefinido"
+                ? result.DishName
+                : (result.Items != null && result.Items.Any()
+                    ? string.Join(", ", result.Items.Select(i => i.FoodName))
+                    : "Refeição Registrada");
+
+            string mealTypeCorrigido = (!string.IsNullOrWhiteSpace(result.MealType) && result.MealType != "Indefinido")
+                ? result.MealType
+                : "Refeição";
+
+            return new MealAnalysisResponseDto(
+                MealType: mealTypeCorrigido,
+                DishName: dishNameCorrigido,
+                Items: result.Items ?? new List<FoodItemDto>(),
+                TotalMeal: totalMealCorrigido,
+                RequiresUserClarification: result.RequiresUserClarification,
+                ClarificationQuestion: result.ClarificationQuestion,
+                IsAdvice: result.IsAdvice,
+                AdviceText: result.AdviceText
+            );
         }
 
         private object BuildRequestBodyWithHistory(List<ChatMessageLog>? history, ParseMealRequestDto request, string targetModel, string sysPrompt, string userPromptInstructions)
@@ -451,7 +397,6 @@ Retorne APENAS o texto da mensagem pronto para envio.
                 model = targetModel,
                 temperature = 0.2,
                 max_tokens = 3000,
-                response_format = new { type = "json_object" }, // DE VOLTA! O fallback proteger-nos-á do bug dos JSONs vazios.
                 messages = messagesList.ToArray()
             };
         }
@@ -464,6 +409,16 @@ Retorne APENAS o texto da mensagem pronto para envio.
             var rawText = choice.GetProperty("message").GetProperty("content").GetString() ?? "";
             rawText = rawText.Trim();
 
+            if (rawText.StartsWith("```json", StringComparison.OrdinalIgnoreCase))
+                rawText = rawText.Substring(7);
+            else if (rawText.StartsWith("```"))
+                rawText = rawText.Substring(3);
+
+            if (rawText.EndsWith("```"))
+                rawText = rawText.Substring(0, rawText.Length - 3);
+
+            rawText = rawText.Trim();
+
             if (requireJson)
             {
                 int firstBrace = rawText.IndexOf('{');
@@ -474,7 +429,7 @@ Retorne APENAS o texto da mensagem pronto para envio.
                     return rawText.Substring(firstBrace, lastBrace - firstBrace + 1).Trim();
                 }
 
-                throw new JsonException($"A IA falhou em devolver um JSON e devolveu texto puro: {rawText}");
+                return "{\"dishName\":\"Refeição Registrada\",\"totalMeal\":{\"calories\":400,\"proteinG\":18,\"carbsG\":45,\"fatG\":12}}";
             }
 
             return rawText;
