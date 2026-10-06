@@ -39,7 +39,6 @@ namespace LabelWise.Infrastructure.Services
             "Diga exatamente com base no saldo calórico dele (ex: 'Como ainda te restam X calorias hoje...'). Responda no campo 'adviceText' e defina 'isAdvice': true.\n" +
             "Retorne APENAS um JSON válido, sem texto fora dele, sem markdown de bloco de código (```json).";
 
-        // 🚀 AQUI ESTÁ O NOVO PROMPT RIGOROSO DE IMAGENS E GUARDRAILS
         private const string UserPromptInstructions = @"TAREFA: Analisar a entrada atual do usuário considerando o histórico da conversa e o contexto clínico, retornando o JSON correspondente.
 
 INSTRUÇÕES RIGOROSAS PARA AVALIAÇÃO DE IMAGENS E REFEIÇÕES:
@@ -127,6 +126,7 @@ FORMATO DE SAÍDA OBRIGATÓRIO:
                     model = _geminiModel,
                     temperature = 0.6,
                     max_tokens = 4000,
+                    response_format = new { type = "json_object" },
                     messages = new object[]
                     {
                         new { role = "user", content = $"{systemPrompt}\n\n{userPrompt}" }
@@ -182,17 +182,24 @@ FORMATO DE SAÍDA OBRIGATÓRIO:
             catch (Exception ex)
             {
                 _logger.LogError(ex, "Erro no processamento da refeição.");
-                return new MealAnalysisResponseDto("Indefinido", "Indefinido", new List<FoodItemDto>(), new MacroSummaryDto(0, 0, 0, 0), true, "Desculpe, a IA está instável.");
+                return new MealAnalysisResponseDto(
+                    MealType: "Indefinido",
+                    DishName: "Indefinido",
+                    Items: new List<FoodItemDto>(),
+                    TotalMeal: new MacroSummaryDto(0, 0, 0, 0),
+                    RequiresUserClarification: false,
+                    ClarificationQuestion: "⚠️ Os nossos serviços de IA estão instáveis no momento."
+                );
             }
         }
 
         public async Task<string> GenerateDailyFeedbackMessageAsync(
-    string patientGoal,
-    int targetCalories,
-    int consumedCalories,
-    decimal targetProtein,
-    decimal consumedProtein,
-    List<string> mealsLogged)
+            string patientGoal,
+            int targetCalories,
+            int consumedCalories,
+            decimal targetProtein,
+            decimal consumedProtein,
+            List<string> mealsLogged)
         {
             try
             {
@@ -229,7 +236,7 @@ Retorne APENAS o texto da mensagem pronto para envio.
                     temperature = 0.7,
                     messages = new object[]
                     {
-                new { role = "user", content = prompt }
+                        new { role = "user", content = prompt }
                     }
                 };
 
@@ -245,6 +252,7 @@ Retorne APENAS o texto da mensagem pronto para envio.
                 return "🌙 Boa noite! Passando para lembrar de conferir suas refeições registradas de hoje. Amanhã seguimos juntos no foco! 🥗";
             }
         }
+
         public async Task<ExtractDietGoalResponseDto> ExtractDietGoalsFromDocumentAsync(ExtractDietGoalRequestDto request)
         {
             var userContentList = new List<object>
@@ -266,6 +274,7 @@ Retorne APENAS o texto da mensagem pronto para envio.
                 model = _geminiModel,
                 temperature = 0.1,
                 max_tokens = 1500,
+                response_format = new { type = "json_object" },
                 messages = new object[]
                 {
                     new { role = "user", content = userContentList.ToArray() }
@@ -326,7 +335,6 @@ Retorne APENAS o texto da mensagem pronto para envio.
             return originalBody;
         }
 
-        // 🚀 AQUI É ONDE O CONTEXTO CLÍNICO É INJETADO NAS MENSAGENS DA IA
         private object BuildRequestBodyWithHistory(List<ChatMessageLog>? history, ParseMealRequestDto request, string targetModel, string sysPrompt, string userPromptInstructions)
         {
             var messagesList = new List<object>
@@ -334,7 +342,6 @@ Retorne APENAS o texto da mensagem pronto para envio.
                 new { role = "system", content = $"{sysPrompt}\n\n{userPromptInstructions}" }
             };
 
-            // INJEÇÃO DOS GUARDRAILS E METAS DO PACIENTE
             string contextPaciente = $@"
 [CONTEXTO CLÍNICO DO PACIENTE HOJE]
 - Meta Calórica Diária: {request.TargetCalories ?? 0} kcal
@@ -343,7 +350,6 @@ Retorne APENAS o texto da mensagem pronto para envio.
 
             messagesList.Add(new { role = "system", content = contextPaciente });
 
-            // Injeção do Histórico (mantido do original)
             if (history != null && history.Any())
             {
                 foreach (var h in history)
@@ -377,6 +383,7 @@ Retorne APENAS o texto da mensagem pronto para envio.
                 model = targetModel,
                 temperature = 0.2,
                 max_tokens = 3000,
+                response_format = new { type = "json_object" },
                 messages = messagesList.ToArray()
             };
         }
@@ -391,12 +398,23 @@ Retorne APENAS o texto da mensagem pronto para envio.
             rawText = rawText.Trim();
             if (rawText.StartsWith("```json", StringComparison.OrdinalIgnoreCase))
                 rawText = rawText.Substring(7);
-            if (rawText.StartsWith("```"))
+            else if (rawText.StartsWith("```"))
                 rawText = rawText.Substring(3);
+
             if (rawText.EndsWith("```"))
                 rawText = rawText.Substring(0, rawText.Length - 3);
 
-            return rawText.Trim();
+            rawText = rawText.Trim();
+
+            int firstBrace = rawText.IndexOf('{');
+            int lastBrace = rawText.LastIndexOf('}');
+
+            if (firstBrace >= 0 && lastBrace > firstBrace)
+            {
+                return rawText.Substring(firstBrace, lastBrace - firstBrace + 1).Trim();
+            }
+
+            return rawText;
         }
 
         private static List<string> GetFallbackSuggestions()
