@@ -126,27 +126,31 @@ FORMATO DE SAÍDA OBRIGATÓRIO:
                     model = _geminiModel,
                     temperature = 0.6,
                     max_tokens = 4000,
-                    // 💡 Removido o response_format para evitar JSON vazio do Gemini
+                    response_format = new { type = "json_object" },
                     messages = new object[]
                     {
                         new { role = "user", content = $"{systemPrompt}\n\n{userPrompt}" }
                     }
                 };
 
-                var responseString = await ExecuteWithFailoverAsync(_geminiEndpoint, _geminiApiKey, _geminiModel, "Gemini", _openAiEndpoint, _openAiApiKey, _openAiModel, "OpenAiVision", requestBody);
-                var jsonContent = ExtractJsonFromResponse(responseString);
-
-                using var document = JsonDocument.Parse(jsonContent);
-                if (document.RootElement.TryGetProperty("suggestions", out var suggestionsElement))
-                {
-                    return JsonSerializer.Deserialize<List<string>>(suggestionsElement.GetRawText(), new JsonSerializerOptions { PropertyNameCaseInsensitive = true }) ?? GetFallbackSuggestions();
-                }
-
-                return GetFallbackSuggestions();
+                return await ExecuteWithFailoverAsync(
+                    _geminiEndpoint, _geminiApiKey, _geminiModel, "Gemini",
+                    _openAiEndpoint, _openAiApiKey, _openAiModel, "OpenAiVision",
+                    requestBody,
+                    (responseStr) =>
+                    {
+                        var jsonContent = ExtractContentFromResponse(responseStr, requireJson: true);
+                        using var document = JsonDocument.Parse(jsonContent);
+                        if (document.RootElement.TryGetProperty("suggestions", out var suggestionsElement))
+                        {
+                            return JsonSerializer.Deserialize<List<string>>(suggestionsElement.GetRawText(), new JsonSerializerOptions { PropertyNameCaseInsensitive = true }) ?? GetFallbackSuggestions();
+                        }
+                        throw new Exception("Chave 'suggestions' não encontrada no JSON.");
+                    });
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "[NutritionAgentService] Erro proativo.");
+                _logger.LogError(ex, "[NutritionAgentService] Erro proativo. Retornando fallback.");
                 return GetFallbackSuggestions();
             }
         }
@@ -160,27 +164,15 @@ FORMATO DE SAÍDA OBRIGATÓRIO:
         {
             try
             {
-                var geminiBody = BuildRequestBodyWithHistory(chatHistory, request, _geminiModel, SystemPrompt, UserPromptInstructions);
-                string responseString;
+                var requestBody = BuildRequestBodyWithHistory(chatHistory, request, _geminiModel, SystemPrompt, UserPromptInstructions);
 
-                try
-                {
-                    responseString = await SendRequestAsync(_geminiEndpoint, _geminiApiKey, _geminiModel, "Gemini", geminiBody, TimeSpan.FromSeconds(45));
-                }
-                catch (Exception exGemini)
-                {
-                    _logger.LogWarning(exGemini, "[NutritionAgentService] Falha no Gemini. Acionando OpenAI Fallback...");
-                    var openAiBody = BuildRequestBodyWithHistory(chatHistory, request, _openAiModel, SystemPrompt, UserPromptInstructions);
-                    responseString = await SendRequestAsync(_openAiEndpoint, _openAiApiKey, _openAiModel, "OpenAiVision", openAiBody, TimeSpan.FromSeconds(60));
-                }
+                var result = await ExecuteWithFailoverAsync(
+                    _geminiEndpoint, _geminiApiKey, _geminiModel, "Gemini",
+                    _openAiEndpoint, _openAiApiKey, _openAiModel, "OpenAiVision",
+                    requestBody,
+                    ParseMealResponse); // 💡 A validação do JSON e os falhanços agora acontecem DENTRO do fluxo de fallback!
 
-                var jsonContent = ExtractJsonFromResponse(responseString);
-                var result = JsonSerializer.Deserialize<MealAnalysisResponseDto>(jsonContent, new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
-
-                if (result == null)
-                    throw new Exception("Falha ao desfragmentar JSON da refeição.");
-
-                // 🛡️ RECALCULADOR DE SEGURANÇA
+                // 🛡️ RECALCULADOR DE SEGURANÇA FINAL
                 int cal = result.TotalMeal?.Calories ?? 0;
                 decimal prot = result.TotalMeal?.ProteinG ?? 0;
                 decimal carb = result.TotalMeal?.CarbsG ?? 0;
@@ -196,12 +188,11 @@ FORMATO DE SAÍDA OBRIGATÓRIO:
 
                 var totalMealCorrigido = new MacroSummaryDto(cal, prot, carb, fat);
 
-                // 🛡️ NOVO FALLBACK SEGURO: Se não vier nome do prato, força um nome genérico para NUNCA cuspir o perfil clínico
                 string dishNameCorrigido = !string.IsNullOrWhiteSpace(result.DishName) && result.DishName != "Indefinido"
                     ? result.DishName
                     : (result.Items != null && result.Items.Any()
                         ? string.Join(", ", result.Items.Select(i => i.FoodName))
-                        : "Refeição Identificada");
+                        : "Refeição Registrada");
 
                 string mealTypeCorrigido = (!string.IsNullOrWhiteSpace(result.MealType) && result.MealType != "Indefinido")
                     ? result.MealType
@@ -220,7 +211,7 @@ FORMATO DE SAÍDA OBRIGATÓRIO:
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "Erro no processamento da refeição.");
+                _logger.LogError(ex, "Erro crítico no processamento da refeição (Ambos os provedores de IA falharam).");
                 return new MealAnalysisResponseDto(
                     MealType: "Indefinido",
                     DishName: "Indefinido",
@@ -273,17 +264,18 @@ Retorne APENAS o texto da mensagem pronto para envio.
                 {
                     model = _geminiModel,
                     temperature = 0.7,
-                    messages = new object[]
-                    {
-                        new { role = "user", content = prompt }
-                    }
+                    messages = new object[] { new { role = "user", content = prompt } }
                 };
 
-                var responseString = await ExecuteWithFailoverAsync(
+                return await ExecuteWithFailoverAsync(
                     _geminiEndpoint, _geminiApiKey, _geminiModel, "Gemini",
-                    _openAiEndpoint, _openAiApiKey, _openAiModel, "OpenAiVision", requestBody);
-
-                return ExtractJsonFromResponse(responseString).Replace("\"", "").Trim();
+                    _openAiEndpoint, _openAiApiKey, _openAiModel, "OpenAiVision",
+                    requestBody,
+                    (responseStr) =>
+                    {
+                        // Aqui não exigimos JSON, extraímos apenas o texto
+                        return ExtractContentFromResponse(responseStr, requireJson: false).Replace("\"", "").Trim();
+                    });
             }
             catch (Exception ex)
             {
@@ -313,18 +305,68 @@ Retorne APENAS o texto da mensagem pronto para envio.
                 model = _geminiModel,
                 temperature = 0.1,
                 max_tokens = 1500,
-                // 💡 Removido o response_format para evitar JSON vazio
+                response_format = new { type = "json_object" },
                 messages = new object[]
                 {
                     new { role = "user", content = userContentList.ToArray() }
                 }
             };
 
-            var responseString = await ExecuteWithFailoverAsync(_geminiEndpoint, _geminiApiKey, _geminiModel, "Gemini", _openAiEndpoint, _openAiApiKey, _openAiModel, "OpenAiVision", requestBody);
-            var jsonContent = ExtractJsonFromResponse(responseString);
+            return await ExecuteWithFailoverAsync(
+                _geminiEndpoint, _geminiApiKey, _geminiModel, "Gemini",
+                _openAiEndpoint, _openAiApiKey, _openAiModel, "OpenAiVision",
+                requestBody,
+                (responseStr) =>
+                {
+                    var jsonContent = ExtractContentFromResponse(responseStr, requireJson: true);
+                    return JsonSerializer.Deserialize<ExtractDietGoalResponseDto>(jsonContent, new JsonSerializerOptions { PropertyNameCaseInsensitive = true })
+                           ?? throw new Exception("Falha ao extrair dieta (JSON nulo).");
+                });
+        }
 
-            return JsonSerializer.Deserialize<ExtractDietGoalResponseDto>(jsonContent, new JsonSerializerOptions { PropertyNameCaseInsensitive = true })
-                   ?? throw new Exception("Falha ao extrair dieta.");
+        // 🛡️ MOTOR DE FALLBACK ATUALIZADO (A VALIDAÇÃO OCORRE DENTRO DO LOOP)
+        private async Task<T> ExecuteWithFailoverAsync<T>(
+            string primaryEndpoint, string primaryKey, string primaryModel, string primaryClient,
+            string fallbackEndpoint, string fallbackKey, string fallbackModel, string fallbackClient,
+            object baseRequestBody,
+            Func<string, T> parseAndValidateFunc)
+        {
+            try
+            {
+                var primaryBody = UpdateModelInBody(baseRequestBody, primaryModel);
+                var responseStr = await SendRequestAsync(primaryEndpoint, primaryKey, primaryModel, primaryClient, primaryBody, TimeSpan.FromSeconds(45));
+                return parseAndValidateFunc(responseStr);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, $"[NutritionAgentService] Falha no provedor primário ({primaryClient} - texto puro ou erro HTTP). Tentando fallback para {fallbackClient}...");
+                var fallbackBody = UpdateModelInBody(baseRequestBody, fallbackModel);
+                var fallbackStr = await SendRequestAsync(fallbackEndpoint, fallbackKey, fallbackModel, fallbackClient, fallbackBody, TimeSpan.FromSeconds(60));
+                return parseAndValidateFunc(fallbackStr);
+            }
+        }
+
+        private MealAnalysisResponseDto ParseMealResponse(string responseString)
+        {
+            // Tenta forçar a extração de um JSON. Se não encontrar as chaves '{}', lança exceção automaticamente.
+            var jsonContent = ExtractContentFromResponse(responseString, requireJson: true);
+
+            if (jsonContent == "{}" || string.IsNullOrWhiteSpace(jsonContent))
+                throw new JsonException("A IA retornou um objeto JSON completamente vazio.");
+
+            var result = JsonSerializer.Deserialize<MealAnalysisResponseDto>(jsonContent, new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
+
+            if (result == null)
+                throw new JsonException("Falha de conversão do JSON para o objeto MealAnalysisResponseDto.");
+
+            // Deteção do bug do Gemini: Retornar estrutura com tudo a 0 ignorando o pedido.
+            int cal = result.TotalMeal?.Calories ?? 0;
+            if (cal == 0 && (result.Items == null || !result.Items.Any()) && !result.IsAdvice)
+            {
+                throw new JsonException("A IA retornou a estrutura JSON, mas com itens vazios e calorias zeradas.");
+            }
+
+            return result;
         }
 
         private async Task<string> SendRequestAsync(string endpoint, string apiKey, string model, string clientName, object requestBodyObj, TimeSpan timeout)
@@ -345,21 +387,6 @@ Retorne APENAS o texto da mensagem pronto para envio.
             }
 
             return await response.Content.ReadAsStringAsync();
-        }
-
-        private async Task<string> ExecuteWithFailoverAsync(string primaryEndpoint, string primaryKey, string primaryModel, string primaryClient, string fallbackEndpoint, string fallbackKey, string fallbackModel, string fallbackClient, object baseRequestBody)
-        {
-            try
-            {
-                var primaryBody = UpdateModelInBody(baseRequestBody, primaryModel);
-                return await SendRequestAsync(primaryEndpoint, primaryKey, primaryModel, primaryClient, primaryBody, TimeSpan.FromSeconds(45));
-            }
-            catch (Exception ex)
-            {
-                _logger.LogWarning(ex, "Falha no provedor primário. Tentando fallback...");
-                var fallbackBody = UpdateModelInBody(baseRequestBody, fallbackModel);
-                return await SendRequestAsync(fallbackEndpoint, fallbackKey, fallbackModel, fallbackClient, fallbackBody, TimeSpan.FromSeconds(60));
-            }
         }
 
         private object UpdateModelInBody(object originalBody, string newModel)
@@ -424,35 +451,30 @@ Retorne APENAS o texto da mensagem pronto para envio.
                 model = targetModel,
                 temperature = 0.2,
                 max_tokens = 3000,
-                // 💡 Removido o response_format para evitar JSON vazio
+                response_format = new { type = "json_object" }, // DE VOLTA! O fallback proteger-nos-á do bug dos JSONs vazios.
                 messages = messagesList.ToArray()
             };
         }
 
-        private string ExtractJsonFromResponse(string responseString)
+        private string ExtractContentFromResponse(string responseString, bool requireJson)
         {
             using var document = JsonDocument.Parse(responseString);
             var choice = document.RootElement.GetProperty("choices")[0];
 
             var rawText = choice.GetProperty("message").GetProperty("content").GetString() ?? "";
-
-            rawText = rawText.Trim();
-            if (rawText.StartsWith("```json", StringComparison.OrdinalIgnoreCase))
-                rawText = rawText.Substring(7);
-            else if (rawText.StartsWith("```"))
-                rawText = rawText.Substring(3);
-
-            if (rawText.EndsWith("```"))
-                rawText = rawText.Substring(0, rawText.Length - 3);
-
             rawText = rawText.Trim();
 
-            int firstBrace = rawText.IndexOf('{');
-            int lastBrace = rawText.LastIndexOf('}');
-
-            if (firstBrace >= 0 && lastBrace > firstBrace)
+            if (requireJson)
             {
-                return rawText.Substring(firstBrace, lastBrace - firstBrace + 1).Trim();
+                int firstBrace = rawText.IndexOf('{');
+                int lastBrace = rawText.LastIndexOf('}');
+
+                if (firstBrace >= 0 && lastBrace > firstBrace)
+                {
+                    return rawText.Substring(firstBrace, lastBrace - firstBrace + 1).Trim();
+                }
+
+                throw new JsonException($"A IA falhou em devolver um JSON e devolveu texto puro: {rawText}");
             }
 
             return rawText;
