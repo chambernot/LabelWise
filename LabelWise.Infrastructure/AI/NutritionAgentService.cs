@@ -43,7 +43,7 @@ namespace LabelWise.Infrastructure.Services
 
 INSTRUÇÕES RIGOROSAS PARA AVALIAÇÃO DE IMAGENS E REFEIÇÕES:
 1. Identifique minuciosamente todos os alimentos visíveis (inclusive molhos, queijos ralados e temperos).
-2. Estime o PESO REAL EM GRAMAS (g) de cada porção baseando-se na proporção visual do prato/copo.
+2. Estime o PESO REAL EM GRAMAS (g) de cada porção baseando-se na proporção visual do prato/copo ou na descrição informada.
 3. Considere GORDURAS DE COCÇÃO OCULTAS (ex: óleo, azeite, manteiga) no cálculo de calorias e gorduras.
 4. Cruze a refeição com o [CONTEXTO CLÍNICO E GUARDRAILS] fornecidos. Se houver alguma violação (ex: contém glúten, contém item proibido ou restrição violada), ative o alerta.
 5. Seja conservador e realista nos macros.
@@ -73,7 +73,7 @@ ESTRUTURA DE SAÍDA OBRIGATÓRIA (JSON PURO)
     ""fatG"": number
   },
   ""requiresUserClarification"": boolean,
-  ""clarificationQuestion"": ""string ou null (preencher se a foto for ambígua. Ex: 'O bife foi feito no óleo ou na airfryer?')""
+  ""clarificationQuestion"": ""string ou null""
 }";
 
         private const string DietReaderSystemPrompt = @"Você é um Assistente Clínico Especialista em Nutrição e Extração de Dados.
@@ -177,7 +177,45 @@ FORMATO DE SAÍDA OBRIGATÓRIO:
                 var jsonContent = ExtractJsonFromResponse(responseString);
                 var result = JsonSerializer.Deserialize<MealAnalysisResponseDto>(jsonContent, new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
 
-                return result ?? throw new Exception("Falha ao parsear JSON");
+                if (result == null)
+                    throw new Exception("Falha ao desfragmentar JSON da refeição.");
+
+                // 🛡️ RECALCULADOR DE SEGURANÇA: Se o total vier zerado ou incompleto
+                int cal = result.TotalMeal?.Calories ?? 0;
+                decimal prot = result.TotalMeal?.ProteinG ?? 0;
+                decimal carb = result.TotalMeal?.CarbsG ?? 0;
+                decimal fat = result.TotalMeal?.FatG ?? 0;
+
+                if (cal == 0 && result.Items != null && result.Items.Any())
+                {
+                    cal = result.Items.Sum(x => x.Calories);
+                    prot = result.Items.Sum(x => x.ProteinG);
+                    carb = result.Items.Sum(x => x.CarbsG);
+                    fat = result.Items.Sum(x => x.FatG);
+                }
+
+                var totalMealCorrigido = new MacroSummaryDto(cal, prot, carb, fat);
+
+                string dishNameCorrigido = !string.IsNullOrWhiteSpace(result.DishName)
+                    ? result.DishName
+                    : (result.Items != null && result.Items.Any()
+                        ? string.Join(", ", result.Items.Select(i => i.FoodName))
+                        : (!string.IsNullOrWhiteSpace(request.TextInput) ? request.TextInput : "Refeição do dia"));
+
+                string mealTypeCorrigido = (!string.IsNullOrWhiteSpace(result.MealType) && result.MealType != "Indefinido")
+                    ? result.MealType
+                    : "Refeição";
+
+                return new MealAnalysisResponseDto(
+                    MealType: mealTypeCorrigido,
+                    DishName: dishNameCorrigido,
+                    Items: result.Items ?? new List<FoodItemDto>(),
+                    TotalMeal: totalMealCorrigido,
+                    RequiresUserClarification: result.RequiresUserClarification,
+                    ClarificationQuestion: result.ClarificationQuestion,
+                    IsAdvice: result.IsAdvice,
+                    AdviceText: result.AdviceText
+                );
             }
             catch (Exception ex)
             {
@@ -358,25 +396,29 @@ Retorne APENAS o texto da mensagem pronto para envio.
                 }
             }
 
-            var currentUserContent = new List<object>();
+            object userContent;
 
-            if (!string.IsNullOrWhiteSpace(request.TextInput))
-            {
-                currentUserContent.Add(new { type = "text", text = request.TextInput });
-            }
-
+            // 💡 SE HOUVER IMAGEM: Usa estrutura multimodal
             if (!string.IsNullOrWhiteSpace(request.Base64Image))
             {
                 var imageBase64 = request.Base64Image.Contains(",") ? request.Base64Image : $"data:image/jpeg;base64,{request.Base64Image}";
-                currentUserContent.Add(new { type = "image_url", image_url = new { url = imageBase64 } });
-            }
+                var contentList = new List<object>();
 
-            if (currentUserContent.Count == 0)
+                if (!string.IsNullOrWhiteSpace(request.TextInput))
+                {
+                    contentList.Add(new { type = "text", text = request.TextInput });
+                }
+
+                contentList.Add(new { type = "image_url", image_url = new { url = imageBase64 } });
+                userContent = contentList.ToArray();
+            }
+            else
             {
-                currentUserContent.Add(new { type = "text", text = "Analise esta entrada." });
+                // 💡 SE FOR APENAS TEXTO: Envia como string direta para garantir compatibilidade 100% no Gemini
+                userContent = !string.IsNullOrWhiteSpace(request.TextInput) ? request.TextInput : "Analise esta refeição.";
             }
 
-            messagesList.Add(new { role = "user", content = currentUserContent.ToArray() });
+            messagesList.Add(new { role = "user", content = userContent });
 
             return new
             {
