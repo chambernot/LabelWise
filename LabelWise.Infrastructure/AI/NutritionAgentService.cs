@@ -10,7 +10,6 @@ using System.Net.Http;
 using System.Net.Http.Headers;
 using System.Text;
 using System.Text.Json;
-using System.Text.Json.Serialization;
 using System.Threading;
 using System.Threading.Tasks;
 
@@ -164,10 +163,9 @@ FORMATO DE SAÍDA OBRIGATÓRIO:
             }
             catch (Exception ex)
             {
-                // Se chegar aqui, o log vai registrar o porquê do fallback.
-                _logger.LogError(ex, "Erro CRÍTICO no processamento da refeição com Gemini. Verifique a chave de API ou se o JSON retornado pela IA é válido.");
+                _logger.LogError(ex, "Erro no processamento da refeição com Gemini. Aplicando fallback de emergência seguro.");
 
-                string nomePrato = !string.IsNullOrWhiteSpace(request.TextInput) ? request.TextInput : "Refeição (Recuperação de Erro)";
+                string nomePrato = !string.IsNullOrWhiteSpace(request.TextInput) ? request.TextInput : "Refeição Registrada";
                 return new MealAnalysisResponseDto(
                     MealType: "Refeição",
                     DishName: nomePrato,
@@ -295,77 +293,147 @@ Retorne APENAS o texto da mensagem pronto para envio.
             return parseFunc(responseStr);
         }
 
+        // =========================================================================
+        // PARSER MANUAL TOLERANTE A FALHAS (Resolve o Bug do "Refeição Registrada")
+        // =========================================================================
         private MealAnalysisResponseDto ParseMealResponse(string responseString)
         {
             var jsonContent = ExtractContentFromResponse(responseString, requireJson: true);
 
-            // CORREÇÃO CRUCIAL 2: Tolera se o modelo devolver números entre aspas ("400" em vez de 400)
-            var jsonOptions = new JsonSerializerOptions
-            {
-                PropertyNameCaseInsensitive = true,
-                NumberHandling = JsonNumberHandling.AllowReadingFromString
-            };
-
-            MealAnalysisResponseDto? result = null;
-
             try
             {
-                result = JsonSerializer.Deserialize<MealAnalysisResponseDto>(jsonContent, jsonOptions);
+                using var doc = JsonDocument.Parse(jsonContent);
+                var root = doc.RootElement;
+
+                bool isAdvice = GetBoolSafe(root, "isAdvice");
+                string adviceText = GetStringSafe(root, "adviceText");
+                string mealType = GetStringSafe(root, "mealType", "Refeição");
+                string dishName = GetStringSafe(root, "dishName", "");
+                bool requiresClarification = GetBoolSafe(root, "requiresUserClarification");
+                string clarificationQuestion = GetStringSafe(root, "clarificationQuestion");
+
+                int cal = 0;
+                decimal prot = 0m, carb = 0m, fat = 0m;
+
+                if (root.TryGetProperty("totalMeal", out var totalMealProp) && totalMealProp.ValueKind == JsonValueKind.Object)
+                {
+                    cal = (int)GetDecimalSafe(totalMealProp, "calories");
+                    prot = GetDecimalSafe(totalMealProp, "proteinG");
+                    carb = GetDecimalSafe(totalMealProp, "carbsG");
+                    fat = GetDecimalSafe(totalMealProp, "fatG");
+                }
+
+                var items = new List<FoodItemDto>();
+                var itemNames = new List<string>();
+
+                int sumCal = 0;
+                decimal sumProt = 0m, sumCarb = 0m, sumFat = 0m;
+
+                if (root.TryGetProperty("items", out var itemsProp) && itemsProp.ValueKind == JsonValueKind.Array)
+                {
+                    foreach (var item in itemsProp.EnumerateArray())
+                    {
+                        string foodName = GetStringSafe(item, "foodName", "Alimento");
+                        string portion = GetStringSafe(item, "portionDescription", "Porção Estimada");
+                        decimal weight = GetDecimalSafe(item, "estimatedWeightG");
+                        int itemCal = (int)GetDecimalSafe(item, "calories");
+                        decimal itemProt = GetDecimalSafe(item, "proteinG");
+                        decimal itemCarb = GetDecimalSafe(item, "carbsG");
+                        decimal itemFat = GetDecimalSafe(item, "fatG");
+                        decimal conf = GetDecimalSafe(item, "confidenceScore");
+
+                        sumCal += itemCal;
+                        sumProt += itemProt;
+                        sumCarb += itemCarb;
+                        sumFat += itemFat;
+                        itemNames.Add(foodName);
+
+                        items.Add(new FoodItemDto(foodName, portion, weight, itemCal, itemProt, itemCarb, itemFat, conf));
+                    }
+                }
+
+                // Se o prato vier vazio, juntamos os nomes dos alimentos encontrados
+                if (string.IsNullOrWhiteSpace(dishName) || dishName == "Indefinido")
+                {
+                    dishName = itemNames.Any() ? string.Join(", ", itemNames) : "Refeição Registrada";
+                }
+
+                // Se os totais falharem (ex: IA devolver 0), assumimos a soma dos itens
+                if (cal <= 0 && sumCal > 0)
+                {
+                    cal = sumCal;
+                    prot = sumProt;
+                    carb = sumCarb;
+                    fat = sumFat;
+                }
+
+                // Fallback extremo de segurança (apenas se a IA não enviou rigorosamente NADA)
+                if (cal <= 0 && !isAdvice)
+                {
+                    cal = 400; prot = 18m; carb = 45m; fat = 12m;
+                }
+
+                var totalSummary = new MacroSummaryDto(cal, prot, carb, fat);
+
+                return new MealAnalysisResponseDto(
+                    MealType: mealType,
+                    DishName: dishName,
+                    Items: items,
+                    TotalMeal: totalSummary,
+                    RequiresUserClarification: requiresClarification,
+                    ClarificationQuestion: clarificationQuestion,
+                    IsAdvice: isAdvice,
+                    AdviceText: adviceText
+                );
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "[ParseMealResponse] Erro na desserialização do JSON. O JSON recebido foi: {JsonContent}", jsonContent);
+                _logger.LogError(ex, "[ParseMealResponse] Erro fatal no parser. O JSON gerado pela IA causou uma quebra estrutural: {Json}", jsonContent);
+                return new MealAnalysisResponseDto("Refeição", "Refeição (Recuperada)", new List<FoodItemDto>(), new MacroSummaryDto(400, 18, 45, 12), false, null);
             }
+        }
 
-            if (result == null)
+        // =========================================================================
+        // MÉTODOS DE EXTRAÇÃO SEGURA DE JSON (Impedem quebras de tipagem do C#)
+        // =========================================================================
+        private string GetStringSafe(JsonElement element, string propertyName, string defaultValue = null)
+        {
+            if (element.TryGetProperty(propertyName, out var prop))
             {
-                _logger.LogWarning("[ParseMealResponse] Resultado nulo, ativando fallback final.");
-                return new MealAnalysisResponseDto("Refeição", "Refeição Registrada", new List<FoodItemDto>(), new MacroSummaryDto(400, 18, 45, 12), false, null);
+                if (prop.ValueKind == JsonValueKind.String) return prop.GetString();
+                if (prop.ValueKind == JsonValueKind.Number) return prop.GetRawText();
             }
+            return defaultValue;
+        }
 
-            int cal = result.TotalMeal?.Calories ?? 0;
-            decimal prot = result.TotalMeal?.ProteinG ?? 0;
-            decimal carb = result.TotalMeal?.CarbsG ?? 0;
-            decimal fat = result.TotalMeal?.FatG ?? 0;
-
-            if (cal == 0 && result.Items != null && result.Items.Any())
+        private bool GetBoolSafe(JsonElement element, string propertyName)
+        {
+            if (element.TryGetProperty(propertyName, out var prop))
             {
-                cal = result.Items.Sum(x => x.Calories);
-                prot = result.Items.Sum(x => x.ProteinG);
-                carb = result.Items.Sum(x => x.CarbsG);
-                fat = result.Items.Sum(x => x.FatG);
+                if (prop.ValueKind == JsonValueKind.True) return true;
+                if (prop.ValueKind == JsonValueKind.False) return false;
+                if (prop.ValueKind == JsonValueKind.String) return prop.GetString().Equals("true", StringComparison.OrdinalIgnoreCase);
             }
+            return false;
+        }
 
-            if (cal == 0 && !result.IsAdvice)
+        private decimal GetDecimalSafe(JsonElement element, string propertyName)
+        {
+            if (element.TryGetProperty(propertyName, out var prop))
             {
-                cal = 400;
-                prot = 18;
-                carb = 45;
-                fat = 12;
+                if (prop.ValueKind == JsonValueKind.Number)
+                {
+                    if (prop.TryGetDecimal(out decimal dec)) return dec;
+                    if (prop.TryGetDouble(out double dbl)) return (decimal)dbl;
+                }
+                else if (prop.ValueKind == JsonValueKind.String)
+                {
+                    string txt = prop.GetString();
+                    if (decimal.TryParse(txt.Replace(",", "."), System.Globalization.NumberStyles.Any, System.Globalization.CultureInfo.InvariantCulture, out decimal decStr))
+                        return decStr;
+                }
             }
-
-            var totalMealCorrigido = new MacroSummaryDto(cal, prot, carb, fat);
-
-            string dishNameCorrigido = !string.IsNullOrWhiteSpace(result.DishName) && result.DishName != "Indefinido"
-                ? result.DishName
-                : (result.Items != null && result.Items.Any()
-                    ? string.Join(", ", result.Items.Select(i => i.FoodName))
-                    : "Refeição Registrada");
-
-            string mealTypeCorrigido = (!string.IsNullOrWhiteSpace(result.MealType) && result.MealType != "Indefinido")
-                ? result.MealType
-                : "Refeição";
-
-            return new MealAnalysisResponseDto(
-                MealType: mealTypeCorrigido,
-                DishName: dishNameCorrigido,
-                Items: result.Items ?? new List<FoodItemDto>(),
-                TotalMeal: totalMealCorrigido,
-                RequiresUserClarification: result.RequiresUserClarification,
-                ClarificationQuestion: result.ClarificationQuestion,
-                IsAdvice: result.IsAdvice,
-                AdviceText: result.AdviceText
-            );
+            return 0m;
         }
 
         private object BuildRequestBodyWithHistory(List<ChatMessageLog>? history, ParseMealRequestDto request, string targetModel, string sysPrompt, string userPromptInstructions)
@@ -398,10 +466,10 @@ Retorne APENAS o texto da mensagem pronto para envio.
                 var imageBase64 = request.Base64Image.Contains(",") ? request.Base64Image : $"data:image/jpeg;base64,{request.Base64Image}";
                 var contentList = new List<object>();
 
-                // CORREÇÃO CRUCIAL 3: Ajudar a visão da IA dando instruções de texto mesmo quando enviam só a imagem.
+                // Dica crucial: Se houver apenas foto, precisamos reforçar na mensagem que queremos o formato JSON
                 string instrucaoImagem = !string.IsNullOrWhiteSpace(request.TextInput)
-                    ? request.TextInput
-                    : "Analise detalhadamente todos os alimentos visíveis nesta imagem e extraia os macros estruturados.";
+                    ? request.TextInput + " (Retorne estritamente em formato JSON válido)"
+                    : "Analise detalhadamente os alimentos desta imagem. Retorne os dados estritamente em formato JSON válido.";
 
                 contentList.Add(new { type = "text", text = instrucaoImagem });
                 contentList.Add(new { type = "image_url", image_url = new { url = imageBase64 } });
@@ -419,7 +487,7 @@ Retorne APENAS o texto da mensagem pronto para envio.
                 model = targetModel,
                 temperature = 0.2,
                 max_tokens = 3000,
-                response_format = new { type = "json_object" }, // CORREÇÃO CRUCIAL 1: Adicionado de volta para forçar JSON mode do Gemini
+                response_format = new { type = "json_object" },
                 messages = messagesList.ToArray()
             };
         }
@@ -437,13 +505,12 @@ Retorne APENAS o texto da mensagem pronto para envio.
                 int firstBrace = rawText.IndexOf('{');
                 int lastBrace = rawText.LastIndexOf('}');
 
-                // Extração inteligente de JSON cortando qualquer texto conversacional de "enfeite"
                 if (firstBrace >= 0 && lastBrace > firstBrace)
                 {
                     return rawText.Substring(firstBrace, lastBrace - firstBrace + 1).Trim();
                 }
 
-                _logger.LogWarning("[Gemini Vision Fallback] Nenhuma chave JSON encontrada. Resposta bruta: {RawText}", rawText);
+                _logger.LogWarning("[Gemini Vision Fallback] A IA não gerou chaves JSON na resposta. Retornando texto em formato simulado.");
 
                 string safeText = !string.IsNullOrWhiteSpace(rawText) ? rawText.Replace("\"", "'").Replace("\n", " ") : "Alimento Registrado";
                 if (safeText.Length > 80) safeText = safeText.Substring(0, 80) + "...";
