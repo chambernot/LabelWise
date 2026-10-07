@@ -10,6 +10,7 @@ using System.Net.Http;
 using System.Net.Http.Headers;
 using System.Text;
 using System.Text.Json;
+using System.Text.Json.Serialization;
 using System.Threading;
 using System.Threading.Tasks;
 
@@ -117,6 +118,7 @@ FORMATO DE SAÍDA OBRIGATÓRIO:
                     model = _geminiModel,
                     temperature = 0.6,
                     max_tokens = 4000,
+                    response_format = new { type = "json_object" },
                     messages = new object[]
                     {
                         new { role = "user", content = $"{systemPrompt}\n\n{userPrompt}" }
@@ -162,9 +164,10 @@ FORMATO DE SAÍDA OBRIGATÓRIO:
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "Erro no processamento da refeição com Gemini. Aplicando fallback de emergência seguro.");
+                // Se chegar aqui, o log vai registrar o porquê do fallback.
+                _logger.LogError(ex, "Erro CRÍTICO no processamento da refeição com Gemini. Verifique a chave de API ou se o JSON retornado pela IA é válido.");
 
-                string nomePrato = !string.IsNullOrWhiteSpace(request.TextInput) ? request.TextInput : "Refeição Registrada";
+                string nomePrato = !string.IsNullOrWhiteSpace(request.TextInput) ? request.TextInput : "Refeição (Recuperação de Erro)";
                 return new MealAnalysisResponseDto(
                     MealType: "Refeição",
                     DishName: nomePrato,
@@ -254,6 +257,7 @@ Retorne APENAS o texto da mensagem pronto para envio.
                 model = _geminiModel,
                 temperature = 0.1,
                 max_tokens = 1500,
+                response_format = new { type = "json_object" },
                 messages = new object[]
                 {
                     new { role = "user", content = userContentList.ToArray() }
@@ -295,10 +299,27 @@ Retorne APENAS o texto da mensagem pronto para envio.
         {
             var jsonContent = ExtractContentFromResponse(responseString, requireJson: true);
 
-            var result = JsonSerializer.Deserialize<MealAnalysisResponseDto>(jsonContent, new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
+            // CORREÇÃO CRUCIAL 2: Tolera se o modelo devolver números entre aspas ("400" em vez de 400)
+            var jsonOptions = new JsonSerializerOptions
+            {
+                PropertyNameCaseInsensitive = true,
+                NumberHandling = JsonNumberHandling.AllowReadingFromString
+            };
+
+            MealAnalysisResponseDto? result = null;
+
+            try
+            {
+                result = JsonSerializer.Deserialize<MealAnalysisResponseDto>(jsonContent, jsonOptions);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "[ParseMealResponse] Erro na desserialização do JSON. O JSON recebido foi: {JsonContent}", jsonContent);
+            }
 
             if (result == null)
             {
+                _logger.LogWarning("[ParseMealResponse] Resultado nulo, ativando fallback final.");
                 return new MealAnalysisResponseDto("Refeição", "Refeição Registrada", new List<FoodItemDto>(), new MacroSummaryDto(400, 18, 45, 12), false, null);
             }
 
@@ -377,17 +398,18 @@ Retorne APENAS o texto da mensagem pronto para envio.
                 var imageBase64 = request.Base64Image.Contains(",") ? request.Base64Image : $"data:image/jpeg;base64,{request.Base64Image}";
                 var contentList = new List<object>();
 
-                if (!string.IsNullOrWhiteSpace(request.TextInput))
-                {
-                    contentList.Add(new { type = "text", text = request.TextInput });
-                }
+                // CORREÇÃO CRUCIAL 3: Ajudar a visão da IA dando instruções de texto mesmo quando enviam só a imagem.
+                string instrucaoImagem = !string.IsNullOrWhiteSpace(request.TextInput)
+                    ? request.TextInput
+                    : "Analise detalhadamente todos os alimentos visíveis nesta imagem e extraia os macros estruturados.";
 
+                contentList.Add(new { type = "text", text = instrucaoImagem });
                 contentList.Add(new { type = "image_url", image_url = new { url = imageBase64 } });
                 userContent = contentList.ToArray();
             }
             else
             {
-                userContent = !string.IsNullOrWhiteSpace(request.TextInput) ? request.TextInput : "Analise esta refeição.";
+                userContent = !string.IsNullOrWhiteSpace(request.TextInput) ? request.TextInput : "Analise esta refeição e forneça o JSON.";
             }
 
             messagesList.Add(new { role = "user", content = userContent });
@@ -397,6 +419,7 @@ Retorne APENAS o texto da mensagem pronto para envio.
                 model = targetModel,
                 temperature = 0.2,
                 max_tokens = 3000,
+                response_format = new { type = "json_object" }, // CORREÇÃO CRUCIAL 1: Adicionado de volta para forçar JSON mode do Gemini
                 messages = messagesList.ToArray()
             };
         }
@@ -409,29 +432,20 @@ Retorne APENAS o texto da mensagem pronto para envio.
             var rawText = choice.GetProperty("message").GetProperty("content").GetString() ?? "";
             rawText = rawText.Trim();
 
-            if (rawText.StartsWith("```json", StringComparison.OrdinalIgnoreCase))
-                rawText = rawText.Substring(7);
-            else if (rawText.StartsWith("```"))
-                rawText = rawText.Substring(3);
-
-            if (rawText.EndsWith("```"))
-                rawText = rawText.Substring(0, rawText.Length - 3);
-
-            rawText = rawText.Trim();
-
             if (requireJson)
             {
                 int firstBrace = rawText.IndexOf('{');
                 int lastBrace = rawText.LastIndexOf('}');
 
+                // Extração inteligente de JSON cortando qualquer texto conversacional de "enfeite"
                 if (firstBrace >= 0 && lastBrace > firstBrace)
                 {
                     return rawText.Substring(firstBrace, lastBrace - firstBrace + 1).Trim();
                 }
 
-                _logger.LogWarning("[Gemini Vision Fallback] O modelo não retornou JSON. Resposta bruta recebida: {RawText}", rawText);
+                _logger.LogWarning("[Gemini Vision Fallback] Nenhuma chave JSON encontrada. Resposta bruta: {RawText}", rawText);
 
-                string safeText = !string.IsNullOrWhiteSpace(rawText) ? rawText.Replace("\"", "'").Replace("\n", " ") : "Refeição Registrada";
+                string safeText = !string.IsNullOrWhiteSpace(rawText) ? rawText.Replace("\"", "'").Replace("\n", " ") : "Alimento Registrado";
                 if (safeText.Length > 80) safeText = safeText.Substring(0, 80) + "...";
 
                 var fallbackObject = new
