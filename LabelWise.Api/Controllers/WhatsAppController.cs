@@ -304,10 +304,10 @@ namespace LabelWise.Api.Controllers
                                 string respostaConfig = $"✅ *Formulário concluído com sucesso!* 🥗\n\n" +
                                                         $"🎯 **Objetivo:** {goal}\n" +
                                                         $"🔥 **Calorias Diárias:** {calories} kcal\n" +
-                                                        $"🛡️️ **Alergias/Restrições:** {(string.IsNullOrWhiteSpace(medRest) ? "Nenhuma" : medRest)}\n" +
+                                                        $"🛡 **Alergias/Restrições:** {(string.IsNullOrWhiteSpace(medRest) ? "Nenhuma" : medRest)}\n" +
                                                         $"🚫 **Aversões:** {(string.IsNullOrWhiteSpace(aversions) ? "Nenhuma" : aversions)}\n\n" +
-                                                        "👉 *Tudo pronto! Já pode enviar as suas refeições* por texto, foto ou áudio.\n\n" +
-                                                        "_💡 Dica: Se quiser alterar suas metas no futuro, basta digitar *meta* a qualquer momento!_";
+                                                        $"👉 *Tudo pronto! Já pode enviar as suas refeições* por texto, foto ou áudio.\n\n" +
+                                                        $"_💡 Dica: Se quiser alterar suas metas no futuro, basta digitar *meta* a qualquer momento!_";
 
                                 await _whatsAppSender.SendTextMessageAsync(senderPhone, respostaConfig);
                                 return Ok();
@@ -797,7 +797,23 @@ Retorne APENAS o texto da mensagem pronto para envio.
             var carbo = aiResult.TotalMeal?.CarbsG ?? 0;
             var gordura = aiResult.TotalMeal?.FatG ?? 0;
 
-            var msg = $"✅ *Refeição registada:* {prato}\n🔥 *Calorias:* {calorias} kcal\n🥩 *Proteínas:* {proteina}g\n🍞 *Carboidratos:* {carbo}g\n🥑 *Gorduras:* {gordura}g\n\n";
+            var msg = $"✅ *Refeição registada:* {prato}\n\n";
+
+            // 📋 Listagem detalhada dos itens identificados pela IA
+            if (aiResult.Items != null && aiResult.Items.Any())
+            {
+                msg += "📋 *Itens identificados:*\n";
+                foreach (var item in aiResult.Items)
+                {
+                    msg += $"• {item.FoodName} ({item.PortionDescription}) — *{item.Calories} kcal*\n";
+                }
+                msg += "\n";
+            }
+
+            msg += $"🔥 *Calorias Totais:* {calorias} kcal\n" +
+                   $"🥩 *Proteínas:* {proteina}g\n" +
+                   $"🍞 *Carboidratos:* {carbo}g\n" +
+                   $"🥑 *Gorduras:* {gordura}g\n\n";
 
             if (statusDoDia != null)
             {
