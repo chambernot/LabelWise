@@ -117,7 +117,6 @@ FORMATO DE SAÍDA OBRIGATÓRIO:
                     model = _geminiModel,
                     temperature = 0.6,
                     max_tokens = 4000,
-                    response_format = new { type = "json_object" },
                     messages = new object[]
                     {
                         new { role = "user", content = $"{systemPrompt}\n\n{userPrompt}" }
@@ -255,7 +254,6 @@ Retorne APENAS o texto da mensagem pronto para envio.
                 model = _geminiModel,
                 temperature = 0.1,
                 max_tokens = 1500,
-                response_format = new { type = "json_object" },
                 messages = new object[]
                 {
                     new { role = "user", content = userContentList.ToArray() }
@@ -399,7 +397,6 @@ Retorne APENAS o texto da mensagem pronto para envio.
                 model = targetModel,
                 temperature = 0.2,
                 max_tokens = 3000,
-                response_format = new { type = "json_object" }, // 👈 Força o Gemini a retornar JSON válido nas análises de imagem
                 messages = messagesList.ToArray()
             };
         }
@@ -432,11 +429,22 @@ Retorne APENAS o texto da mensagem pronto para envio.
                     return rawText.Substring(firstBrace, lastBrace - firstBrace + 1).Trim();
                 }
 
-                // 🛡️ FALLBACK DINÂMICO INTELIGENTE: Se a IA retornar texto livre em vez de JSON, usa o próprio texto como nome do prato em vez de um valor fixo
+                _logger.LogWarning("[Gemini Vision Fallback] O modelo não retornou JSON. Resposta bruta recebida: {RawText}", rawText);
+
                 string safeText = !string.IsNullOrWhiteSpace(rawText) ? rawText.Replace("\"", "'").Replace("\n", " ") : "Refeição Registrada";
                 if (safeText.Length > 80) safeText = safeText.Substring(0, 80) + "...";
 
-                return $"{{\"dishName\":\"{safeText}\",\"totalMeal\":{{\"calories\":350,\"proteinG\":15,\"carbsG\":40,\"fatG\":12}},\"items\":[{{\"foodName\":\"{safeText}\",\"portionDescription\":\"Estimativa visual\",\"estimatedWeightG\":250,\"calories\":350,\"proteinG\":15,\"carbsG\":40,\"fatG\":12,\"confidenceScore\":0.7}}]}}";
+                var fallbackObject = new
+                {
+                    dishName = safeText,
+                    totalMeal = new { calories = 350, proteinG = 15, carbsG = 40, fatG = 12 },
+                    items = new[]
+                    {
+                        new { foodName = safeText, portionDescription = "Estimativa visual", estimatedWeightG = 250, calories = 350, proteinG = 15, carbsG = 40, fatG = 12, confidenceScore = 0.7 }
+                    }
+                };
+
+                return JsonSerializer.Serialize(fallbackObject);
             }
 
             return rawText;
