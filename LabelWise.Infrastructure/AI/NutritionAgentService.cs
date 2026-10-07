@@ -26,7 +26,7 @@ namespace LabelWise.Infrastructure.Services
 
         private const string SystemPrompt =
             "Você é um especialista MÁSTER em nutrição clínica, análise de alimentos e Visão Computacional. " +
-            "Sua função é analisar entradas multimodais mantendo total coerência com o histórico da conversa recente.\n" +
+            "Sua função é analisar entradas multimodais mantendo total coerência com o histórico da conversa recente e respeitando estritamente os Guardrails clínicos definidos.\n" +
             "ATENÇÃO AOS DOIS MODOS DE OPERAÇÃO:\n" +
             "MODO 1 (REGISTRO): Se o usuário enviou uma foto, áudio ou texto descrevendo o que COMEU, preencha os dados e defina 'isAdvice': false.\n" +
             "MODO 2 (MODO SOS / CONSELHO): Se o usuário fez uma PERGUNTA, DÚVIDA ou PEDIDO DE ORIENTAÇÃO, " +
@@ -50,19 +50,19 @@ ESTRUTURA DE SAÍDA OBRIGATÓRIA (JSON PURO):
     {
       ""foodName"": ""string"",
       ""portionDescription"": ""string"",
-      ""estimatedWeightG"": number,
-      ""calories"": number,
-      ""proteinG"": number,
-      ""carbsG"": number,
-      ""fatG"": number,
-      ""confidenceScore"": number
+      ""estimatedWeightG"": 0,
+      ""calories"": 0,
+      ""proteinG"": 0,
+      ""carbsG"": 0,
+      ""fatG"": 0,
+      ""confidenceScore"": 0
     }
   ],
   ""totalMeal"": {
-    ""calories"": number,
-    ""proteinG"": number,
-    ""carbsG"": number,
-    ""fatG"": number
+    ""calories"": 0,
+    ""proteinG"": 0,
+    ""carbsG"": 0,
+    ""fatG"": 0
   },
   ""requiresUserClarification"": false,
   ""clarificationQuestion"": null
@@ -70,7 +70,7 @@ ESTRUTURA DE SAÍDA OBRIGATÓRIA (JSON PURO):
 
         private const string DietReaderSystemPrompt = @"Você é um Assistente Clínico Especialista em Nutrição e Extração de Dados.
 Extraia os alvos nutricionais e retorne APENAS um JSON válido.
-FORMATO: { ""targetCalories"": number, ""targetProteinG"": number, ""targetCarbsG"": number, ""targetFatG"": number, ""dietaryRestrictions"": ""string"", ""favoriteFoods"": ""string"", ""prescribedMealPlan"": ""string"" }";
+FORMATO: { ""targetCalories"": 0, ""targetProteinG"": 0, ""targetCarbsG"": 0, ""targetFatG"": 0, ""dietaryRestrictions"": ""string"", ""favoriteFoods"": ""string"", ""prescribedMealPlan"": ""string"" }";
 
         public NutritionAgentService(
             IHttpClientFactory httpClientFactory,
@@ -254,9 +254,6 @@ FORMATO: { ""targetCalories"": number, ""targetProteinG"": number, ""targetCarbs
             }
         }
 
-        // =========================================================================
-        // UTILITÁRIOS IMUNES A MAIÚSCULAS/MINÚSCULAS E TRADUÇÕES ACIDENTAIS
-        // =========================================================================
         private bool TryGetPropertyCaseInsensitive(JsonElement element, string propertyName, out JsonElement value)
         {
             if (element.ValueKind != JsonValueKind.Object)
@@ -329,10 +326,15 @@ FORMATO: { ""targetCalories"": number, ""targetProteinG"": number, ""targetCarbs
 
             object userContent;
 
-            // O request.TextInput já traz o contexto clínico gerado pelo NutritionService.
-            // Aqui blindamos adicionando a instrução do JSON diretamente onde a IA não a pode ignorar.
             string textoBase = request.TextInput ?? "Analise esta refeição.";
-            string textoFinalComRegras = $"{textoBase}\n\n{userPromptInstructions}";
+
+            string protocoloContexto = string.IsNullOrWhiteSpace(request.ClinicalProtocol)
+                ? string.Empty
+                : $"\n\n🚨 [PROTOCOLO CLÍNICO / GUARDRAILS OBRIGATÓRIOS DO NUTRICIONISTA]:\n{request.ClinicalProtocol}\n" +
+                  $"INSTRUÇÃO DE SEGURANÇA: Verifique rigorosamente se a refeição acima viola qualquer restrição, alergénio ou alimento proibido neste protocolo. " +
+                  "Se houver violação, defina 'requiresUserClarification': true e preencha 'clarificationQuestion' alertando o paciente sobre a quebra do protocolo.";
+
+            string textoFinalComRegras = $"{textoBase}{protocoloContexto}\n\n{userPromptInstructions}";
 
             if (!string.IsNullOrWhiteSpace(request.Base64Image))
             {
@@ -355,7 +357,6 @@ FORMATO: { ""targetCalories"": number, ""targetProteinG"": number, ""targetCarbs
                 model = targetModel,
                 temperature = 0.2,
                 max_tokens = 3000,
-                // O response_format foi retirado intencionalmente para evitar o bug de colapso "{}" do Gemini.
                 messages = messagesList.ToArray()
             };
         }
@@ -393,6 +394,82 @@ FORMATO: { ""targetCalories"": number, ""targetProteinG"": number, ""targetCarbs
             var val = config[primaryKey];
             if (!string.IsNullOrWhiteSpace(val)) return val;
             return config[secondaryKey];
+        }
+
+        public async Task<string> GenerateSmartSubstitutionAsync(string foodToSubstitute, MacroSummaryDto remainingBalance, string clinicalProtocol, string foodAversions)
+        {
+            try
+            {
+                var prompt = $@"
+Você é um Nutricionista Clínico Especialista em Substituições Alimentares e Culinária Prática.
+O paciente deseja substituir o seguinte item da dieta: '{foodToSubstitute}'.
+
+CONTEXTO CLÍNICO E REGRAS:
+- Saldo calórico e macros restantes no dia: {remainingBalance.Calories} kcal | Proteína: {remainingBalance.ProteinG}g | Carbs: {remainingBalance.CarbsG}g | Gordura: {remainingBalance.FatG}g
+- Protocolo Clínico / Guardrails (OBRIGATÓRIO RESPEITAR): {(string.IsNullOrWhiteSpace(clinicalProtocol) ? "Nenhum restritivo" : clinicalProtocol)}
+- Aversões / Alimentos que o paciente odeia (EVITAR): {(string.IsNullOrWhiteSpace(foodAversions) ? "Nenhuma" : foodAversions)}
+
+INSTRUÇÕES:
+1. Forneça 3 opções práticas e equivalentes de substituição que respeitem rigidamente as restrições clínicas e aversões.
+2. Para cada opção, indique a quantidade aproximada e os macronutrientes estimados.
+3. Escreva de forma amigável, curta e direta para o WhatsApp, usando emojis.
+Retorne APENAS o texto pronto para envio.
+";
+
+                var requestBody = new
+                {
+                    model = _geminiModel,
+                    temperature = 0.5,
+                    messages = new object[] { new { role = "user", content = prompt } }
+                };
+
+                return await CallGeminiAsync(requestBody, (r) => ExtractContentFromResponse(r, false).Trim());
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Erro ao gerar substituição inteligente.");
+                return "⚠️ Não consegui calcular a substituição neste momento. Tente novamente em instantes!";
+            }
+        }
+
+        public async Task<string> GenerateWeeklyProgressSummaryAsync(string patientName, decimal initialWeight, decimal currentWeight, int targetCalories, double avgConsumedCalories, int avgWaterMl, int streakDays)
+        {
+            try
+            {
+                decimal weightDiff = currentWeight - initialWeight;
+                string weightStatus = weightDiff <= 0 ? $"Perdeu {Math.Abs(weightDiff):F1} kg" : $"Ganhou {weightDiff:F1} kg";
+
+                var prompt = $@"
+Você é um Nutricionista Clínico Especialista em Comportamento Alimentar e Motivação.
+Escreva um relatório de progresso semanal amigável, empático e profissional para o paciente {patientName}.
+
+DADOS DA SEMANA:
+- Variação de Peso: {weightStatus} (Peso atual: {currentWeight} kg)
+- Média de Calorias Consumidas: {avgConsumedCalories:F0} kcal (Meta diária: {targetCalories} kcal)
+- Média de Ingestão de Água: {avgWaterMl} ml/dia
+- Ofensiva (Dias seguidos a registar): {streakDays} dias
+
+INSTRUÇÕES:
+1. Comemore as pequenas vitórias e mantenha um tom encorajador.
+2. Dê orientações práticas para a próxima semana com base na média calórica e água.
+3. Use emojis e formate para o WhatsApp (máximo 5 a 6 parágrafos curtos).
+Retorne APENAS o texto pronto da mensagem.
+";
+
+                var requestBody = new
+                {
+                    model = _geminiModel,
+                    temperature = 0.6,
+                    messages = new object[] { new { role = "user", content = prompt } }
+                };
+
+                return await CallGeminiAsync(requestBody, (r) => ExtractContentFromResponse(r, false).Trim());
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Erro ao gerar resumo semanal de progresso.");
+                return $"{patientName}, parabéns pela dedicação esta semana! Continue firme nos seus objetivos. 🥗💪";
+            }
         }
     }
 }

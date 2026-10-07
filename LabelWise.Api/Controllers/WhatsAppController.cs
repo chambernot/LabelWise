@@ -1,6 +1,7 @@
 ﻿using LabelWise.Application.DTOs;
 using LabelWise.Application.DTOs.Nutrition;
 using LabelWise.Application.Interfaces;
+using LabelWise.Application.Interfaces.AI;
 using LabelWise.Application.Interfaces.Persistence;
 using LabelWise.Domain.Entities.Nutrition;
 using Microsoft.AspNetCore.Authorization;
@@ -30,6 +31,7 @@ namespace LabelWise.Api.Controllers
         private readonly IWhatsAppSenderService _whatsAppSender;
         private readonly IMetaMediaService _metaMediaService;
         private readonly INutritionRepository _nutritionRepository;
+        private readonly INutritionAgentService _nutritionAgentService;
         private readonly IHttpClientFactory _httpClientFactory;
         private readonly IConfiguration _configuration;
         private readonly ILogger<WhatsAppController> _logger;
@@ -41,6 +43,7 @@ namespace LabelWise.Api.Controllers
             IWhatsAppSenderService whatsAppSender,
             IMetaMediaService metaMediaService,
             INutritionRepository nutritionRepository,
+            INutritionAgentService nutritionAgentService,
             IHttpClientFactory httpClientFactory,
             IConfiguration configuration,
             ILogger<WhatsAppController> logger,
@@ -50,6 +53,7 @@ namespace LabelWise.Api.Controllers
             _whatsAppSender = whatsAppSender;
             _metaMediaService = metaMediaService;
             _nutritionRepository = nutritionRepository;
+            _nutritionAgentService = nutritionAgentService;
             _httpClientFactory = httpClientFactory;
             _configuration = configuration;
             _logger = logger;
@@ -92,7 +96,6 @@ namespace LabelWise.Api.Controllers
                 string? textoBruto = null;
                 string? imagemBase64 = null;
 
-                // 🎙️ EXTRAÇÃO UNIFICADA ANTECIPADA (Texto, Áudio transcrito ou Imagem)
                 if (messageType == "text")
                 {
                     textoBruto = messagingEvent?.Text?.Body?.Trim();
@@ -119,10 +122,8 @@ namespace LabelWise.Api.Controllers
                     return Ok();
                 }
 
-                // 🛡 LIMPEZA ROBUSTA DE COMANDOS
                 string textoLimpoCmd = Regex.Replace(textoBruto, "[^a-zA-Z0-9áéíóúâêîôûãõçÁÉÍÓÚÂÊÎÔÛÃÕÇ ]", "").Trim().ToLowerInvariant();
 
-                // 1. Valida se é um paciente B2B real e obtém os dados do paciente (incluindo Protocolo Clínico)
                 var patientsCollectionCheck = _database.GetCollection<MongoDB.Bson.BsonDocument>("Nutrition_Patients");
                 var patientDocCheck = await patientsCollectionCheck.Find(Builders<MongoDB.Bson.BsonDocument>.Filter.Eq("_id", senderPhone)).FirstOrDefaultAsync();
 
@@ -130,14 +131,18 @@ namespace LabelWise.Api.Controllers
                                     patientDocCheck.Contains("ProfessionalId") &&
                                     patientDocCheck["ProfessionalId"].AsString != "b2c_autonomous_user";
 
-                // 🛡️ EXTRAÇÃO DO PROTOCOLO CLÍNICO (GUARDRAILS)
                 string? protocoloClinico = null;
                 if (patientDocCheck != null && patientDocCheck.Contains("ClinicalProtocol"))
                 {
                     protocoloClinico = patientDocCheck["ClinicalProtocol"].AsString;
                 }
 
-                // 2. Gestão B2C (Trial, Limites e Onboarding Guiado com Opções Validadas)
+                string? foodAversions = null;
+                if (patientDocCheck != null && patientDocCheck.Contains("FoodAversions"))
+                {
+                    foodAversions = patientDocCheck["FoodAversions"].AsString;
+                }
+
                 var trialCollection = _database.GetCollection<MongoDB.Bson.BsonDocument>("B2C_Trial_Users");
                 var filterTrial = Builders<MongoDB.Bson.BsonDocument>.Filter.Eq("_id", senderPhone);
                 var userDoc = await trialCollection.Find(filterTrial).FirstOrDefaultAsync();
@@ -146,7 +151,6 @@ namespace LabelWise.Api.Controllers
                 {
                     var now = DateTime.UtcNow;
 
-                    // --- A. ESTREIA DO UTILIZADOR (PRIMEIRO CONTACTO) ---
                     if (userDoc == null)
                     {
                         userDoc = new MongoDB.Bson.BsonDocument
@@ -172,7 +176,6 @@ namespace LabelWise.Api.Controllers
                         return Ok();
                     }
 
-                    // --- B. COMANDO GLOBAL DE RECONFIGURAÇÃO ("meta", "perfil", etc.) ---
                     if (textoLimpoCmd == "meta" || textoLimpoCmd == "perfil" || textoLimpoCmd == "configurar" || textoLimpoCmd == "ajustar")
                     {
                         var resetConfig = Builders<MongoDB.Bson.BsonDocument>.Update
@@ -190,7 +193,6 @@ namespace LabelWise.Api.Controllers
                         return Ok();
                     }
 
-                    // --- C. FORMULÁRIO GUIADO PASSO A PASSO COM VALIDAÇÃO DE DOMÍNIOS ---
                     bool profileConfigured = userDoc.Contains("ProfileConfigured") && userDoc["ProfileConfigured"].AsBoolean;
 
                     if (!profileConfigured)
@@ -314,7 +316,6 @@ namespace LabelWise.Api.Controllers
                         }
                     }
 
-                    // --- D. VALIDAÇÃO DE TRIAL (15 DIAS) ---
                     var trialStartDate = userDoc["TrialStartDate"].ToUniversalTime();
                     if ((now - trialStartDate).TotalDays > 15)
                     {
@@ -326,7 +327,6 @@ namespace LabelWise.Api.Controllers
                         return Ok();
                     }
 
-                    // --- E. VALIDAÇÃO E INCREMENTO DO LIMITE DIÁRIO (4 MENSAGENS) ---
                     var lastInteractionDate = userDoc.Contains("LastInteractionDate") ? userDoc["LastInteractionDate"].ToUniversalTime().Date : now.Date;
                     int dailyCount = userDoc.Contains("DailyMessageCount") ? userDoc["DailyMessageCount"].AsInt32 : 0;
 
@@ -354,10 +354,48 @@ namespace LabelWise.Api.Controllers
                     await trialCollection.UpdateOneAsync(filterTrial, updateB2C);
                 }
 
-                // =========================================================================
-                // 🗑️ GESTÃO DE REMOÇÃO DE REFEIÇÕES
-                // =========================================================================
                 bool isNumeroIsolado = int.TryParse(textoLimpoCmd, out int numeroIsoladoVal);
+
+                // 🔄 FASE 5: ATALHO DE SUBSTITUIÇÃO INTELIGENTE NO WHATSAPP
+                if (textoLimpoCmd.StartsWith("substituir ") || textoLimpoCmd.StartsWith("trocar "))
+                {
+                    var alimentoAlvo = textoBruto.Replace("substituir", "", StringComparison.OrdinalIgnoreCase)
+                                                 .Replace("trocar", "", StringComparison.OrdinalIgnoreCase)
+                                                 .Replace("por", "", StringComparison.OrdinalIgnoreCase).Trim();
+
+                    if (!string.IsNullOrWhiteSpace(alimentoAlvo))
+                    {
+                        await _whatsAppSender.SendTextMessageAsync(senderPhone, $"🔄 A procurar as melhores alternativas para *{alimentoAlvo}* respeitando o seu plano...");
+
+                        var dataHojeBr = DateTime.UtcNow.AddHours(-3);
+                        var logs = await _nutritionRepository.ObterRefeicoesDoDiaAsync(senderPhone, dataHojeBr);
+                        var goal = await _nutritionRepository.ObterMetaDiariaAsync(senderPhone, dataHojeBr.Date);
+
+                        int targetCal = goal?.TargetCalories ?? 2000;
+                        int consumedCal = logs.Sum(x => x.Calories);
+                        decimal targetProt = goal?.TargetProteinG ?? 150m;
+                        decimal consumedProt = logs.Sum(x => x.ProteinG);
+                        decimal targetCarbs = goal?.TargetCarbsG ?? 200m;
+                        decimal consumedCarbs = logs.Sum(x => x.CarbsG);
+                        decimal targetFat = goal?.TargetFatG ?? 60m;
+                        decimal consumedFat = logs.Sum(x => x.FatG);
+
+                        var remaining = new MacroSummaryDto(
+                            Math.Max(0, targetCal - consumedCal),
+                            Math.Max(0, targetProt - consumedProt),
+                            Math.Max(0, targetCarbs - consumedCarbs),
+                            Math.Max(0, targetFat - consumedFat)
+                        );
+
+                        string respostaTroca = await _nutritionAgentService.GenerateSmartSubstitutionAsync(
+                            alimentoAlvo, remaining, protocoloClinico ?? "", foodAversions ?? ""
+                        );
+
+                        await _whatsAppSender.SendTextMessageAsync(senderPhone, respostaTroca);
+                        await _nutritionRepository.SalvarMensagemHistoricoAsync(senderPhone, "assistant", respostaTroca);
+                        return Ok();
+                    }
+                }
 
                 if (textoLimpoCmd == "remover" || textoLimpoCmd == "apagar" || textoLimpoCmd == "excluir" || textoLimpoCmd == "listar refeicoes" || textoLimpoCmd == "remover refeicao")
                 {
@@ -450,9 +488,6 @@ namespace LabelWise.Api.Controllers
                     }
                 }
 
-                // =========================================================================
-                // ATALHOS DE DIETA
-                // =========================================================================
                 if (textoLimpoCmd == "minha dieta" || textoLimpoCmd == "cardapio" || textoLimpoCmd == "menu" || textoLimpoCmd == "dieta")
                 {
                     var baseUrl = $"{Request.Scheme}://{Request.Host}";
@@ -467,9 +502,6 @@ namespace LabelWise.Api.Controllers
                     return Ok();
                 }
 
-                // =========================================================================
-                // 🛡️ FILTRO DE SAUDAÇÕES E CONVERSA FIADA
-                // =========================================================================
                 var saudacoesOuConversa = new[] { "oi", "ola", "olá", "tudo bem", "bom dia", "boa tarde", "boa noite", "eae", "hey", "obrigado", "obrigada", "valeu" };
                 if (saudacoesOuConversa.Contains(textoLimpoCmd))
                 {
@@ -482,9 +514,73 @@ namespace LabelWise.Api.Controllers
                     return Ok();
                 }
 
-                // =========================================================================
-                // FLUXO DE PROCESSAMENTO DE REFEIÇÕES (IA)
-                // =========================================================================
+                var matchAgua = Regex.Match(textoBruto, @"(?:bebi|considerei|foi)?\s*(\d+)\s*(ml|litros|l)\b", RegexOptions.IgnoreCase);
+                if (matchAgua.Success && (textoBruto.Contains("agua", StringComparison.OrdinalIgnoreCase) || textoBruto.Contains("ml", StringComparison.OrdinalIgnoreCase) || textoBruto.Contains("litro", StringComparison.OrdinalIgnoreCase)))
+                {
+                    int quantidadeMl = int.Parse(matchAgua.Groups[1].Value);
+                    if (matchAgua.Groups[2].Value.Equals("l", StringComparison.OrdinalIgnoreCase) || matchAgua.Groups[2].Value.Equals("litros", StringComparison.OrdinalIgnoreCase))
+                    {
+                        quantidadeMl *= 1000;
+                    }
+
+                    var dataHojeBr = DateTime.UtcNow.AddHours(-3).Date;
+                    var waterCol = _database.GetCollection<MongoDB.Bson.BsonDocument>("WaterLogs");
+
+                    var waterDoc = new MongoDB.Bson.BsonDocument
+                    {
+                        { "_id", Guid.NewGuid().ToString() },
+                        { "UserId", senderPhone },
+                        { "AmountMl", quantidadeMl },
+                        { "LoggedAt", DateTime.UtcNow }
+                    };
+                    await waterCol.InsertOneAsync(waterDoc);
+
+                    var filterWater = Builders<MongoDB.Bson.BsonDocument>.Filter.And(
+                        Builders<MongoDB.Bson.BsonDocument>.Filter.Eq("UserId", senderPhone),
+                        Builders<MongoDB.Bson.BsonDocument>.Filter.Gte("LoggedAt", dataHojeBr)
+                    );
+                    var registrosAgua = await waterCol.Find(filterWater).ToListAsync();
+                    int totalAguaHoje = registrosAgua.Sum(w => w["AmountMl"].AsInt32);
+                    int metaAguaDiaria = 2500;
+
+                    string respostaAgua = $"💧 {totalAguaHoje} / {metaAguaDiaria} ml de água registados com sucesso! 🚰";
+                    await _whatsAppSender.SendTextMessageAsync(senderPhone, respostaAgua);
+                    await _nutritionRepository.SalvarMensagemHistoricoAsync(senderPhone, "assistant", respostaAgua);
+                    return Ok();
+                }
+
+                var matchPeso = Regex.Match(textoBruto, @"(?:peso|peso hoje|estou com|estou pesando)\D*(\d+[\.,]?\d*)\s*kg", RegexOptions.IgnoreCase);
+                if (matchPeso.Success || (textoBruto.Contains("kg", StringComparison.OrdinalIgnoreCase) && Regex.IsMatch(textoBruto, @"\d+[\.,]?\d*")))
+                {
+                    string valorPesoStr = matchPeso.Success ? matchPeso.Groups[1].Value : Regex.Match(textoBruto, @"\d+[\.,]?\d*").Value;
+                    if (decimal.TryParse(valorPesoStr.Replace(",", "."), System.Globalization.NumberStyles.Any, System.Globalization.CultureInfo.InvariantCulture, out decimal pesoInformado))
+                    {
+                        var dataHojeBr = DateTime.UtcNow.AddHours(-3).Date;
+                        var weightCol = _database.GetCollection<MongoDB.Bson.BsonDocument>("WeightLogs");
+
+                        var weightDoc = new MongoDB.Bson.BsonDocument
+                        {
+                            { "_id", Guid.NewGuid().ToString() },
+                            { "UserId", senderPhone },
+                            { "WeightKg", (double)pesoInformado },
+                            { "LoggedAt", DateTime.UtcNow }
+                        };
+                        await weightCol.ReplaceOneAsync(
+                            Builders<MongoDB.Bson.BsonDocument>.Filter.And(
+                                Builders<MongoDB.Bson.BsonDocument>.Filter.Eq("UserId", senderPhone),
+                                Builders<MongoDB.Bson.BsonDocument>.Filter.Gte("LoggedAt", dataHojeBr)
+                            ),
+                            weightDoc,
+                            new ReplaceOptions { IsUpsert = true }
+                        );
+
+                        string respostaPeso = $"⚖️ Peso de *{pesoInformado:F1} kg* registado com sucesso! Continue firme no foco da evolução! 🎯";
+                        await _whatsAppSender.SendTextMessageAsync(senderPhone, respostaPeso);
+                        await _nutritionRepository.SalvarMensagemHistoricoAsync(senderPhone, "assistant", respostaPeso);
+                        return Ok();
+                    }
+                }
+
                 var contextoPendente = await _nutritionRepository.ObterClarificacaoPendenteAsync(senderPhone);
                 string textoFinalParaIa = textoBruto;
                 string? imagemFinalParaIa = imagemBase64;
@@ -504,7 +600,6 @@ namespace LabelWise.Api.Controllers
 
                 await _nutritionRepository.SalvarMensagemHistoricoAsync(senderPhone, "user", textoFinalParaIa);
 
-                // 🛡️ Passagem do Protocolo Clínico recolhido do banco para o Request DTO
                 var request = new ParseMealRequestDto(
                     senderPhone,
                     TextInput: textoFinalParaIa,
@@ -598,7 +693,6 @@ namespace LabelWise.Api.Controllers
             }
         }
 
-        // 🤖 ENDPOINT PARA ENVIO DO FEEDBACK AUTOMÁTICO DE FIM DE DIA
         [HttpPost("send-end-of-day-feedback")]
         public async Task<IActionResult> SendEndOfDayFeedback([FromHeader(Name = "X-Cron-Secret")] string secret)
         {
@@ -789,7 +883,7 @@ Retorne APENAS o texto da mensagem pronto para envio.
                 return $"💡 *Conselho do Nutri:* \n\n{(!string.IsNullOrWhiteSpace(aiResult.AdviceText) ? aiResult.AdviceText : "Como posso ajudar?")}";
 
             if (aiResult.RequiresUserClarification)
-                return $"🤔 *Fiquei na dúvida sobre o seu prato:*\n{aiResult.ClarificationQuestion}";
+                return $"🤔 *Atenção ao Protocolo / Clarificação:*\n{aiResult.ClarificationQuestion}";
 
             var prato = !string.IsNullOrWhiteSpace(aiResult.DishName) ? aiResult.DishName : aiResult.MealType;
             var calorias = aiResult.TotalMeal?.Calories ?? 0;
@@ -799,7 +893,6 @@ Retorne APENAS o texto da mensagem pronto para envio.
 
             var msg = $"✅ *Refeição registada:* {prato}\n\n";
 
-            // 📋 Listagem detalhada dos itens identificados pela IA
             if (aiResult.Items != null && aiResult.Items.Any())
             {
                 msg += "📋 *Itens identificados:*\n";

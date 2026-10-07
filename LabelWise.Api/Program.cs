@@ -6,6 +6,7 @@ using LabelWise.Application.Interfaces.Persistence;
 using LabelWise.Application.Services;
 using LabelWise.Application.Services.Nutrition;
 using LabelWise.Infrastructure.AI;
+using LabelWise.Infrastructure.BackgroundServices;
 using LabelWise.Infrastructure.Extensions;
 using LabelWise.Infrastructure.Persistence.Mongo;
 using LabelWise.Infrastructure.Repositories;
@@ -149,10 +150,12 @@ try
 
     // Repositórios (Infrastructure)
     builder.Services.AddScoped<INutritionRepository, NutritionRepository>();
-
     // Serviços de IA (Infrastructure)
     builder.Services.AddScoped<INutritionAgentService, NutritionAgentService>();
+    // Registo do Background Service proativo
 
+    builder.Services.AddHostedService<PatientAdherenceBackgroundService>();
+    builder.Services.AddHostedService<ProactiveNotificationBackgroundService>();
     // Regras de Negócio (Application)
     builder.Services.AddScoped<INutritionService, NutritionService>();
     // Adicione esta linha no seu Program.cs junto aos outros registros de serviços:

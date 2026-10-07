@@ -208,27 +208,25 @@
                 <div class="lg:col-span-2 space-y-6"
                      :class="mobileTab === 'list' ? 'block' : 'hidden lg:block'">
 
-                    <!-- Cards de Resumo -->
-                    <div class="grid grid-cols-2 gap-4">
-                        <div class="bg-white p-4 sm:p-5 rounded-2xl shadow-sm border border-gray-200 flex flex-col justify-center">
-                            <span class="text-[10px] sm:text-xs font-semibold uppercase text-gray-400">Pacientes Cadastrados</span>
-                            <div class="flex items-center justify-between mt-1">
-                                <p class="text-2xl font-black text-gray-900">
-                                    <span x-text="patients.length">0</span>
-                                    <span class="text-sm font-medium text-gray-400" x-text="'/ ' + maxPatients"></span>
-                                </p>
-                                <div class="bg-emerald-50 text-emerald-600 p-2 rounded-lg font-bold">👥</div>
-                            </div>
+                    <!-- ✨ Central de Atenção (Radar Clínico) -->
+                    <div class="grid grid-cols-2 lg:grid-cols-4 gap-4">
+                        <div class="bg-white p-4 rounded-2xl shadow-sm border border-gray-200 flex flex-col justify-center">
+                            <span class="text-[10px] sm:text-xs font-semibold uppercase text-gray-400">Total Pacientes</span>
+                            <p class="text-xl font-black text-gray-900 mt-1">
+                                <span x-text="patients.length">0</span><span class="text-xs font-medium text-gray-400" x-text="'/ ' + maxPatients"></span>
+                            </p>
                         </div>
-                        <div class="bg-white p-4 sm:p-5 rounded-2xl shadow-sm border border-gray-200 flex flex-col justify-center">
-                            <span class="text-[10px] sm:text-xs font-semibold uppercase text-gray-400">Status Automático</span>
-                            <div class="flex items-center justify-between mt-1">
-                                <p class="text-sm font-bold text-emerald-600 flex items-center">
-                                    <span class="w-2 h-2 rounded-full bg-emerald-500 inline-block mr-2 animate-pulse"></span>
-                                    Bot Ativo
-                                </p>
-                                <div class="bg-emerald-50 text-emerald-600 p-2 rounded-lg font-bold">💬</div>
-                            </div>
+                        <div class="bg-emerald-50 p-4 rounded-2xl shadow-sm border border-emerald-100 flex flex-col justify-center">
+                            <span class="text-[10px] sm:text-xs font-semibold uppercase text-emerald-700">🟢 Em Dia</span>
+                            <p class="text-xl font-black text-emerald-900 mt-1" x-text="patients.filter(p => p.clinicalStatus === 'Em Dia').length"></p>
+                        </div>
+                        <div class="bg-amber-50 p-4 rounded-2xl shadow-sm border border-amber-100 flex flex-col justify-center">
+                            <span class="text-[10px] sm:text-xs font-semibold uppercase text-amber-700">🟡 Atenção</span>
+                            <p class="text-xl font-black text-amber-900 mt-1" x-text="patients.filter(p => p.clinicalStatus === 'Atenção').length"></p>
+                        </div>
+                        <div class="bg-red-50 p-4 rounded-2xl shadow-sm border border-red-100 flex flex-col justify-center">
+                            <span class="text-[10px] sm:text-xs font-semibold uppercase text-red-700">🔴 Inativos</span>
+                            <p class="text-xl font-black text-red-900 mt-1" x-text="patients.filter(p => p.clinicalStatus === 'Inativo').length"></p>
                         </div>
                     </div>
 
@@ -255,6 +253,12 @@
                                     <div class="flex justify-between items-start mb-2">
                                         <div>
                                             <h3 class="font-bold text-gray-800 text-sm" x-text="patient.userId"></h3>
+                                            <!-- STATUS FAROL MOBILE -->
+                                            <div class="mt-1 mb-2">
+                                                <span x-show="patient.clinicalStatus === 'Em Dia'" class="bg-emerald-100 text-emerald-800 text-[9px] font-bold px-2 py-0.5 rounded-full">🟢 Em Dia</span>
+                                                <span x-show="patient.clinicalStatus === 'Atenção'" class="bg-amber-100 text-amber-800 text-[9px] font-bold px-2 py-0.5 rounded-full">🟡 Atenção</span>
+                                                <span x-show="patient.clinicalStatus === 'Inativo'" class="bg-red-100 text-red-800 text-[9px] font-bold px-2 py-0.5 rounded-full">🔴 Inativo</span>
+                                            </div>
                                             <p class="text-[10px] text-red-600 font-medium" x-text="patient.clinicalProtocol ? '🛡️ ' + patient.clinicalProtocol : 'Sem guardrails'"></p>
                                         </div>
                                         <a :href="'https://wa.me/' + patient.userId" target="_blank"
@@ -295,6 +299,12 @@
                                             <td class="py-4 px-6">
                                                 <div class="flex items-center space-x-2">
                                                     <span class="font-semibold text-gray-800" x-text="patient.userId"></span>
+
+                                                    <!-- FAROL DE STATUS DESKTOP -->
+                                                    <span x-show="patient.clinicalStatus === 'Em Dia'" class="bg-emerald-100 text-emerald-800 text-[9px] font-bold px-2 py-0.5 rounded-full">🟢 Em Dia</span>
+                                                    <span x-show="patient.clinicalStatus === 'Atenção'" class="bg-amber-100 text-amber-800 text-[9px] font-bold px-2 py-0.5 rounded-full">🟡 Atenção</span>
+                                                    <span x-show="patient.clinicalStatus === 'Inativo'" class="bg-red-100 text-red-800 text-[9px] font-bold px-2 py-0.5 rounded-full">🔴 Inativo</span>
+
                                                     <a :href="'https://wa.me/' + patient.userId" target="_blank" title="Chamar no WhatsApp"
                                                        class="text-green-500 hover:text-green-600 transition">
                                                         <svg class="w-4 h-4" fill="currentColor" viewBox="0 0 24 24"><path d="M.057 24l1.687-6.163c-1.041-1.804-1.588-3.849-1.587-5.946.003-6.556 5.338-11.891 11.893-11.891 3.181.001 6.167 1.24 8.413 3.488 2.245 2.248 3.481 5.236 3.48 8.414-.003 6.557-5.338 11.892-11.893 11.892-1.99-.001-3.951-.5-5.688-1.448l-6.305 1.654zm6.597-3.807c1.676.995 3.276 1.591 5.392 1.592 5.448 0 9.89-4.443 9.893-9.892.002-5.462-4.415-9.89-9.881-9.892-5.452 0-9.887 4.434-9.889 9.884.001 2.225.651 3.891 1.746 5.634l-.999 3.648 3.738-.974zm11.387-5.464c-.074-.124-.272-.198-.57-.347-.297-.149-1.758-.868-2.031-.967-.272-.099-.47-.149-.669.149-.198.297-.768.967-.941 1.165-.173.198-.347.223-.644.074-.297-.149-1.255-.462-2.39-1.475-.883-.788-1.48-1.761-1.653-2.059-.173-.297-.018-.458.13-.606.134-.133.297-.347.446-.521.151-.172.2-.296.3-.495.099-.198.05-.372-.025-.521-.075-.148-.669-1.611-.916-2.206-.242-.579-.487-.501-.669-.51l-.57-.01c-.198 0-.52.074-.792.347-.272.297-1.04 1.016-1.04 2.479 0 1.463 1.065 2.876 1.213 3.074.149.198 2.095 3.2 5.076 4.487.709.306 1.263.489 1.694.626.712.226 1.36.194 1.872.118.571-.085 1.758-.719 2.006-1.413.248-.695.248-1.29.173-1.414z" /></svg>
@@ -431,523 +441,523 @@
 
     <!-- Script de Integração -->
     <script>
-        function nutriApp() {
-            return {
-                isLoggedIn: false,
-                isEditing: false,
-                apiKey: '',
-                apiKeyInput: '',
-                nutriName: 'Painel Clínico',
-                maxPatients: 30,
-                loginError: false,
-                loginErrorMessage: '',
-                feedbackMessage: '',
-                feedbackError: false,
-                isExtracting: false,
-                isGeneratingPlan: false,
-                aiRawText: '',
-                selectedFileBase64: null,
-                selectedFileName: '',
-                patients: [],
-                chartInstance: null,
+                function nutriApp() {
+                    return {
+                        isLoggedIn: false,
+                        isEditing: false,
+                        apiKey: '',
+                        apiKeyInput: '',
+                        nutriName: 'Painel Clínico',
+                        maxPatients: 30,
+                        loginError: false,
+                        loginErrorMessage: '',
+                        feedbackMessage: '',
+                        feedbackError: false,
+                        isExtracting: false,
+                        isGeneratingPlan: false,
+                        aiRawText: '',
+                        selectedFileBase64: null,
+                        selectedFileName: '',
+                        patients: [],
+                        chartInstance: null,
 
-                mobileTab: 'list',
-                searchQuery: '',
+                        mobileTab: 'list',
+                        searchQuery: '',
 
-                showModal: false,
-                selectedPatientPhone: '',
-                selectedPatientLogs: [],
-                targetCalories: 2000,
-                selectedPeriod: '7',
+                        showModal: false,
+                        selectedPatientPhone: '',
+                        selectedPatientLogs: [],
+                        targetCalories: 2000,
+                        selectedPeriod: '7',
 
-                form: {
-                    patientPhone: '',
-                    nutritionistId: 'nutri_web_portal',
-                    calories: 2000,
-                    protein: 150,
-                    carbs: 200,
-                    fat: 60,
-                    mainGoal: 'Emagrecimento',
-                    clinicalProtocol: '',
-                    dietaryRestrictions: '',
-                    favoriteFoods: '',
-                    prescribedMealPlan: ''
-                },
-
-                get filteredPatients() {
-                    if (this.searchQuery.trim() === '') return this.patients;
-                    const query = this.searchQuery.toLowerCase();
-                    return this.patients.filter(p => p.userId.toLowerCase().includes(query));
-                },
-
-                get groupedLogs() {
-                    const groups = {};
-                    this.selectedPatientLogs.forEach(log => {
-                        const dateKey = log.loggedAt.split('T')[0];
-                        if (!groups[dateKey]) {
-                            groups[dateKey] = [];
-                        }
-                        groups[dateKey].push(log);
-                    });
-                    return Object.keys(groups)
-                        .sort((a, b) => new Date(b) - new Date(a))
-                        .reduce((acc, key) => {
-                            acc[key] = groups[key];
-                            return acc;
-                        }, {});
-                },
-
-                async init() {
-                    const savedKey = localStorage.getItem('nutri_api_key');
-                    if (savedKey) {
-                        this.apiKey = savedKey;
-                        await this.verifyAndLogin(savedKey, false);
-                    }
-                },
-
-                async login() {
-                    if (!this.apiKeyInput.trim()) return;
-                    await this.verifyAndLogin(this.apiKeyInput.trim(), true);
-                },
-
-                async verifyAndLogin(key, showErrors) {
-                    try {
-                        const response = await fetch('/api/nutritionist/verify-key', {
-                            method: 'GET',
-                            headers: { 'X-Nutri-Key': key }
-                        });
-                        const result = await response.json();
-
-                        if (response.ok && result.success) {
-                            this.apiKey = key;
-                            this.nutriName = result.name || 'Nutricionista';
-                            this.maxPatients = result.maxPatients || 30;
-
-                            localStorage.setItem('nutri_api_key', this.apiKey);
-                            localStorage.setItem('nutri_id', result.nutritionistId || '');
-                            this.form.nutritionistId = result.nutritionistId || 'nutri_web_portal';
-
-                            this.isLoggedIn = true;
-                            this.apiKeyInput = '';
-                            this.loginError = false;
-                            this.loadPatients();
-                        } else {
-                            if (showErrors) {
-                                this.loginError = true;
-                                this.loginErrorMessage = 'Chave de acesso inválida ou inativa.';
-                            } else {
-                                this.logout();
-                            }
-                        }
-                    } catch (err) {
-                        if (showErrors) {
-                            this.loginError = true;
-                            this.loginErrorMessage = 'Erro de conexão com o servidor.';
-                        }
-                    }
-                },
-
-                logout() {
-                    localStorage.removeItem('nutri_api_key');
-                    localStorage.removeItem('nutri_id');
-                    this.isLoggedIn = false;
-                    this.apiKey = '';
-                    this.patients = [];
-                },
-
-                async loadPatients() {
-                    try {
-                        const response = await fetch('/api/nutritionist/patients', {
-                            method: 'GET',
-                            headers: { 'X-Nutri-Key': this.apiKey }
-                        });
-                        const result = await response.json();
-
-                        if (response.ok && result.success) {
-                            this.patients = (result.data || []).map(p => ({
-                                userId: p.userId || p.UserId,
-                                targetCalories: p.targetCalories || p.TargetCalories,
-                                targetProteinG: p.targetProteinG || p.TargetProteinG,
-                                targetCarbsG: p.targetCarbsG || p.TargetCarbsG,
-                                targetFatG: p.targetFatG || p.TargetFatG,
-                                mainGoal: p.mainGoal || p.MainGoal,
-                                clinicalProtocol: p.clinicalProtocol || p.ClinicalProtocol || '',
-                                dietaryRestrictions: p.dietaryRestrictions || p.DietaryRestrictions,
-                                favoriteFoods: p.favoriteFoods || p.FavoriteFoods,
-                                prescribedMealPlan: p.prescribedMealPlan || p.PrescribedMealPlan
-                            }));
-                        }
-                    } catch (err) {
-                        console.error('Erro ao carregar pacientes', err);
-                    }
-                },
-
-                handleFileSelect(event) {
-                    const file = event.target.files[0];
-                    if (!file) return;
-
-                    this.selectedFileName = file.name;
-                    const reader = new FileReader();
-                    reader.onload = (e) => {
-                        this.selectedFileBase64 = e.target.result.split(',')[1];
-                    };
-                    reader.readAsDataURL(file);
-                },
-
-                async extractWithAI() {
-                    if (!this.aiRawText.trim() && !this.selectedFileBase64) {
-                        alert('Por favor, digite um texto ou selecione uma imagem/PDF para a IA analisar.');
-                        return;
-                    }
-
-                    this.isExtracting = true;
-                    this.feedbackMessage = '🤖 O Gemini está analisando o documento/texto...';
-                    this.feedbackError = false;
-
-                    try {
-                        const response = await fetch('/api/nutritionist/extract', {
-                            method: 'POST',
-                            headers: {
-                                'Content-Type': 'application/json',
-                                'X-Nutri-Key': this.apiKey
-                            },
-                            body: JSON.stringify({
-                                textInput: this.aiRawText || 'Analise o documento anexado.',
-                                base64Image: this.selectedFileBase64
-                            })
-                        });
-
-                        const result = await response.json();
-
-                        if (response.ok && result.success && result.data) {
-                            const data = result.data;
-                            this.form.calories = data.targetCalories || this.form.calories;
-                            this.form.protein = data.targetProteinG || this.form.protein;
-                            this.form.carbs = data.targetCarbsG || this.form.carbs;
-                            this.form.fat = data.targetFatG || this.form.fat;
-                            this.form.dietaryRestrictions = data.dietaryRestrictions || '';
-                            this.form.favoriteFoods = data.favoriteFoods || '';
-                            this.form.prescribedMealPlan = data.prescribedMealPlan || '';
-
-                            this.feedbackMessage = '✨ Dieta extraída com sucesso pelo Gemini! Revise os campos e salve.';
-                            this.feedbackError = false;
-                        } else {
-                            this.feedbackMessage = '❌ Erro ao extrair dados com IA.';
-                            this.feedbackError = true;
-                        }
-                    } catch (err) {
-                        this.feedbackMessage = '❌ Erro de conexão ao tentar processar com IA.';
-                        this.feedbackError = true;
-                    } finally {
-                        this.isExtracting = false;
-                    }
-                },
-
-                // 📋 GERAR CARDÁPIO ASSISTIDO POR IA
-                async generateMealPlanWithAI() {
-                    if (!this.form.calories) {
-                        alert('Por favor, defina a meta de calorias antes de gerar o cardápio.');
-                        return;
-                    }
-
-                    this.isGeneratingPlan = true;
-                    this.feedbackMessage = '🤖 O Gemini está criando um cardápio personalizado com base nas metas e guardrails...';
-                    this.feedbackError = false;
-
-                    try {
-                        const response = await fetch('/api/nutritionist/generate-meal-plan', {
-                            method: 'POST',
-                            headers: {
-                                'Content-Type': 'application/json',
-                                'X-Nutri-Key': this.apiKey
-                            },
-                            body: JSON.stringify({
-                                mainGoal: this.form.mainGoal,
-                                targetCalories: Number(this.form.calories),
-                                targetProteinG: parseFloat(this.form.protein) || 0,
-                                targetCarbsG: parseFloat(this.form.carbs) || 0,
-                                targetFatG: parseFloat(this.form.fat) || 0,
-                                clinicalProtocol: this.form.clinicalProtocol,
-                                dietaryRestrictions: this.form.dietaryRestrictions,
-                                favoriteFoods: this.form.favoriteFoods
-                            })
-                        });
-
-                        const result = await response.json();
-
-                        if (response.ok && result.success && result.generatedPlan) {
-                            this.form.prescribedMealPlan = result.generatedPlan;
-                            this.feedbackMessage = '✨ Cardápio sugerido gerado com sucesso! Revise e ajuste conforme necessário.';
-                            this.feedbackError = false;
-                        } else {
-                            this.feedbackMessage = '❌ ' + (result.message || 'Erro ao gerar cardápio com IA.');
-                            this.feedbackError = true;
-                        }
-                    } catch (err) {
-                        this.feedbackMessage = '❌ Erro de conexão ao tentar gerar cardápio com IA.';
-                        this.feedbackError = true;
-                    } finally {
-                        this.isGeneratingPlan = false;
-                    }
-                },
-
-                async viewLogs(phone) {
-                    this.selectedPatientPhone = phone;
-                    this.showModal = true;
-                    await this.fetchLogs();
-                },
-
-                async fetchLogs() {
-                    if (!this.selectedPatientPhone) return;
-
-                    const days = parseInt(this.selectedPeriod);
-                    const startDate = new Date();
-                    startDate.setDate(startDate.getDate() - days);
-                    const startStr = startDate.toISOString().split('T')[0];
-
-                    try {
-                        const response = await fetch(`/api/nutritionist/patient-logs/${this.selectedPatientPhone}?startDate=${startStr}`, {
-                            method: 'GET',
-                            headers: { 'X-Nutri-Key': this.apiKey }
-                        });
-                        const result = await response.json();
-                        if (response.ok && result.success) {
-                            this.selectedPatientLogs = result.data || [];
-                            this.targetCalories = result.targetCalories || 2000;
-
-                            this.$nextTick(() => {
-                                this.renderAdherenceChart();
-                            });
-                        }
-                    } catch (err) {
-                        console.error('Erro ao buscar logs do paciente', err);
-                    }
-                },
-
-                renderAdherenceChart() {
-                    const ctx = document.getElementById('caloriesChart');
-                    if (!ctx) return;
-
-                    const groups = this.groupedLogs;
-                    const labels = Object.keys(groups).sort((a, b) => new Date(a) - new Date(b));
-                    const dataValues = labels.map(dateStr => this.calculateDayTotal(groups[dateStr]));
-                    const targetLine = labels.map(() => this.targetCalories);
-
-                    if (this.chartInstance) {
-                        this.chartInstance.destroy();
-                    }
-
-                    this.chartInstance = new Chart(ctx, {
-                        type: 'line',
-                        data: {
-                            labels: labels.map(d => {
-                                const parts = d.split('-');
-                                return parts.length === 3 ? `${parts[2]}/${parts[1]}` : d;
-                            }),
-                            datasets: [
-                                {
-                                    label: 'Calorias Consumidas',
-                                    data: dataValues,
-                                    borderColor: '#059669',
-                                    backgroundColor: 'rgba(5, 150, 105, 0.1)',
-                                    borderWidth: 2,
-                                    fill: true,
-                                    tension: 0.3
-                                },
-                                {
-                                    label: 'Meta Diária',
-                                    data: targetLine,
-                                    borderColor: '#ef4444',
-                                    borderWidth: 1.5,
-                                    borderDash: [5, 5],
-                                    pointRadius: 0,
-                                    fill: false
-                                }
-                            ]
+                        form: {
+                            patientPhone: '',
+                            nutritionistId: 'nutri_web_portal',
+                            calories: 2000,
+                            protein: 150,
+                            carbs: 200,
+                            fat: 60,
+                            mainGoal: 'Emagrecimento',
+                            clinicalProtocol: '',
+                            dietaryRestrictions: '',
+                            favoriteFoods: '',
+                            prescribedMealPlan: ''
                         },
-                        options: {
-                            responsive: true,
-                            plugins: {
-                                legend: {
-                                    position: 'bottom',
-                                    labels: { boxWidth: 12, font: { size: 11 } }
+
+                        get filteredPatients() {
+                            if (this.searchQuery.trim() === '') return this.patients;
+                            const query = this.searchQuery.toLowerCase();
+                            return this.patients.filter(p => p.userId.toLowerCase().includes(query));
+                        },
+
+                        get groupedLogs() {
+                            const groups = {};
+                            this.selectedPatientLogs.forEach(log => {
+                                const dateKey = log.loggedAt.split('T')[0];
+                                if (!groups[dateKey]) {
+                                    groups[dateKey] = [];
                                 }
-                            },
-                            scales: {
-                                y: {
-                                    beginAtZero: true,
-                                    grid: { color: '#f3f4f6' }
-                                },
-                                x: {
-                                    grid: { display: false }
+                                groups[dateKey].push(log);
+                            });
+                            return Object.keys(groups)
+                                .sort((a, b) => new Date(b) - new Date(a))
+                                .reduce((acc, key) => {
+                                    acc[key] = groups[key];
+                                    return acc;
+                                }, {});
+                        },
+
+                        async init() {
+                            const savedKey = localStorage.getItem('nutri_api_key');
+                            if (savedKey) {
+                                this.apiKey = savedKey;
+                                await this.verifyAndLogin(savedKey, false);
+                            }
+                        },
+
+                        async login() {
+                            if (!this.apiKeyInput.trim()) return;
+                            await this.verifyAndLogin(this.apiKeyInput.trim(), true);
+                        },
+
+                        async verifyAndLogin(key, showErrors) {
+                            try {
+                                const response = await fetch('/api/nutritionist/verify-key', {
+                                    method: 'GET',
+                                    headers: { 'X-Nutri-Key': key }
+                                });
+                                const result = await response.json();
+
+                                if (response.ok && result.success) {
+                                    this.apiKey = key;
+                                    this.nutriName = result.name || 'Nutricionista';
+                                    this.maxPatients = result.maxPatients || 30;
+
+                                    localStorage.setItem('nutri_api_key', this.apiKey);
+                                    localStorage.setItem('nutri_id', result.nutritionistId || '');
+                                    this.form.nutritionistId = result.nutritionistId || 'nutri_web_portal';
+
+                                    this.isLoggedIn = true;
+                                    this.apiKeyInput = '';
+                                    this.loginError = false;
+                                    this.loadPatients();
+                                } else {
+                                    if (showErrors) {
+                                        this.loginError = true;
+                                        this.loginErrorMessage = 'Chave de acesso inválida ou inativa.';
+                                    } else {
+                                        this.logout();
+                                    }
+                                }
+                            } catch (err) {
+                                if (showErrors) {
+                                    this.loginError = true;
+                                    this.loginErrorMessage = 'Erro de conexão com o servidor.';
                                 }
                             }
-                        }
-                    });
-                },
+                        },
 
-                async downloadReport(phone) {
-                    try {
-                        const response = await fetch(`/api/nutritionist/patient-report/${phone}`, {
-                            method: 'GET',
-                            headers: { 'X-Nutri-Key': this.apiKey }
-                        });
+                        logout() {
+                            localStorage.removeItem('nutri_api_key');
+                            localStorage.removeItem('nutri_id');
+                            this.isLoggedIn = false;
+                            this.apiKey = '';
+                            this.patients = [];
+                        },
 
-                        if (response.ok) {
-                            const blob = await response.blob();
-                            const url = window.URL.createObjectURL(blob);
-                            const a = document.createElement('a');
-                            a.href = url;
-                            a.download = `Relatorio_Paciente_${phone}.html`;
-                            document.body.appendChild(a);
-                            a.click();
-                            window.URL.revokeObjectURL(url);
-                        } else {
-                            alert('❌ Erro ao gerar o relatório do paciente.');
-                        }
-                    } catch (err) {
-                        console.error('Erro ao descarregar relatório', err);
-                        alert('❌ Erro de conexão com o servidor.');
-                    }
-                },
+                        async loadPatients() {
+                            try {
+                                const response = await fetch('/api/nutritionist/patients', {
+                                    method: 'GET',
+                                    headers: { 'X-Nutri-Key': this.apiKey }
+                                });
+                                const result = await response.json();
 
-                calculateDayTotal(logs) {
-                    return logs.reduce((sum, item) => sum + (item.calories || 0), 0);
-                },
+                                if (response.ok && result.success) {
+                                    this.patients = (result.data || []).map(p => ({
+                                        userId: p.userId || p.UserId,
+                                        targetCalories: p.targetCalories || p.TargetCalories,
+                                        targetProteinG: p.targetProteinG || p.TargetProteinG,
+                                        targetCarbsG: p.targetCarbsG || p.TargetCarbsG,
+                                        targetFatG: p.targetFatG || p.TargetFatG,
+                                        mainGoal: p.mainGoal || p.MainGoal,
+                                        clinicalProtocol: p.clinicalProtocol || p.ClinicalProtocol || '',
+                                        dietaryRestrictions: p.dietaryRestrictions || p.DietaryRestrictions,
+                                        favoriteFoods: p.favoriteFoods || p.FavoriteFoods,
+                                        prescribedMealPlan: p.prescribedMealPlan || p.PrescribedMealPlan,
+                                        clinicalStatus: p.clinicalStatus || p.ClinicalStatus || 'Em Dia' // <-- Mapeamento do Farol
+                                    }));
+                                }
+                            } catch (err) {
+                                console.error('Erro ao carregar pacientes', err);
+                            }
+                        },
 
-                formatDateTitle(dateStr) {
-                    const parts = dateStr.split('-');
-                    if (parts.length !== 3) return dateStr;
+                        handleFileSelect(event) {
+                            const file = event.target.files[0];
+                            if (!file) return;
 
-                    const dateObj = new Date(parts[0], parts[1] - 1, parts[2]);
-                    const today = new Date();
-                    today.setHours(0, 0, 0, 0);
+                            this.selectedFileName = file.name;
+                            const reader = new FileReader();
+                            reader.onload = (e) => {
+                                this.selectedFileBase64 = e.target.result.split(',')[1];
+                            };
+                            reader.readAsDataURL(file);
+                        },
 
-                    if (dateObj.getTime() === today.getTime()) {
-                        return 'Hoje';
-                    }
-                    return `${parts[2]}/${parts[1]}`;
-                },
+                        async extractWithAI() {
+                            if (!this.aiRawText.trim() && !this.selectedFileBase64) {
+                                alert('Por favor, digite um texto ou selecione uma imagem/PDF para a IA analisar.');
+                                return;
+                            }
 
-                async saveDiet() {
-                    if (!this.form.patientPhone.trim()) {
-                        this.feedbackMessage = '❌ O telefone do paciente é obrigatório.';
-                        this.feedbackError = true;
-                        return;
-                    }
-
-                    this.feedbackMessage = 'Salvando dieta e protocolo clínico...';
-                    this.feedbackError = false;
-
-                    try {
-                        const payload = {
-                            PatientPhone: this.form.patientPhone,
-                            NutritionistId: this.form.nutritionistId,
-                            Calories: Number(this.form.calories) || 0,
-                            Protein: parseFloat(this.form.protein) || 0,
-                            Carbs: parseFloat(this.form.carbs) || 0,
-                            Fat: parseFloat(this.form.fat) || 0,
-                            MainGoal: this.form.mainGoal,
-                            ClinicalProtocol: this.form.clinicalProtocol,
-                            DietaryRestrictions: this.form.dietaryRestrictions,
-                            FavoriteFoods: this.form.favoriteFoods,
-                            PrescribedMealPlan: this.form.prescribedMealPlan
-                        };
-
-                        const response = await fetch('/api/nutritionist/confirm', {
-                            method: 'POST',
-                            headers: {
-                                'Content-Type': 'application/json',
-                                'X-Nutri-Key': this.apiKey
-                            },
-                            body: JSON.stringify(payload)
-                        });
-
-                        const result = await response.json();
-
-                        if (response.ok) {
-                            this.feedbackMessage = this.isEditing ? '✅ Dieta e guardrails atualizados com sucesso!' : '✅ Paciente cadastrado com sucesso!';
+                            this.isExtracting = true;
+                            this.feedbackMessage = '🤖 O Gemini está analisando o documento/texto...';
                             this.feedbackError = false;
-                            this.loadPatients();
 
-                            this.cancelEdit();
-                            this.mobileTab = 'list';
-                        } else {
-                            this.feedbackMessage = '❌ ' + (result.message || 'Falha ao salvar');
-                            this.feedbackError = true;
+                            try {
+                                const response = await fetch('/api/nutritionist/extract', {
+                                    method: 'POST',
+                                    headers: {
+                                        'Content-Type': 'application/json',
+                                        'X-Nutri-Key': this.apiKey
+                                    },
+                                    body: JSON.stringify({
+                                        textInput: this.aiRawText || 'Analise o documento anexado.',
+                                        base64Image: this.selectedFileBase64
+                                    })
+                                });
+
+                                const result = await response.json();
+
+                                if (response.ok && result.success && result.data) {
+                                    const data = result.data;
+                                    this.form.calories = data.targetCalories || this.form.calories;
+                                    this.form.protein = data.targetProteinG || this.form.protein;
+                                    this.form.carbs = data.targetCarbsG || this.form.carbs;
+                                    this.form.fat = data.targetFatG || this.form.fat;
+                                    this.form.dietaryRestrictions = data.dietaryRestrictions || '';
+                                    this.form.favoriteFoods = data.favoriteFoods || '';
+                                    this.form.prescribedMealPlan = data.prescribedMealPlan || '';
+
+                                    this.feedbackMessage = '✨ Dieta extraída com sucesso pelo Gemini! Revise os campos e salve.';
+                                    this.feedbackError = false;
+                                } else {
+                                    this.feedbackMessage = '❌ Erro ao extrair dados com IA.';
+                                    this.feedbackError = true;
+                                }
+                            } catch (err) {
+                                this.feedbackMessage = '❌ Erro de conexão ao tentar processar com IA.';
+                                this.feedbackError = true;
+                            } finally {
+                                this.isExtracting = false;
+                            }
+                        },
+
+                        async generateMealPlanWithAI() {
+                            if (!this.form.calories) {
+                                alert('Por favor, defina a meta de calorias antes de gerar o cardápio.');
+                                return;
+                            }
+
+                            this.isGeneratingPlan = true;
+                            this.feedbackMessage = '🤖 O Gemini está criando um cardápio personalizado com base nas metas e guardrails...';
+                            this.feedbackError = false;
+
+                            try {
+                                const response = await fetch('/api/nutritionist/generate-meal-plan', {
+                                    method: 'POST',
+                                    headers: {
+                                        'Content-Type': 'application/json',
+                                        'X-Nutri-Key': this.apiKey
+                                    },
+                                    body: JSON.stringify({
+                                        mainGoal: this.form.mainGoal,
+                                        targetCalories: Number(this.form.calories),
+                                        targetProteinG: parseFloat(this.form.protein) || 0,
+                                        targetCarbsG: parseFloat(this.form.carbs) || 0,
+                                        targetFatG: parseFloat(this.form.fat) || 0,
+                                        clinicalProtocol: this.form.clinicalProtocol,
+                                        dietaryRestrictions: this.form.dietaryRestrictions,
+                                        favoriteFoods: this.form.favoriteFoods
+                                    })
+                                });
+
+                                const result = await response.json();
+
+                                if (response.ok && result.success && result.generatedPlan) {
+                                    this.form.prescribedMealPlan = result.generatedPlan;
+                                    this.feedbackMessage = '✨ Cardápio sugerido gerado com sucesso! Revise e ajuste conforme necessário.';
+                                    this.feedbackError = false;
+                                } else {
+                                    this.feedbackMessage = '❌ ' + (result.message || 'Erro ao gerar cardápio com IA.');
+                                    this.feedbackError = true;
+                                }
+                            } catch (err) {
+                                this.feedbackMessage = '❌ Erro de conexão ao tentar gerar cardápio com IA.';
+                                this.feedbackError = true;
+                            } finally {
+                                this.isGeneratingPlan = false;
+                            }
+                        },
+
+                        async viewLogs(phone) {
+                            this.selectedPatientPhone = phone;
+                            this.showModal = true;
+                            await this.fetchLogs();
+                        },
+
+                        async fetchLogs() {
+                            if (!this.selectedPatientPhone) return;
+
+                            const days = parseInt(this.selectedPeriod);
+                            const startDate = new Date();
+                            startDate.setDate(startDate.getDate() - days);
+                            const startStr = startDate.toISOString().split('T')[0];
+
+                            try {
+                                const response = await fetch(`/api/nutritionist/patient-logs/${this.selectedPatientPhone}?startDate=${startStr}`, {
+                                    method: 'GET',
+                                    headers: { 'X-Nutri-Key': this.apiKey }
+                                });
+                                const result = await response.json();
+                                if (response.ok && result.success) {
+                                    this.selectedPatientLogs = result.data || [];
+                                    this.targetCalories = result.targetCalories || 2000;
+
+                                    this.$nextTick(() => {
+                                        this.renderAdherenceChart();
+                                    });
+                                }
+                            } catch (err) {
+                                console.error('Erro ao buscar logs do paciente', err);
+                            }
+                        },
+
+                        renderAdherenceChart() {
+                            const ctx = document.getElementById('caloriesChart');
+                            if (!ctx) return;
+
+                            const groups = this.groupedLogs;
+                            const labels = Object.keys(groups).sort((a, b) => new Date(a) - new Date(b));
+                            const dataValues = labels.map(dateStr => this.calculateDayTotal(groups[dateStr]));
+                            const targetLine = labels.map(() => this.targetCalories);
+
+                            if (this.chartInstance) {
+                                this.chartInstance.destroy();
+                            }
+
+                            this.chartInstance = new Chart(ctx, {
+                                type: 'line',
+                                data: {
+                                    labels: labels.map(d => {
+                                        const parts = d.split('-');
+                                        return parts.length === 3 ? `${parts[2]}/${parts[1]}` : d;
+                                    }),
+                                    datasets: [
+                                        {
+                                            label: 'Calorias Consumidas',
+                                            data: dataValues,
+                                            borderColor: '#059669',
+                                            backgroundColor: 'rgba(5, 150, 105, 0.1)',
+                                            borderWidth: 2,
+                                            fill: true,
+                                            tension: 0.3
+                                        },
+                                        {
+                                            label: 'Meta Diária',
+                                            data: targetLine,
+                                            borderColor: '#ef4444',
+                                            borderWidth: 1.5,
+                                            borderDash: [5, 5],
+                                            pointRadius: 0,
+                                            fill: false
+                                        }
+                                    ]
+                                },
+                                options: {
+                                    responsive: true,
+                                    plugins: {
+                                        legend: {
+                                            position: 'bottom',
+                                            labels: { boxWidth: 12, font: { size: 11 } }
+                                        }
+                                    },
+                                    scales: {
+                                        y: {
+                                            beginAtZero: true,
+                                            grid: { color: '#f3f4f6' }
+                                        },
+                                        x: {
+                                            grid: { display: false }
+                                        }
+                                    }
+                                }
+                            });
+                        },
+
+                        async downloadReport(phone) {
+                            try {
+                                const response = await fetch(`/api/nutritionist/patient-report/${phone}`, {
+                                    method: 'GET',
+                                    headers: { 'X-Nutri-Key': this.apiKey }
+                                });
+
+                                if (response.ok) {
+                                    const blob = await response.blob();
+                                    const url = window.URL.createObjectURL(blob);
+                                    const a = document.createElement('a');
+                                    a.href = url;
+                                    a.download = `Relatorio_Paciente_${phone}.html`;
+                                    document.body.appendChild(a);
+                                    a.click();
+                                    window.URL.revokeObjectURL(url);
+                                } else {
+                                    alert('❌ Erro ao gerar o relatório do paciente.');
+                                }
+                            } catch (err) {
+                                console.error('Erro ao descarregar relatório', err);
+                                alert('❌ Erro de conexão com o servidor.');
+                            }
+                        },
+
+                        calculateDayTotal(logs) {
+                            return logs.reduce((sum, item) => sum + (item.calories || 0), 0);
+                        },
+
+                        formatDateTitle(dateStr) {
+                            const parts = dateStr.split('-');
+                            if (parts.length !== 3) return dateStr;
+
+                            const dateObj = new Date(parts[0], parts[1] - 1, parts[2]);
+                            const today = new Date();
+                            today.setHours(0, 0, 0, 0);
+
+                            if (dateObj.getTime() === today.getTime()) {
+                                return 'Hoje';
+                            }
+                            return `${parts[2]}/${parts[1]}`;
+                        },
+
+                        async saveDiet() {
+                            if (!this.form.patientPhone.trim()) {
+                                this.feedbackMessage = '❌ O telefone do paciente é obrigatório.';
+                                this.feedbackError = true;
+                                return;
+                            }
+
+                            this.feedbackMessage = 'Salvando dieta e protocolo clínico...';
+                            this.feedbackError = false;
+
+                            try {
+                                const payload = {
+                                    PatientPhone: this.form.patientPhone,
+                                    NutritionistId: this.form.nutritionistId,
+                                    Calories: Number(this.form.calories) || 0,
+                                    Protein: parseFloat(this.form.protein) || 0,
+                                    Carbs: parseFloat(this.form.carbs) || 0,
+                                    Fat: parseFloat(this.form.fat) || 0,
+                                    MainGoal: this.form.mainGoal,
+                                    ClinicalProtocol: this.form.clinicalProtocol,
+                                    DietaryRestrictions: this.form.dietaryRestrictions,
+                                    FavoriteFoods: this.form.favoriteFoods,
+                                    PrescribedMealPlan: this.form.prescribedMealPlan
+                                };
+
+                                const response = await fetch('/api/nutritionist/confirm', {
+                                    method: 'POST',
+                                    headers: {
+                                        'Content-Type': 'application/json',
+                                        'X-Nutri-Key': this.apiKey
+                                    },
+                                    body: JSON.stringify(payload)
+                                });
+
+                                const result = await response.json();
+
+                                if (response.ok) {
+                                    this.feedbackMessage = this.isEditing ? '✅ Dieta e guardrails atualizados com sucesso!' : '✅ Paciente cadastrado com sucesso!';
+                                    this.feedbackError = false;
+                                    this.loadPatients();
+
+                                    this.cancelEdit();
+                                    this.mobileTab = 'list';
+                                } else {
+                                    this.feedbackMessage = '❌ ' + (result.message || 'Falha ao salvar');
+                                    this.feedbackError = true;
+                                }
+                            } catch (err) {
+                                this.feedbackMessage = '❌ Erro de conexão com o servidor.';
+                                this.feedbackError = true;
+                            }
+                        },
+
+                        editPatient(p) {
+                            this.isEditing = true;
+                            this.form.patientPhone = p.userId;
+                            this.form.calories = p.targetCalories;
+                            this.form.protein = p.targetProteinG;
+                            this.form.carbs = p.targetCarbsG;
+                            this.form.fat = p.targetFatG;
+
+                            this.form.mainGoal = p.mainGoal || 'Emagrecimento';
+                            this.form.clinicalProtocol = p.clinicalProtocol || '';
+                            this.form.dietaryRestrictions = p.dietaryRestrictions || '';
+                            this.form.favoriteFoods = p.favoriteFoods || '';
+                            this.form.prescribedMealPlan = p.prescribedMealPlan || '';
+
+                            this.mobileTab = 'form';
+                            this.feedbackMessage = '';
+                            window.scrollTo({ top: 0, behavior: 'smooth' });
+                        },
+
+                        cancelEdit() {
+                            this.isEditing = false;
+                            this.form.patientPhone = '';
+                            this.form.calories = 2000;
+                            this.form.protein = 150;
+                            this.form.carbs = 200;
+                            this.form.fat = 60;
+
+                            this.form.mainGoal = 'Emagrecimento';
+                            this.form.clinicalProtocol = '';
+                            this.form.dietaryRestrictions = '';
+                            this.form.favoriteFoods = '';
+                            this.form.prescribedMealPlan = '';
+                            this.aiRawText = '';
+                            this.selectedFileBase64 = null;
+                            this.selectedFileName = '';
+                            this.feedbackMessage = '';
+
+                            const fileInput = document.querySelector('input[type="file"]');
+                            if (fileInput) fileInput.value = '';
+                        },
+
+                        async deletePatient(phone) {
+                            if (!confirm(`Tem certeza que deseja excluir o paciente ${phone}?\n\nIsso removerá a dieta dele e bloqueará o acesso ao bot.`)) {
+                                return;
+                            }
+
+                            try {
+                                const response = await fetch(`/api/nutritionist/patient/${phone}`, {
+                                    method: 'DELETE',
+                                    headers: { 'X-Nutri-Key': this.apiKey }
+                                });
+                                const result = await response.json();
+
+                                if (response.ok && result.success) {
+                                    alert('✅ Paciente excluído com sucesso!');
+                                    this.loadPatients();
+                                } else {
+                                    alert('❌ Erro ao excluir: ' + (result.message || 'Falha na operação'));
+                                }
+                            } catch (err) {
+                                console.error('Erro ao excluir paciente', err);
+                                alert('❌ Erro de conexão com o servidor.');
+                            }
                         }
-                    } catch (err) {
-                        this.feedbackMessage = '❌ Erro de conexão com o servidor.';
-                        this.feedbackError = true;
-                    }
-                },
-
-                editPatient(p) {
-                    this.isEditing = true;
-                    this.form.patientPhone = p.userId;
-                    this.form.calories = p.targetCalories;
-                    this.form.protein = p.targetProteinG;
-                    this.form.carbs = p.targetCarbsG;
-                    this.form.fat = p.targetFatG;
-
-                    this.form.mainGoal = p.mainGoal || 'Emagrecimento';
-                    this.form.clinicalProtocol = p.clinicalProtocol || '';
-                    this.form.dietaryRestrictions = p.dietaryRestrictions || '';
-                    this.form.favoriteFoods = p.favoriteFoods || '';
-                    this.form.prescribedMealPlan = p.prescribedMealPlan || '';
-
-                    this.mobileTab = 'form';
-                    this.feedbackMessage = '';
-                    window.scrollTo({ top: 0, behavior: 'smooth' });
-                },
-
-                cancelEdit() {
-                    this.isEditing = false;
-                    this.form.patientPhone = '';
-                    this.form.calories = 2000;
-                    this.form.protein = 150;
-                    this.form.carbs = 200;
-                    this.form.fat = 60;
-
-                    this.form.mainGoal = 'Emagrecimento';
-                    this.form.clinicalProtocol = '';
-                    this.form.dietaryRestrictions = '';
-                    this.form.favoriteFoods = '';
-                    this.form.prescribedMealPlan = '';
-                    this.aiRawText = '';
-                    this.selectedFileBase64 = null;
-                    this.selectedFileName = '';
-                    this.feedbackMessage = '';
-
-                    const fileInput = document.querySelector('input[type="file"]');
-                    if (fileInput) fileInput.value = '';
-                },
-
-                async deletePatient(phone) {
-                    if (!confirm(`Tem certeza que deseja excluir o paciente ${phone}?\n\nIsso removerá a dieta dele e bloqueará o acesso ao bot.`)) {
-                        return;
-                    }
-
-                    try {
-                        const response = await fetch(`/api/nutritionist/patient/${phone}`, {
-                            method: 'DELETE',
-                            headers: { 'X-Nutri-Key': this.apiKey }
-                        });
-                        const result = await response.json();
-
-                        if (response.ok && result.success) {
-                            alert('✅ Paciente excluído com sucesso!');
-                            this.loadPatients();
-                        } else {
-                            alert('❌ Erro ao excluir: ' + (result.message || 'Falha na operação'));
-                        }
-                    } catch (err) {
-                        console.error('Erro ao excluir paciente', err);
-                        alert('❌ Erro de conexão com o servidor.');
                     }
                 }
-            }
-        }
     </script>
 </body>
 </html>

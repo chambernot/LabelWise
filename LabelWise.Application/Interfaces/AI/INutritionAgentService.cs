@@ -23,5 +23,11 @@ namespace LabelWise.Application.Interfaces.AI
     decimal targetProtein,
     decimal consumedProtein,
     List<string> mealsLogged);
+
+        // No contrato INutritionAgentService.cs (adicione a assinatura)
+        Task<string> GenerateSmartSubstitutionAsync(string foodToSubstitute, MacroSummaryDto remainingBalance, string clinicalProtocol, string foodAversions);
+
+        // Assinatura no INutritionAgentService.cs
+        Task<string> GenerateWeeklyProgressSummaryAsync(string patientName, decimal initialWeight, decimal currentWeight, int targetCalories, double avgConsumedCalories, int avgWaterMl, int streakDays);
     }
 }

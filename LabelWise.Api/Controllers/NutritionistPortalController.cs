@@ -91,7 +91,6 @@ public class NutritionistPortalController : ControllerBase
         return Ok(new { success = true, name = nutricionista.Name, nutritionistId = nutricionista.Id });
     }
 
-    // 📋 NOVO ENDPOINT: GERADOR DE CARDÁPIO COM IA
     [HttpPost("generate-meal-plan")]
     public async Task<IActionResult> GenerateMealPlan(
         [FromHeader(Name = "X-Nutri-Key")] string key,
@@ -284,6 +283,7 @@ Retorne APENAS o texto do cardápio pronto para ser colado na prescrição.
             {
                 string clinicalProtocol = "";
                 string mainGoal = "Emagrecimento";
+                string clinicalStatus = "Em Dia"; // STATUS POR PADRÃO
 
                 var patientDoc = await patientsCollection.Find(Builders<MongoDB.Bson.BsonDocument>.Filter.Eq("_id", g.UserId)).FirstOrDefaultAsync();
                 if (patientDoc != null)
@@ -295,6 +295,11 @@ Retorne APENAS o texto do cardápio pronto para ser colado na prescrição.
                     if (patientDoc.Contains("MainGoal"))
                     {
                         mainGoal = patientDoc["MainGoal"].AsString;
+                    }
+                    // 👇 LENDO O STATUS ATUALIZADO PELO MOTOR DE IA DE MADRUGADA
+                    if (patientDoc.Contains("ClinicalStatus"))
+                    {
+                        clinicalStatus = patientDoc["ClinicalStatus"].AsString;
                     }
                 }
 
@@ -309,7 +314,8 @@ Retorne APENAS o texto do cardápio pronto para ser colado na prescrição.
                     DietaryRestrictions = g.DietaryRestrictions,
                     FavoriteFoods = g.FavoriteFoods,
                     PrescribedMealPlan = g.PrescribedMealPlan,
-                    ClinicalProtocol = clinicalProtocol
+                    ClinicalProtocol = clinicalProtocol,
+                    ClinicalStatus = clinicalStatus // Enviando para o Frontend
                 });
             }
 
@@ -396,17 +402,8 @@ Retorne APENAS o texto do cardápio pronto para ser colado na prescrição.
         }
 
         return await SalvarOuAtualizarDietaAsync(
-            nutri,
-            dto.PatientPhone,
-            dto.Calories,
-            dto.Protein,
-            dto.Carbs,
-            dto.Fat,
-            dto.MainGoal,
-            dto.DietaryRestrictions,
-            dto.FavoriteFoods,
-            dto.PrescribedMealPlan,
-            dto.ClinicalProtocol
+            nutri, dto.PatientPhone, dto.Calories, dto.Protein, dto.Carbs, dto.Fat,
+            dto.MainGoal, dto.DietaryRestrictions, dto.FavoriteFoods, dto.PrescribedMealPlan, dto.ClinicalProtocol
         );
     }
 
@@ -422,17 +419,8 @@ Retorne APENAS o texto do cardápio pronto para ser colado na prescrição.
         }
 
         return await SalvarOuAtualizarDietaAsync(
-            nutri,
-            dto.PatientPhone,
-            dto.Calories,
-            dto.Protein,
-            dto.Carbs,
-            dto.Fat,
-            dto.MainGoal,
-            dto.DietaryRestrictions,
-            dto.FavoriteFoods,
-            dto.PrescribedMealPlan,
-            dto.ClinicalProtocol
+            nutri, dto.PatientPhone, dto.Calories, dto.Protein, dto.Carbs, dto.Fat,
+            dto.MainGoal, dto.DietaryRestrictions, dto.FavoriteFoods, dto.PrescribedMealPlan, dto.ClinicalProtocol
         );
     }
 
@@ -594,17 +582,8 @@ Retorne APENAS o texto do cardápio pronto para ser colado na prescrição.
     }
 
     private async Task<IActionResult> SalvarOuAtualizarDietaAsync(
-        AuthenticatedNutri nutri,
-        string patientPhone,
-        int calories,
-        decimal protein,
-        decimal carbs,
-        decimal fat,
-        string? mainGoal,
-        string? dietaryRestrictions,
-        string? favoriteFoods,
-        string? prescribedMealPlan,
-        string? clinicalProtocol)
+        AuthenticatedNutri nutri, string patientPhone, int calories, decimal protein, decimal carbs, decimal fat,
+        string? mainGoal, string? dietaryRestrictions, string? favoriteFoods, string? prescribedMealPlan, string? clinicalProtocol)
     {
         try
         {
@@ -614,7 +593,8 @@ Retorne APENAS o texto do cardápio pronto para ser colado na prescrição.
                 .Set("MainGoal", mainGoal ?? "Emagrecimento")
                 .Set("MedicalRestrictions", dietaryRestrictions ?? "")
                 .Set("FoodAversions", favoriteFoods ?? "")
-                .Set("ClinicalProtocol", clinicalProtocol ?? "");
+                .Set("ClinicalProtocol", clinicalProtocol ?? "")
+                .Set("ClinicalStatus", "Em Dia"); // Ao criar o paciente, define "Em Dia"
 
             await patientsCollection.UpdateOneAsync(
                 Builders<MongoDB.Bson.BsonDocument>.Filter.Eq("_id", patientPhone),
@@ -660,7 +640,7 @@ Retorne APENAS o texto do cardápio pronto para ser colado na prescrição.
 
             await _goalsCollection.UpdateOneAsync(filter, forceUpdate);
 
-            _logger.LogInformation("✅ Dieta e Protocolo Clínico (Guardrails) gravados para o paciente {Phone}", patientPhone);
+            _logger.LogInformation("✅ Dieta e Protocolo Clínico gravados para o paciente {Phone}", patientPhone);
 
             return Ok(new { success = true, message = "Dieta e protocolo clínico atualizados com sucesso!" });
         }
