@@ -1,7 +1,9 @@
 ﻿using System;
+using MongoDB.Bson.Serialization.Attributes;
 
 namespace LabelWise.Application.DTOs.Nutrition
 {
+    [BsonIgnoreExtraElements] // 🛡️ Ignora automaticamente qualquer campo extra que venha do MongoDB
     public record PatientDto(
         string Id, // Geralmente o número do WhatsApp (ex: 5511988887777)
         string ProfessionalId,
@@ -14,10 +16,12 @@ namespace LabelWise.Application.DTOs.Nutrition
         string FoodAversions = "Nenhuma",
         string ClinicalProtocol = "", // 🛡️ Protocolo estrito do nutricionista
 
-        // 📊 CAMPOS PARA O RADAR CLÍNICO E DASHBOARD (Nome alterado para corresponder ao MongoDB)
-        string? ClinicalStatus = "Em dia",      // "Em dia", "Atenção", "Inativo"
-        int AdhesionPercentage = 100,          // Percentagem de adesão calculada
-        DateTime? LastInteractionDate = null,  // Data da última refeição ou interação
-        bool IsArchived = false                // Suporte para arquivar paciente (SaaS)
+        // 📊 CAMPOS PARA O RADAR CLÍNICO E DASHBOARD
+        string? ClinicalStatus = "Em dia",          // "Em dia", "Atenção", "Inativo"
+        int AdhesionPercentage = 100,              // Percentagem de adesão calculada
+        DateTime? LastInteractionDate = null,      // Data da última refeição ou interação
+        bool IsArchived = false,                    // Suporte para arquivar paciente (SaaS)
+        DateTime? LastAuditDate = null,              // Última auditoria feita pelo motor
+        DateTime? LastNotificationDate = null        // Última notificação enviada por WhatsApp
     );
 }
