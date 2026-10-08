@@ -514,18 +514,36 @@ namespace LabelWise.Api.Controllers
                     return Ok();
                 }
 
-                // 🛡️ CORREÇÃO: Garante que só processa como água se o utilizador mencionar explicitamente "água" ou "H2O"
+                // 🛡️ DETEÇÃO ROBUSTA DE ÁGUA (Suporta ml, litros, l, copos e garrafas)
                 bool mencionaAgua = textoBruto.Contains("agua", StringComparison.OrdinalIgnoreCase) ||
                                     textoBruto.Contains("água", StringComparison.OrdinalIgnoreCase) ||
                                     textoBruto.Contains("h2o", StringComparison.OrdinalIgnoreCase);
 
-                var matchAgua = Regex.Match(textoBruto, @"(?:bebi|considerei|foi|tomei)?\s*(\d+)\s*(ml|litros|l)\b", RegexOptions.IgnoreCase);
-                if (matchAgua.Success && mencionaAgua)
+                if (mencionaAgua)
                 {
-                    int quantidadeMl = int.Parse(matchAgua.Groups[1].Value);
-                    if (matchAgua.Groups[2].Value.Equals("l", StringComparison.OrdinalIgnoreCase) || matchAgua.Groups[2].Value.Equals("litros", StringComparison.OrdinalIgnoreCase))
+                    int quantidadeMl = 250; // Valor padrão se disser apenas "copo de água" ou "água"
+
+                    var matchMl = Regex.Match(textoBruto, @"(\d+)\s*(ml|litros|l)\b", RegexOptions.IgnoreCase);
+                    if (matchMl.Success)
                     {
-                        quantidadeMl *= 1000;
+                        quantidadeMl = int.Parse(matchMl.Groups[1].Value);
+                        if (matchMl.Groups[2].Value.Equals("l", StringComparison.OrdinalIgnoreCase) || matchMl.Groups[2].Value.Equals("litros", StringComparison.OrdinalIgnoreCase))
+                        {
+                            quantidadeMl *= 1000;
+                        }
+                    }
+                    else
+                    {
+                        var matchCopo = Regex.Match(textoBruto, @"(\d+)?\s*(copo|copos|garrafa|garrafas)\b", RegexOptions.IgnoreCase);
+                        if (matchCopo.Success)
+                        {
+                            int qtd = 1;
+                            if (matchCopo.Groups[1].Success && int.TryParse(matchCopo.Groups[1].Value, out int parsedQtd))
+                            {
+                                qtd = parsedQtd;
+                            }
+                            quantidadeMl = qtd * 250; // Considera 250 ml por copo/garrafa padrão
+                        }
                     }
 
                     var dataHojeBr = DateTime.UtcNow.AddHours(-3).Date;
