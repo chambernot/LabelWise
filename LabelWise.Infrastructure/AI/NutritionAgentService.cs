@@ -150,18 +150,60 @@ FORMATO: { ""targetCalories"": 0, ""targetProteinG"": 0, ""targetCarbsG"": 0, ""
 
         public async Task<ExtractDietGoalResponseDto> ExtractDietGoalsFromDocumentAsync(ExtractDietGoalRequestDto request)
         {
-            var userContentList = new List<object> { new { type = "text", text = $"{DietReaderSystemPrompt}\nDIETA: {request.TextInput}" } };
-            if (!string.IsNullOrWhiteSpace(request.Base64Image))
+            string textPayload = request.TextInput ?? string.Empty;
+            string? imageBase64Final = request.Base64Image;
+
+            // 📄 TRATAMENTO INTELIGENTE DE PDF VS IMAGEM
+            if (!string.IsNullOrWhiteSpace(imageBase64Final))
             {
-                string imageBase64 = request.Base64Image.Contains(",") ? request.Base64Image : $"data:image/jpeg;base64,{request.Base64Image}";
+                // Remove prefixos data:uri caso existam para validar o conteúdo base64 puro
+                string cleanBase64 = imageBase64Final.Contains(",") ? imageBase64Final.Split(',')[1] : imageBase64Final;
+
+                // Se o base64 começar com a assinatura de um PDF (%PDF -> JVBERi0)
+                if (cleanBase64.StartsWith("JVBERi0"))
+                {
+                    try
+                    {
+                        var pdfBytes = Convert.FromBase64String(cleanBase64);
+                        using var pdf = UglyToad.PdfPig.PdfDocument.Open(pdfBytes);
+                        var extractedText = string.Join("\n", pdf.GetPages().Select(p => p.Text));
+
+                        // Adiciona o texto extraído ao payload e anula a imagem para evitar erro na API
+                        textPayload += $"\n\n[Conteúdo Extraído do PDF do Cardápio]:\n{extractedText}";
+                        imageBase64Final = null;
+                    }
+                    catch (Exception ex)
+                    {
+                        _logger.LogError(ex, "❌ Erro ao extrair texto do PDF enviado na importação da dieta.");
+                    }
+                }
+            }
+
+            var userContentList = new List<object>
+    {
+        new { type = "text", text = $"{DietReaderSystemPrompt}\nDIETA: {textPayload}" }
+    };
+
+            // Se for uma imagem real (JPG/PNG), mantém o envio como image_url
+            if (!string.IsNullOrWhiteSpace(imageBase64Final))
+            {
+                string imageBase64 = imageBase64Final.Contains(",") ? imageBase64Final : $"data:image/jpeg;base64,{imageBase64Final}";
                 userContentList.Add(new { type = "image_url", image_url = new { url = imageBase64 } });
             }
 
-            var requestBody = new { model = _geminiModel, temperature = 0.1, max_tokens = 1500, messages = new object[] { new { role = "user", content = userContentList.ToArray() } } };
+            var requestBody = new
+            {
+                model = _geminiModel,
+                temperature = 0.1,
+                max_tokens = 1500,
+                messages = new object[] { new { role = "user", content = userContentList.ToArray() } }
+            };
+
             return await CallGeminiAsync(requestBody, (responseStr) =>
             {
                 var jsonContent = ExtractContentFromResponse(responseStr, true);
-                return JsonSerializer.Deserialize<ExtractDietGoalResponseDto>(jsonContent, new JsonSerializerOptions { PropertyNameCaseInsensitive = true }) ?? new ExtractDietGoalResponseDto(2000, 150, 200, 60, null, null, null);
+                return JsonSerializer.Deserialize<ExtractDietGoalResponseDto>(jsonContent, new JsonSerializerOptions { PropertyNameCaseInsensitive = true })
+                       ?? new ExtractDietGoalResponseDto(2000, 150, 200, 60, null, null, null);
             });
         }
 
