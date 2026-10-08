@@ -360,8 +360,8 @@ namespace LabelWise.Api.Controllers
                 if (textoLimpoCmd.StartsWith("substituir ") || textoLimpoCmd.StartsWith("trocar "))
                 {
                     var alimentoAlvo = textoBruto.Replace("substituir", "", StringComparison.OrdinalIgnoreCase)
-                                                 .Replace("trocar", "", StringComparison.OrdinalIgnoreCase)
-                                                 .Replace("por", "", StringComparison.OrdinalIgnoreCase).Trim();
+                                                   .Replace("trocar", "", StringComparison.OrdinalIgnoreCase)
+                                                   .Replace("por", "", StringComparison.OrdinalIgnoreCase).Trim();
 
                     if (!string.IsNullOrWhiteSpace(alimentoAlvo))
                     {
@@ -514,8 +514,13 @@ namespace LabelWise.Api.Controllers
                     return Ok();
                 }
 
-                var matchAgua = Regex.Match(textoBruto, @"(?:bebi|considerei|foi)?\s*(\d+)\s*(ml|litros|l)\b", RegexOptions.IgnoreCase);
-                if (matchAgua.Success && (textoBruto.Contains("agua", StringComparison.OrdinalIgnoreCase) || textoBruto.Contains("ml", StringComparison.OrdinalIgnoreCase) || textoBruto.Contains("litro", StringComparison.OrdinalIgnoreCase)))
+                // 🛡️ CORREÇÃO: Garante que só processa como água se o utilizador mencionar explicitamente "água" ou "H2O"
+                bool mencionaAgua = textoBruto.Contains("agua", StringComparison.OrdinalIgnoreCase) ||
+                                    textoBruto.Contains("água", StringComparison.OrdinalIgnoreCase) ||
+                                    textoBruto.Contains("h2o", StringComparison.OrdinalIgnoreCase);
+
+                var matchAgua = Regex.Match(textoBruto, @"(?:bebi|considerei|foi|tomei)?\s*(\d+)\s*(ml|litros|l)\b", RegexOptions.IgnoreCase);
+                if (matchAgua.Success && mencionaAgua)
                 {
                     int quantidadeMl = int.Parse(matchAgua.Groups[1].Value);
                     if (matchAgua.Groups[2].Value.Equals("l", StringComparison.OrdinalIgnoreCase) || matchAgua.Groups[2].Value.Equals("litros", StringComparison.OrdinalIgnoreCase))
