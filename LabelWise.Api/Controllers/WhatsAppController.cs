@@ -293,6 +293,7 @@ namespace LabelWise.Api.Controllers
                                     { "TargetProteinG", 150 },
                                     { "TargetCarbsG", 200 },
                                     { "TargetFatG", 60 },
+                                    { "TargetWaterMl", 2500 }, // 💧 Meta de água inicial para Trial / B2C
                                     { "DietaryRestrictions", medRest },
                                     { "FavoriteFoods", aversions },
                                     { "PrescribedMealPlan", $"Objetivo: {goal}" }
@@ -564,7 +565,19 @@ namespace LabelWise.Api.Controllers
                     );
                     var registrosAgua = await waterCol.Find(filterWater).ToListAsync();
                     int totalAguaHoje = registrosAgua.Sum(w => w["AmountMl"].AsInt32);
+
+                    // 💧 BUSCAR A META DIÁRIA DINÂMICA (Definida pela nutricionista ou padrão B2C)
                     int metaAguaDiaria = 2500;
+                    var goalsCollection = _database.GetCollection<MongoDB.Bson.BsonDocument>("DailyGoals");
+                    var goalFilterWater = Builders<MongoDB.Bson.BsonDocument>.Filter.And(
+                        Builders<MongoDB.Bson.BsonDocument>.Filter.Eq("UserId", senderPhone),
+                        Builders<MongoDB.Bson.BsonDocument>.Filter.Eq("TargetDate", dataHojeBr)
+                    );
+                    var goalDocWater = await goalsCollection.Find(goalFilterWater).FirstOrDefaultAsync();
+                    if (goalDocWater != null && goalDocWater.Contains("TargetWaterMl"))
+                    {
+                        metaAguaDiaria = goalDocWater["TargetWaterMl"].AsInt32;
+                    }
 
                     string respostaAgua = $"💧 {totalAguaHoje} / {metaAguaDiaria} ml de água registados com sucesso! 🚰";
                     await _whatsAppSender.SendTextMessageAsync(senderPhone, respostaAgua);
