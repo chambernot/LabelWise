@@ -33,10 +33,11 @@ namespace LabelWise.Infrastructure.Services
             "você DEVE dar uma resposta hiper-personalizada. Diga exatamente com base no saldo calórico dele. Responda no campo 'adviceText' e defina 'isAdvice': true.\n" +
             "Retorne APENAS um JSON válido.";
 
-        private const string UserPromptInstructions = @"INSTRUÇÕES RIGOROSAS PARA AVALIAÇÃO DE IMAGENS E REFEIÇÕES:
-1. Identifique minuciosamente todos os alimentos visíveis (inclusive molhos, queijos ralados e temperos).
-2. Estime o PESO REAL EM GRAMAS (g) de cada porção.
-3. Considere GORDURAS DE COCÇÃO OCULTAS.
+        // AQUI ESTÃO OS PRINCIPAIS AJUSTES PARA CORRIGIR AS GRAMATURAS E DUPLICAÇÕES
+        private const string UserPromptInstructions = @"INSTRUÇÕES RIGOROSAS PARA AVALIAÇÃO DE IMAGENS E REFEIÇÕES (LEIA ATENTAMENTE):
+1. SE O USUÁRIO INFORMAR QUANTIDADES EM GRAMAS (ex: '40g', '140g', '200 gramas'), UNIDADES OU MEDIDAS NO TEXTO, USE EXATAMENTE O VALOR INFORMADO. É ESTRITAMENTE PROIBIDO ESTIMAR, INVENTAR, DUPLICAR, ADICIONAR ALIMENTOS NÃO MENCIONADOS OU MULTIPLICAR VALORES.
+2. Identifique minuciosamente todos os alimentos visíveis ou mencionados no texto. Não junte alimentos diferentes no mesmo item (Ex: se o usuário disser 'peito de peru', registre apenas isso, não invente 'lanche de frango e peru' a menos que ele mencione frango).
+3. Se não houver texto informando a quantidade, aí sim, estime o PESO REAL EM GRAMAS (g) de cada porção com base na foto.
 4. Seja conservador e realista nos macros.
 
 MUITO IMPORTANTE: NÃO TRADUZA AS CHAVES DO JSON. USE EXATAMENTE OS NOMES EM INGLÊS ABAIXO.
@@ -397,7 +398,7 @@ FORMATO: { ""targetCalories"": 0, ""targetProteinG"": 0, ""targetCarbsG"": 0, ""
             return new
             {
                 model = targetModel,
-                temperature = 0.2,
+                temperature = 0.0, // <-- IMPORTANTE: Temperatura reduzida para 0 para forçar extração rigorosa de dados.
                 max_tokens = 3000,
                 messages = messagesList.ToArray()
             };
