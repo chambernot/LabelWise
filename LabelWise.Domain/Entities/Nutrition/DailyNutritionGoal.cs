@@ -1,7 +1,9 @@
 ﻿using System;
+using MongoDB.Bson.Serialization.Attributes;
 
 namespace LabelWise.Domain.Entities.Nutrition;
 
+[BsonIgnoreExtraElements] // Proteção crucial contra crashes de novos campos no MongoDB
 public class DailyNutritionGoal
 {
     public string Id { get; private set; }
@@ -12,9 +14,14 @@ public class DailyNutritionGoal
     public decimal TargetProteinG { get; private set; }
     public decimal TargetCarbsG { get; private set; }
     public decimal TargetFatG { get; private set; }
+
+    // NOVO: Meta de ingestão de água em ml
+    public int TargetWaterMl { get; private set; }
+
     public string? DietaryRestrictions { get; private set; } // Ex: "Sem lactose, Vegetariano, Diabetes"
     public string? FavoriteFoods { get; private set; }       // Ex: "Amo ovos, whey de morango, frutas, castanhas"
-    // NOVO: O cardápio detalhado prescrito pela nutricionista
+
+    // O cardápio detalhado prescrito pela nutricionista ou gerado autonomamente
     public string? PrescribedMealPlan { get; private set; } // Ex: "Café: Ovos e Pão\nAlmoço: Frango e Arroz..."
 
     // Método para atualizar o cardápio junto com as metas
@@ -22,6 +29,7 @@ public class DailyNutritionGoal
     {
         PrescribedMealPlan = prescribedPlan;
     }
+
     protected DailyNutritionGoal() { }
 
     public DailyNutritionGoal(
@@ -31,6 +39,7 @@ public class DailyNutritionGoal
         decimal targetProteinG,
         decimal targetCarbsG,
         decimal targetFatG,
+        int targetWaterMl = 2500, // Valor padrão seguro caso não seja informado
         string? nutritionistId = null,
         string? dietaryRestrictions = null,
         string? favoriteFoods = null,
@@ -45,6 +54,7 @@ public class DailyNutritionGoal
         TargetProteinG = targetProteinG;
         TargetCarbsG = targetCarbsG;
         TargetFatG = targetFatG;
+        TargetWaterMl = targetWaterMl; // Inicializa a meta de água
         NutritionistId = nutritionistId;
         DietaryRestrictions = dietaryRestrictions;
         FavoriteFoods = favoriteFoods;
@@ -52,12 +62,17 @@ public class DailyNutritionGoal
     }
 
     // Comportamento de domínio para atualizar as metas caso o nutricionista mude o plano
-    public void UpdateGoals(int newCalories, decimal newProtein, decimal newCarbs, decimal newFat, string? nutritionistId = null)
+    public void UpdateGoals(int newCalories, decimal newProtein, decimal newCarbs, decimal newFat, int? newWaterMl = null, string? nutritionistId = null)
     {
         TargetCalories = newCalories;
         TargetProteinG = newProtein;
         TargetCarbsG = newCarbs;
         TargetFatG = newFat;
+
+        if (newWaterMl.HasValue)
+        {
+            TargetWaterMl = newWaterMl.Value;
+        }
 
         if (!string.IsNullOrWhiteSpace(nutritionistId))
         {
