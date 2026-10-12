@@ -514,5 +514,62 @@ Retorne APENAS o texto pronto da mensagem.
                 return $"{patientName}, parabéns pela dedicação esta semana! Continue firme nos seus objetivos. 🥗💪";
             }
         }
+
+        public async Task<AutoCalculateGoalDto> CalculateNutritionalGoalsAsync(string userProfileText, string mainGoal)
+        {
+            try
+            {
+                var prompt = $@"
+Você é um Nutricionista Clínico Esportivo MÁSTER. Sua tarefa é calcular as metas nutricionais diárias de um paciente com base no relato dele.
+
+RELATO DO PACIENTE: '{userProfileText}'
+OBJETIVO PRINCIPAL: '{mainGoal}'
+
+INSTRUÇÕES DE CÁLCULO MENTAL (Não mostre, apenas aplique):
+1. Extraia o Peso (kg), Altura (cm/m), Idade, Sexo e Nível de Atividade Física.
+2. Calcule a Taxa Metabólica Basal (TMB) usando a fórmula de Mifflin-St Jeor. Se faltar algum dado, assuma valores médios sensatos (ex: 70kg, 170cm, 30 anos).
+3. Calcule o Gasto Energético Total (GET) multiplicando pelo fator de atividade (1.2 sedentário a 1.9 muito ativo).
+4. Ajuste as Calorias pelo Objetivo:
+   - Emagrecimento: Déficit de 300 a 500 kcal.
+   - Hipertrofia: Superávit de 300 a 500 kcal.
+   - Manutenção: Igual ao GET.
+5. Distribua os Macronutrientes:
+   - Proteína: ~2.0g por kg de peso corporal.
+   - Gordura: ~0.8g a 1.0g por kg de peso corporal.
+   - Carboidratos: O restante das calorias (1g carbo = 4kcal, 1g prot = 4kcal, 1g gordura = 9kcal).
+6. Água: 35ml a 40ml por kg de peso corporal.
+
+Retorne APENAS um JSON válido neste formato rigoroso:
+{{
+    ""weightKg"": 0,
+    ""targetCalories"": 0,
+    ""targetProteinG"": 0,
+    ""targetCarbsG"": 0,
+    ""targetFatG"": 0,
+    ""targetWaterMl"": 0,
+    ""shortExplanation"": ""Uma frase curta explicando amigavelmente o cálculo""
+}}
+";
+
+                var requestBody = new
+                {
+                    model = _geminiModel,
+                    temperature = 0.1, // Temperatura baixa para cálculos exatos
+                    messages = new object[] { new { role = "user", content = prompt } }
+                };
+
+                return await CallGeminiAsync(requestBody, (responseStr) =>
+                {
+                    var jsonContent = ExtractContentFromResponse(responseStr, true);
+                    return JsonSerializer.Deserialize<AutoCalculateGoalDto>(jsonContent, new JsonSerializerOptions { PropertyNameCaseInsensitive = true })
+                           ?? new AutoCalculateGoalDto { TargetCalories = 2000, TargetProteinG = 150, TargetCarbsG = 200, TargetFatG = 60, TargetWaterMl = 2500, WeightKg = 70 };
+                });
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Erro ao calcular metas nutricionais com IA.");
+                return new AutoCalculateGoalDto { TargetCalories = 2000, TargetProteinG = 150, TargetCarbsG = 200, TargetFatG = 60, TargetWaterMl = 2500, WeightKg = 70 };
+            }
+        }
     }
 }

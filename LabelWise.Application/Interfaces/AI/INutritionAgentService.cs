@@ -29,5 +29,9 @@ namespace LabelWise.Application.Interfaces.AI
 
         // Assinatura no INutritionAgentService.cs
         Task<string> GenerateWeeklyProgressSummaryAsync(string patientName, decimal initialWeight, decimal currentWeight, int targetCalories, double avgConsumedCalories, int avgWaterMl, int streakDays);
+
+        Task<AutoCalculateGoalDto> CalculateNutritionalGoalsAsync(string userProfileText, string mainGoal);
+
+
     }
 }

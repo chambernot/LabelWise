@@ -214,10 +214,13 @@ namespace LabelWise.Api.Controllers
                                     string goalSelecionado = objetivosValidos[optGoal];
                                     var updateGoal = Builders<MongoDB.Bson.BsonDocument>.Update
                                         .Set("TempGoal", goalSelecionado)
-                                        .Set("OnboardingStep", "WaitingForCalories");
+                                        .Set("OnboardingStep", "WaitingForProfile"); // Mudança aqui
                                     await trialCollection.UpdateOneAsync(filterTrial, updateGoal);
 
-                                    await _whatsAppSender.SendTextMessageAsync(senderPhone, "🔥 **Passo 2 de 4:** Qual é a sua meta de calorias diárias?\n_(Digite apenas um número inteiro válido, ex: 1800)_");
+                                    // Nova pergunta inteligente
+                                    await _whatsAppSender.SendTextMessageAsync(senderPhone,
+                                        "🔥 **Passo 2 de 4:** Para eu calcular a sua dieta exata (como um nutricionista faria), preciso de te conhecer melhor!\n\n" +
+                                        "👉 *Diga-me numa só mensagem: O seu Peso, Altura, Idade, Sexo e rotina de atividade física.*");
                                 }
                                 else
                                 {
@@ -225,21 +228,33 @@ namespace LabelWise.Api.Controllers
                                 }
                                 return Ok();
 
-                            case "WaitingForCalories":
-                                var matchCal = Regex.Match(textoBruto, @"\d+");
-                                if (matchCal.Success && int.TryParse(matchCal.Value, out int parsedCal) && parsedCal >= 800 && parsedCal <= 5000)
-                                {
-                                    var updateCal = Builders<MongoDB.Bson.BsonDocument>.Update
-                                        .Set("TempCalories", parsedCal)
-                                        .Set("OnboardingStep", "WaitingForRestrictions");
-                                    await trialCollection.UpdateOneAsync(filterTrial, updateCal);
+                            case "WaitingForProfile":
+                                await _whatsAppSender.SendTextMessageAsync(senderPhone, "🧠 *A processar os seus dados biológicos e a calcular as metas ideais com IA...* ⏱️");
 
-                                    await _whatsAppSender.SendTextMessageAsync(senderPhone, "🛡️ **Passo 3 de 4:** Tem alguma alergia ou restrição médica?\n_(Ex: Alergia a amendoim, intolerância à lactose, ou digite 'Nenhuma')_");
-                                }
-                                else
-                                {
-                                    await _whatsAppSender.SendTextMessageAsync(senderPhone, "❌ Valor de calorias inválido. Por favor, digite apenas um número numérico válido entre 800 e 5000 (ex: 1800):");
-                                }
+                                string userGoal = userDoc.Contains("TempGoal") ? userDoc["TempGoal"].AsString : "Emagrecimento";
+
+                                // Chama o Gemini para calcular as metas matematicamente
+                                var calculatedGoals = await _nutritionAgentService.CalculateNutritionalGoalsAsync(textoBruto, userGoal);
+
+                                var updateProfile = Builders<MongoDB.Bson.BsonDocument>.Update
+                                    .Set("TempCalories", calculatedGoals.TargetCalories)
+                                    .Set("TempProtein", (double)calculatedGoals.TargetProteinG)
+                                    .Set("TempCarbs", (double)calculatedGoals.TargetCarbsG)
+                                    .Set("TempFat", (double)calculatedGoals.TargetFatG)
+                                    .Set("TempWater", calculatedGoals.TargetWaterMl)
+                                    .Set("OnboardingStep", "WaitingForRestrictions");
+
+                                await trialCollection.UpdateOneAsync(filterTrial, updateProfile);
+
+                                string msgCalculo = $"✅ **Metas Calculadas com Sucesso!**\n\n" +
+                                                    $"📊 {calculatedGoals.ShortExplanation}\n\n" +
+                                                    $"🎯 *As suas Metas Diárias:*\n" +
+                                                    $"🔥 Calorias: {calculatedGoals.TargetCalories} kcal\n" +
+                                                    $"🥩 Proteína: {calculatedGoals.TargetProteinG:F0}g | 🍞 Carbo: {calculatedGoals.TargetCarbsG:F0}g | 🥑 Gordura: {calculatedGoals.TargetFatG:F0}g\n" +
+                                                    $"💧 Água: {calculatedGoals.TargetWaterMl} ml\n\n" +
+                                                    $"🛡️ **Passo 3 de 4:** Tem alguma alergia, intolerância ou restrição médica? _(Digite 'Nenhuma' se não tiver)_";
+
+                                await _whatsAppSender.SendTextMessageAsync(senderPhone, msgCalculo);
                                 return Ok();
 
                             case "WaitingForRestrictions":
@@ -258,6 +273,10 @@ namespace LabelWise.Api.Controllers
 
                                 string goal = userDoc.Contains("TempGoal") ? userDoc["TempGoal"].AsString : "Emagrecimento";
                                 int calories = userDoc.Contains("TempCalories") ? userDoc["TempCalories"].AsInt32 : 2000;
+                                decimal protein = userDoc.Contains("TempProtein") ? (decimal)userDoc["TempProtein"].AsDouble : 150m;
+                                decimal carbs = userDoc.Contains("TempCarbs") ? (decimal)userDoc["TempCarbs"].AsDouble : 200m;
+                                decimal fat = userDoc.Contains("TempFat") ? (decimal)userDoc["TempFat"].AsDouble : 60m;
+                                int waterMl = userDoc.Contains("TempWater") ? userDoc["TempWater"].AsInt32 : 2500;
                                 string medRest = userDoc.Contains("TempRestrictions") ? userDoc["TempRestrictions"].AsString : "";
 
                                 var patientsCollection = _database.GetCollection<MongoDB.Bson.BsonDocument>("Nutrition_Patients");
@@ -290,13 +309,13 @@ namespace LabelWise.Api.Controllers
                                     { "NutritionistId", "b2c_autonomous_user" },
                                     { "TargetDate", now.Date },
                                     { "TargetCalories", calories },
-                                    { "TargetProteinG", 150 },
-                                    { "TargetCarbsG", 200 },
-                                    { "TargetFatG", 60 },
-                                    { "TargetWaterMl", 2500 }, // 💧 Meta de água inicial para Trial / B2C
+                                    { "TargetProteinG", (double)protein },
+                                    { "TargetCarbsG", (double)carbs },
+                                    { "TargetFatG", (double)fat },
+                                    { "TargetWaterMl", waterMl },
                                     { "DietaryRestrictions", medRest },
                                     { "FavoriteFoods", aversions },
-                                    { "PrescribedMealPlan", $"Objetivo: {goal}" }
+                                    { "PrescribedMealPlan", $"Objetivo: {goal}. Calculado autonomamente." }
                                 };
                                 await goalsCollection.ReplaceOneAsync(goalFilter, goalDoc, new ReplaceOptions { IsUpsert = true });
 
@@ -304,13 +323,13 @@ namespace LabelWise.Api.Controllers
                                     .Set("ProfileConfigured", true);
                                 await trialCollection.UpdateOneAsync(filterTrial, updateDone);
 
-                                string respostaConfig = $"✅ *Formulário concluído com sucesso!* 🥗\n\n" +
+                                string respostaConfig = $"✅ *Perfil configurado com sucesso!* 🥗\n\n" +
                                                         $"🎯 **Objetivo:** {goal}\n" +
                                                         $"🔥 **Calorias Diárias:** {calories} kcal\n" +
                                                         $"🛡 **Alergias/Restrições:** {(string.IsNullOrWhiteSpace(medRest) ? "Nenhuma" : medRest)}\n" +
                                                         $"🚫 **Aversões:** {(string.IsNullOrWhiteSpace(aversions) ? "Nenhuma" : aversions)}\n\n" +
                                                         $"👉 *Tudo pronto! Já pode enviar as suas refeições* por texto, foto ou áudio.\n\n" +
-                                                        $"_💡 Dica: Se quiser alterar suas metas no futuro, basta digitar *meta* a qualquer momento!_";
+                                                        $"_💡 Dica: Se quiser reajustar o cálculo das suas metas no futuro, basta digitar *meta* a qualquer momento!_";
 
                                 await _whatsAppSender.SendTextMessageAsync(senderPhone, respostaConfig);
                                 return Ok();
@@ -978,5 +997,5 @@ Retorne APENAS o texto da mensagem pronto para envio.
     public class MetaValue { public List<MetaMessage>? Messages { get; set; } }
     public class MetaMessage { public string? From { get; set; } public string? Type { get; set; } public MetaText? Text { get; set; } public MetaMedia? Image { get; set; } public MetaMedia? Audio { get; set; } }
     public class MetaText { public string? Body { get; set; } }
-    public class MetaMedia { public string? Id { get; set; } public string? Mime_Type { get; set; } }
+    public class MetaMedia { public string? Id { get; set; } public string? Mime_Typea { get; set; } }
 }
