@@ -825,27 +825,27 @@ namespace LabelWise.Api.Controllers
             try
             {
                 var trialCollection = _database.GetCollection<MongoDB.Bson.BsonDocument>("B2C_Trial_Users");
-                var now = DateTime.UtcNow.AddHours(-3).Date;
+                var now = DateTime.UtcNow.AddHours(-3).Date; // Hora de Brasília / Data atual
                 var quinzeDiasAtras = now.AddDays(-15);
 
+                // Filtra utilizadores no período de trial de 15 dias
                 var filter = Builders<MongoDB.Bson.BsonDocument>.Filter.Gte("TrialStartDate", quinzeDiasAtras);
                 var allTrialUsers = await trialCollection.Find(filter).ToListAsync();
 
-                int sentIncomplete = 0;
-                int sentActiveReminder = 0;
+                int sentCount = 0;
                 int skippedAlreadyInteracted = 0;
                 int errors = 0;
 
                 foreach (var user in allTrialUsers)
                 {
                     string phone = user["_id"].AsString;
-                    bool profileConfigured = user.Contains("ProfileConfigured") && user["ProfileConfigured"].AsBoolean;
 
+                    // Verifica a última interação do utilizador
                     DateTime lastInteraction = user.Contains("LastInteractionDate")
                         ? user["LastInteractionDate"].ToUniversalTime().AddHours(-3).Date
                         : DateTime.MinValue;
 
-                    // Se já interagiu hoje, ignora (evita spam)
+                    // Se o utilizador já falou com o bot HOJE, não enviamos nada para evitar spam
                     if (lastInteraction >= now)
                     {
                         skippedAlreadyInteracted++;
@@ -854,21 +854,17 @@ namespace LabelWise.Api.Controllers
 
                     try
                     {
-                        if (!profileConfigured)
-                        {
-                            // 👥 GRUPO 1: Onboarding incompleto (> 24h sem falar, usa template de recuperação)
-                            // Podes criar um template chamado 'completar_cadastro' na Meta
-                            bool sucesso = await _whatsAppSender.SendTemplateReminderAsync(phone, "Cliente", "completar_cadastro");
+                        // Dispara o template aprovado pela Meta 'trial_engajamento'
+                        // O parâmetro "Cliente" é o valor da variável do template (se o teu template tiver {{1}})
+                        bool sucesso = await _whatsAppSender.SendTemplateReminderAsync(phone, "Cliente", "trial_engajamento");
 
-                            if (sucesso) sentIncomplete++; else errors++;
+                        if (sucesso)
+                        {
+                            sentCount++;
                         }
                         else
                         {
-                            // 🚀 GRUPO 2: Cadastro pronto, mas sem interagir hoje (> 24h sem falar, usa template de engajamento)
-                            // Podes usar o template de lembrete que já tens ou criar um específico 'engajamento_diario'
-                            bool sucesso = await _whatsAppSender.SendTemplateReminderAsync(phone, "Cliente", "engajamento_diario");
-
-                            if (sucesso) sentActiveReminder++; else errors++;
+                            errors++;
                         }
                     }
                     catch (Exception ex)
@@ -878,10 +874,13 @@ namespace LabelWise.Api.Controllers
                     }
                 }
 
+                _logger.LogInformation("[Trial Reminders] Executado. Enviados: {Sent}, Ignorados (já ativos hoje): {Skipped}, Erros: {Errors}",
+                    sentCount, skippedAlreadyInteracted, errors);
+
                 return Ok(new
                 {
                     success = true,
-                    message = $"Disparos por Template concluídos. Incompletos: {sentIncomplete}, Ativos lembrados: {sentActiveReminder}, Ignorados (já ativos hoje): {skippedAlreadyInteracted}, Erros: {errors}"
+                    message = $"Disparos concluídos. Lembretes enviados: {sentCount}, Ignorados (já ativos hoje): {skippedAlreadyInteracted}, Erros: {errors}"
                 });
             }
             catch (Exception ex)
