@@ -812,6 +812,85 @@ namespace LabelWise.Api.Controllers
             return StatusCode(500, new { success = false, message = "Falha ao enviar lembrete." });
         }
 
+
+        [HttpPost("send-trial-reminders")]
+        public async Task<IActionResult> SendTrialReminders([FromHeader(Name = "X-Cron-Secret")] string secret)
+        {
+            var expectedSecret = _configuration["CronSecret"];
+            if (string.IsNullOrEmpty(secret) || secret != expectedSecret)
+            {
+                return Unauthorized(new { success = false, message = "Acesso negado." });
+            }
+
+            try
+            {
+                var trialCollection = _database.GetCollection<MongoDB.Bson.BsonDocument>("B2C_Trial_Users");
+                var now = DateTime.UtcNow.AddHours(-3).Date;
+                var quinzeDiasAtras = now.AddDays(-15);
+
+                var filter = Builders<MongoDB.Bson.BsonDocument>.Filter.Gte("TrialStartDate", quinzeDiasAtras);
+                var allTrialUsers = await trialCollection.Find(filter).ToListAsync();
+
+                int sentIncomplete = 0;
+                int sentActiveReminder = 0;
+                int skippedAlreadyInteracted = 0;
+                int errors = 0;
+
+                foreach (var user in allTrialUsers)
+                {
+                    string phone = user["_id"].AsString;
+                    bool profileConfigured = user.Contains("ProfileConfigured") && user["ProfileConfigured"].AsBoolean;
+
+                    DateTime lastInteraction = user.Contains("LastInteractionDate")
+                        ? user["LastInteractionDate"].ToUniversalTime().AddHours(-3).Date
+                        : DateTime.MinValue;
+
+                    // Se já interagiu hoje, ignora (evita spam)
+                    if (lastInteraction >= now)
+                    {
+                        skippedAlreadyInteracted++;
+                        continue;
+                    }
+
+                    try
+                    {
+                        if (!profileConfigured)
+                        {
+                            // 👥 GRUPO 1: Onboarding incompleto (> 24h sem falar, usa template de recuperação)
+                            // Podes criar um template chamado 'completar_cadastro' na Meta
+                            bool sucesso = await _whatsAppSender.SendTemplateReminderAsync(phone, "Cliente", "completar_cadastro");
+
+                            if (sucesso) sentIncomplete++; else errors++;
+                        }
+                        else
+                        {
+                            // 🚀 GRUPO 2: Cadastro pronto, mas sem interagir hoje (> 24h sem falar, usa template de engajamento)
+                            // Podes usar o template de lembrete que já tens ou criar um específico 'engajamento_diario'
+                            bool sucesso = await _whatsAppSender.SendTemplateReminderAsync(phone, "Cliente", "engajamento_diario");
+
+                            if (sucesso) sentActiveReminder++; else errors++;
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        _logger.LogError(ex, "Erro ao enviar template de trial para o telefone: {Phone}", phone);
+                        errors++;
+                    }
+                }
+
+                return Ok(new
+                {
+                    success = true,
+                    message = $"Disparos por Template concluídos. Incompletos: {sentIncomplete}, Ativos lembrados: {sentActiveReminder}, Ignorados (já ativos hoje): {skippedAlreadyInteracted}, Erros: {errors}"
+                });
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Erro crítico no endpoint de lembretes de trial.");
+                return StatusCode(500, new { success = false, message = "Erro interno ao processar lembretes de trial." });
+            }
+        }
+
         private async Task<string> GerarFeedbackDiarioComGeminiAsync(
             string patientGoal,
             int targetCalories,
