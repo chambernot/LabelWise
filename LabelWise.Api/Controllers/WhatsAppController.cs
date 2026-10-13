@@ -904,7 +904,7 @@ namespace LabelWise.Api.Controllers
         }
 
         // 🛠️ MÉTODOS PRIVADOS DE INTEGRAÇÃO COM GETNET (Corrigidos)
-        // 🛠️ MÉTODOS PRIVADOS DE INTEGRAÇÃO COM GETNET BRASIL (Corrigidos)
+        // 🛠️ MÉTODOS PRIVADOS DE INTEGRAÇÃO COM GLOBAL GETNET DPY (Definitivo)
         private async Task<string?> GerarTokenGetnetAsync()
         {
             try
@@ -913,12 +913,12 @@ namespace LabelWise.Api.Controllers
                 var clientSecret = _configuration["Getnet:ClientSecret"]?.Trim();
                 var isProd = _configuration.GetValue<bool>("Getnet:IsProduction");
 
-                _logger.LogInformation($"[GETNET TOKEN] Tentativa na Plataforma Brasil. Ambiente: {(isProd ? "PROD" : "SANDBOX")}");
+                _logger.LogInformation($"[GETNET TOKEN] Plataforma DPY. ClientId: {clientId}");
 
-                // ✅ URLs oficiais da Plataforma Aberta Getnet Brasil
+                // ✅ Rota Oficial Global Getnet (DPY)
                 var authUrl = isProd
-                    ? "https://api.getnet.com.br/auth/oauth/v2/token"
-                    : "https://api-sandbox.getnet.com.br/auth/oauth/v2/token";
+                    ? "https://api.globalgetnet.com/authentication/oauth2/access_token"
+                    : "https://api-sbx.pre.globalgetnet.com/authentication/oauth2/access_token";
 
                 var client = _httpClientFactory.CreateClient();
                 var request = new HttpRequestMessage(HttpMethod.Post, authUrl);
@@ -928,7 +928,6 @@ namespace LabelWise.Api.Controllers
 
                 request.Content = new FormUrlEncodedContent(new[]
                 {
-                    new KeyValuePair<string, string>("scope", "oob"),
                     new KeyValuePair<string, string>("grant_type", "client_credentials")
                 });
 
@@ -959,29 +958,40 @@ namespace LabelWise.Api.Controllers
                 var token = await GerarTokenGetnetAsync();
                 if (string.IsNullOrEmpty(token)) return null;
 
+                var sellerId = _configuration["Getnet:SellerId"]?.Trim();
                 var isProd = _configuration.GetValue<bool>("Getnet:IsProduction");
 
-                // ✅ URL Base e Rota oficial da Plataforma Aberta Getnet Brasil
+                // ✅ URL Base e Rota da Global Getnet (DPY)
                 var baseUrl = isProd
-                     ? "https://api.getnet.com.br"
-                     : "https://api-sandbox.getnet.com.br";
+                     ? "https://api.globalgetnet.com"
+                     : "https://api-sbx.pre.globalgetnet.com";
 
-                var requestUrl = $"{baseUrl}/v1/payment-links";
+                var requestUrl = $"{baseUrl}/dpy/payment-link/v1/payment-links";
 
                 var client = _httpClientFactory.CreateClient();
 
-                // ✅ Payload ajustado para a documentação padrão da Getnet Brasil
+                // ✅ Payload formatado para DPY
                 var payload = new
                 {
-                    order_id = $"sub_{phone}_{DateTime.UtcNow.Ticks}",
-                    amount = (int)(valor * 100),
+                    seller_id = sellerId,
+                    expiration = DateTime.UtcNow.AddDays(7).ToString("yyyy-MM-ddTHH:mm:ss"),
+                    max_orders = 1,
                     currency = "BRL",
-                    description = "Nutrição Fácil - Assinatura Mensal",
+                    order_id = $"sub_{phone}_{DateTime.UtcNow.Ticks}",
                     customer = new
                     {
-                        first_name = "Cliente",
-                        last_name = "Nutrição Fácil",
+                        name = string.IsNullOrWhiteSpace(name) ? "Cliente Nutrição Fácil" : name,
                         phone_number = phone
+                    },
+                    products = new[]
+                    {
+                        new
+                        {
+                            product_type = "digital_goods",
+                            title = "Nutrição Fácil - Assinatura Mensal",
+                            amount = (int)(valor * 100),
+                            quantity = 1
+                        }
                     }
                 };
 
