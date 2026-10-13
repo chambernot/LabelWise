@@ -904,31 +904,31 @@ namespace LabelWise.Api.Controllers
         }
 
         // 🛠️ MÉTODOS PRIVADOS DE INTEGRAÇÃO COM GETNET (Corrigidos)
+        // 🛠️ MÉTODOS PRIVADOS DE INTEGRAÇÃO COM GETNET BRASIL (Corrigidos)
         private async Task<string?> GerarTokenGetnetAsync()
         {
             try
             {
-                var clientId = _configuration["Getnet:ClientId"];
-                var clientSecret = _configuration["Getnet:ClientSecret"];
+                var clientId = _configuration["Getnet:ClientId"]?.Trim();
+                var clientSecret = _configuration["Getnet:ClientSecret"]?.Trim();
                 var isProd = _configuration.GetValue<bool>("Getnet:IsProduction");
 
-                _logger.LogInformation($"[GETNET TOKEN] Tentativa com Basic Auth puro. Ambiente: {(isProd ? "PROD" : "SANDBOX")}");
+                _logger.LogInformation($"[GETNET TOKEN] Tentativa na Plataforma Brasil. Ambiente: {(isProd ? "PROD" : "SANDBOX")}");
 
+                // ✅ URLs oficiais da Plataforma Aberta Getnet Brasil
                 var authUrl = isProd
-                    ? "https://api.globalgetnet.com/authentication/oauth2/access_token"
-                    : "https://api-sbx.pre.globalgetnet.com/authentication/oauth2/access_token";
+                    ? "https://api.getnet.com.br/auth/oauth/v2/token"
+                    : "https://api-sandbox.getnet.com.br/auth/oauth/v2/token";
 
                 var client = _httpClientFactory.CreateClient();
                 var request = new HttpRequestMessage(HttpMethod.Post, authUrl);
 
-                // ✅ 1. Enviamos as credenciais APENAS no cabeçalho de autorização (Basic Auth)
-                var credentialsText = $"{clientId?.Trim()}:{clientSecret?.Trim()}";
-                var credentials = Convert.ToBase64String(Encoding.ASCII.GetBytes(credentialsText));
+                var credentials = Convert.ToBase64String(Encoding.ASCII.GetBytes($"{clientId}:{clientSecret}"));
                 request.Headers.Authorization = new AuthenticationHeaderValue("Basic", credentials);
 
-                // ✅ 2. O corpo do pedido leva APENAS o grant_type (removidos o client_id e secret daqui)
                 request.Content = new FormUrlEncodedContent(new[]
                 {
+                    new KeyValuePair<string, string>("scope", "oob"),
                     new KeyValuePair<string, string>("grant_type", "client_credentials")
                 });
 
@@ -959,39 +959,29 @@ namespace LabelWise.Api.Controllers
                 var token = await GerarTokenGetnetAsync();
                 if (string.IsNullOrEmpty(token)) return null;
 
-                var sellerId = _configuration["Getnet:SellerId"];
                 var isProd = _configuration.GetValue<bool>("Getnet:IsProduction");
 
-                // ✅ URL BASE E PATH EXATOS DA SUA IMAGEM (DPY)
+                // ✅ URL Base e Rota oficial da Plataforma Aberta Getnet Brasil
                 var baseUrl = isProd
-                     ? "https://api.globalgetnet.com"
-                     : "https://api-sbx.pre.globalgetnet.com";
+                     ? "https://api.getnet.com.br"
+                     : "https://api-sandbox.getnet.com.br";
 
-                var requestUrl = $"{baseUrl}/dpy/payment-link/v1/payment-links";
+                var requestUrl = $"{baseUrl}/v1/payment-links";
 
                 var client = _httpClientFactory.CreateClient();
 
+                // ✅ Payload ajustado para a documentação padrão da Getnet Brasil
                 var payload = new
                 {
-                    seller_id = sellerId,
-                    expiration = DateTime.UtcNow.AddDays(7).ToString("yyyy-MM-ddTHH:mm:ss"),
-                    max_orders = 1,
-                    currency = "BRL",
                     order_id = $"sub_{phone}_{DateTime.UtcNow.Ticks}",
+                    amount = (int)(valor * 100),
+                    currency = "BRL",
+                    description = "Nutrição Fácil - Assinatura Mensal",
                     customer = new
                     {
-                        name = string.IsNullOrWhiteSpace(name) ? "Cliente Nutrição Fácil" : name,
+                        first_name = "Cliente",
+                        last_name = "Nutrição Fácil",
                         phone_number = phone
-                    },
-                    products = new[]
-                    {
-                        new
-                        {
-                            product_type = "digital_goods",
-                            title = "Nutrição Fácil - Assinatura Mensal",
-                            amount = (int)(valor * 100),
-                            quantity = 1
-                        }
                     }
                 };
 
@@ -1003,12 +993,13 @@ namespace LabelWise.Api.Controllers
                 if (!response.IsSuccessStatusCode)
                 {
                     var errorContent = await response.Content.ReadAsStringAsync();
-                    _logger.LogError("Erro ao gerar link de pagamento Getnet: {Error}", errorContent);
+                    _logger.LogError("[GETNET LINK ERROR] Status: {StatusCode} | Body: {Error}", response.StatusCode, errorContent);
                     return null;
                 }
 
                 var jsonResponse = await response.Content.ReadAsStringAsync();
                 using var doc = JsonDocument.Parse(jsonResponse);
+
                 if (doc.RootElement.TryGetProperty("payment_url", out var urlProp))
                 {
                     return urlProp.GetString();
