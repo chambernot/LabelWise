@@ -904,7 +904,7 @@ namespace LabelWise.Api.Controllers
         }
 
         // 🛠️ MÉTODOS PRIVADOS DE INTEGRAÇÃO COM GETNET (Corrigidos)
-        // 🛠️ MÉTODOS PRIVADOS DE INTEGRAÇÃO COM GETNET (Corrigidos)
+        // 🛠️ MÉTODOS PRIVADOS DE INTEGRAÇÃO COM GETNET (Corrigidos Definitivamente)
         private async Task<string?> GerarTokenGetnetAsync()
         {
             try
@@ -913,11 +913,10 @@ namespace LabelWise.Api.Controllers
                 var clientSecret = _configuration["Getnet:ClientSecret"];
                 var isProd = _configuration.GetValue<bool>("Getnet:IsProduction");
 
-                // ✅ Caminho correto para a API da Getnet Brasil (v1/oauth2/token)
-                // Substitua pelo URL exato indicado no seu portal de desenvolvedor para gerar tokens
+                // ✅ ROTA E DOMÍNIO CORRETOS DA GLOBAL GETNET
                 var authUrl = isProd
-                    ? "https://api.globalgetnet.com/auth/oauth/v2/token"
-                    : "https://api-sbx.pre.globalgetnet.com/auth/oauth/v2/token"; // Exemplo comum da Global Getnet
+                    ? "https://api.globalgetnet.com/authentication/oauth2/access_token"
+                    : "https://api-sbx.pre.globalgetnet.com/authentication/oauth2/access_token";
 
                 var client = _httpClientFactory.CreateClient();
                 var request = new HttpRequestMessage(HttpMethod.Post, authUrl);
@@ -926,7 +925,7 @@ namespace LabelWise.Api.Controllers
                 request.Headers.Authorization = new AuthenticationHeaderValue("Basic", credentials);
                 request.Content = new FormUrlEncodedContent(new[]
                 {
-                    new KeyValuePair<string, string>("scope", "oob"),
+                    // Na plataforma Global, o grant_type costuma ser o único parâmetro obrigatório
                     new KeyValuePair<string, string>("grant_type", "client_credentials")
                 });
 
@@ -959,12 +958,11 @@ namespace LabelWise.Api.Controllers
                 var sellerId = _configuration["Getnet:SellerId"];
                 var isProd = _configuration.GetValue<bool>("Getnet:IsProduction");
 
-                // ✅ URL Base de Sandbox corrigido para a Getnet Brasil
+                // ✅ URL BASE E PATH EXATOS DA SUA IMAGEM (DPY)
                 var baseUrl = isProd
-     ? "https://api.globalgetnet.com"
-     : "https://api-sbx.pre.globalgetnet.com"; // Deve ser a mesma base usada no token
+                     ? "https://api.globalgetnet.com"
+                     : "https://api-sbx.pre.globalgetnet.com";
 
-                // Este path que já tem está correto para a Global Getnet (DPY)
                 var requestUrl = $"{baseUrl}/dpy/payment-link/v1/payment-links";
 
                 var client = _httpClientFactory.CreateClient();
