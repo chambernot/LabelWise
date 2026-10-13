@@ -359,7 +359,6 @@ namespace LabelWise.Api.Controllers
                     {
                         _logger.LogWarning("[WhatsApp B2C] ⏳ Trial expirado para o número: {Phone}", senderPhone);
 
-                        // Gera link Getnet automaticamente ao expirar o trial
                         string? paymentUrl = await GerarLinkPagamentoGetnetAsync(senderPhone, "Cliente Trial", 29.90m);
 
                         string msgExpirado = "⏳ *O seu período experimental gratuito de 15 dias terminou.*\n\n" +
@@ -904,7 +903,7 @@ namespace LabelWise.Api.Controllers
             }
         }
 
-        // 🛠️ MÉTODOS PRIVADOS DE INTEGRAÇÃO COM GETNET
+        // 🛠️ MÉTODOS PRIVADOS DE INTEGRAÇÃO COM GETNET (Corrigidos)
         private async Task<string?> GerarTokenGetnetAsync()
         {
             try
@@ -912,10 +911,13 @@ namespace LabelWise.Api.Controllers
                 var clientId = _configuration["Getnet:ClientId"];
                 var clientSecret = _configuration["Getnet:ClientSecret"];
                 var isProd = _configuration.GetValue<bool>("Getnet:IsProduction");
-                var baseUrl = isProd ? "https://api.getnet.com.br" : "https://api-sbx.pre.globalgetnet.com";
+
+                var authUrl = isProd
+                    ? "https://api.getnet.com.br/auth/oauth/v2/token"
+                    : "https://api-sandbox.getnet.com.br/auth/oauth/v2/token";
 
                 var client = _httpClientFactory.CreateClient();
-                var request = new HttpRequestMessage(HttpMethod.Post, $"{baseUrl}/auth/oauth/v2/token");
+                var request = new HttpRequestMessage(HttpMethod.Post, authUrl);
                 var credentials = Convert.ToBase64String(Encoding.ASCII.GetBytes($"{clientId}:{clientSecret}"));
 
                 request.Headers.Authorization = new AuthenticationHeaderValue("Basic", credentials);
@@ -926,14 +928,20 @@ namespace LabelWise.Api.Controllers
                 });
 
                 var response = await client.SendAsync(request);
-                if (!response.IsSuccessStatusCode) return null;
+                if (!response.IsSuccessStatusCode)
+                {
+                    var errorContent = await response.Content.ReadAsStringAsync();
+                    _logger.LogError("Erro ao autenticar na Getnet: {Error}", errorContent);
+                    return null;
+                }
 
                 var jsonResponse = await response.Content.ReadAsStringAsync();
                 using var doc = JsonDocument.Parse(jsonResponse);
                 return doc.RootElement.GetProperty("access_token").GetString();
             }
-            catch
+            catch (Exception ex)
             {
+                _logger.LogError(ex, "Exceção ao autenticar na Getnet.");
                 return null;
             }
         }
@@ -947,10 +955,11 @@ namespace LabelWise.Api.Controllers
 
                 var sellerId = _configuration["Getnet:SellerId"];
                 var isProd = _configuration.GetValue<bool>("Getnet:IsProduction");
-                var baseUrl = isProd ? "https://api.getnet.com.br" : "https://api-sbx.pre.globalgetnet.com";
 
-                var client = _httpClientFactory.CreateClient();
+                var baseUrl = isProd ? "https://api.getnet.com.br" : "https://api-sbx.pre.globalgetnet.com";
                 var requestUrl = $"{baseUrl}/dpy/payment-link/v1/payment-links";
+
+                var client = _httpClientFactory.CreateClient(); // 👈 Variável client criada corretamente aqui!
 
                 var payload = new
                 {
@@ -981,7 +990,12 @@ namespace LabelWise.Api.Controllers
                 request.Content = new StringContent(JsonSerializer.Serialize(payload), Encoding.UTF8, "application/json");
 
                 var response = await client.SendAsync(request);
-                if (!response.IsSuccessStatusCode) return null;
+                if (!response.IsSuccessStatusCode)
+                {
+                    var errorContent = await response.Content.ReadAsStringAsync();
+                    _logger.LogError("Erro ao gerar link de pagamento Getnet: {Error}", errorContent);
+                    return null;
+                }
 
                 var jsonResponse = await response.Content.ReadAsStringAsync();
                 using var doc = JsonDocument.Parse(jsonResponse);
@@ -992,8 +1006,9 @@ namespace LabelWise.Api.Controllers
 
                 return null;
             }
-            catch
+            catch (Exception ex)
             {
+                _logger.LogError(ex, "Exceção ao gerar link de pagamento.");
                 return null;
             }
         }
