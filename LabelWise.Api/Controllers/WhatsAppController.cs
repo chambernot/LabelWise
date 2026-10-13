@@ -913,10 +913,11 @@ namespace LabelWise.Api.Controllers
                 var clientSecret = _configuration["Getnet:ClientSecret"];
                 var isProd = _configuration.GetValue<bool>("Getnet:IsProduction");
 
-                // ✅ URL de Sandbox corrigido para a Getnet Brasil
+                // ✅ Caminho correto para a API da Getnet Brasil (v1/oauth2/token)
+                // Substitua pelo URL exato indicado no seu portal de desenvolvedor para gerar tokens
                 var authUrl = isProd
-                    ? "https://api.getnet.com.br/auth/oauth/v2/token"
-                    : "https://api-sandbox.getnet.com.br/auth/oauth/v2/token";
+                    ? "https://api.globalgetnet.com/auth/oauth/v2/token"
+                    : "https://api-sandbox.globalgetnet.com/auth/oauth/v2/token"; // Exemplo comum da Global Getnet
 
                 var client = _httpClientFactory.CreateClient();
                 var request = new HttpRequestMessage(HttpMethod.Post, authUrl);
@@ -960,9 +961,10 @@ namespace LabelWise.Api.Controllers
 
                 // ✅ URL Base de Sandbox corrigido para a Getnet Brasil
                 var baseUrl = isProd
-                    ? "https://api.getnet.com.br"
-                    : "https://api-sandbox.getnet.com.br";
+     ? "https://api.globalgetnet.com"
+     : "https://api-sandbox.globalgetnet.com"; // Deve ser a mesma base usada no token
 
+                // Este path que já tem está correto para a Global Getnet (DPY)
                 var requestUrl = $"{baseUrl}/dpy/payment-link/v1/payment-links";
 
                 var client = _httpClientFactory.CreateClient();
