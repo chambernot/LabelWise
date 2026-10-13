@@ -904,6 +904,7 @@ namespace LabelWise.Api.Controllers
         }
 
         // 🛠️ MÉTODOS PRIVADOS DE INTEGRAÇÃO COM GETNET (Corrigidos)
+        // 🛠️ MÉTODOS PRIVADOS DE INTEGRAÇÃO COM GETNET (Corrigidos)
         private async Task<string?> GerarTokenGetnetAsync()
         {
             try
@@ -912,10 +913,10 @@ namespace LabelWise.Api.Controllers
                 var clientSecret = _configuration["Getnet:ClientSecret"];
                 var isProd = _configuration.GetValue<bool>("Getnet:IsProduction");
 
-                // Correção: Alinhado com o domínio global da Global Getnet (DPY) para Sandbox
+                // ✅ URL de Sandbox corrigido para a Getnet Brasil
                 var authUrl = isProd
                     ? "https://api.getnet.com.br/auth/oauth/v2/token"
-                    : "https://api-sbx.pre.globalgetnet.com/auth/oauth/v2/token";
+                    : "https://api-sandbox.getnet.com.br/auth/oauth/v2/token";
 
                 var client = _httpClientFactory.CreateClient();
                 var request = new HttpRequestMessage(HttpMethod.Post, authUrl);
@@ -924,9 +925,9 @@ namespace LabelWise.Api.Controllers
                 request.Headers.Authorization = new AuthenticationHeaderValue("Basic", credentials);
                 request.Content = new FormUrlEncodedContent(new[]
                 {
-            new KeyValuePair<string, string>("scope", "oob"),
-            new KeyValuePair<string, string>("grant_type", "client_credentials")
-        });
+                    new KeyValuePair<string, string>("scope", "oob"),
+                    new KeyValuePair<string, string>("grant_type", "client_credentials")
+                });
 
                 var response = await client.SendAsync(request);
                 if (!response.IsSuccessStatusCode)
@@ -957,10 +958,14 @@ namespace LabelWise.Api.Controllers
                 var sellerId = _configuration["Getnet:SellerId"];
                 var isProd = _configuration.GetValue<bool>("Getnet:IsProduction");
 
-                var baseUrl = isProd ? "https://api.getnet.com.br" : "https://api-sbx.pre.globalgetnet.com";
+                // ✅ URL Base de Sandbox corrigido para a Getnet Brasil
+                var baseUrl = isProd
+                    ? "https://api.getnet.com.br"
+                    : "https://api-sandbox.getnet.com.br";
+
                 var requestUrl = $"{baseUrl}/dpy/payment-link/v1/payment-links";
 
-                var client = _httpClientFactory.CreateClient(); // 👈 Variável client criada corretamente aqui!
+                var client = _httpClientFactory.CreateClient();
 
                 var payload = new
                 {
