@@ -912,10 +912,7 @@ namespace LabelWise.Api.Controllers
                 var clientSecret = _configuration["Getnet:ClientSecret"];
                 var isProd = _configuration.GetValue<bool>("Getnet:IsProduction");
 
-                // 🚨 1. LOG DE SEGURANÇA: Verificar se as chaves estão a chegar ao código
-                _logger.LogInformation($"[GETNET TOKEN] ClientId: {(string.IsNullOrEmpty(clientId) ? "NULO/VAZIO" : clientId.Substring(0, Math.Min(10, clientId.Length)) + "...")}");
-                _logger.LogInformation($"[GETNET TOKEN] ClientSecret configurado: {!string.IsNullOrEmpty(clientSecret)}");
-                _logger.LogInformation($"[GETNET TOKEN] Ambiente: {(isProd ? "PROD" : "SANDBOX")}");
+                _logger.LogInformation($"[GETNET TOKEN] Tentativa com Basic Auth puro. Ambiente: {(isProd ? "PROD" : "SANDBOX")}");
 
                 var authUrl = isProd
                     ? "https://api.globalgetnet.com/authentication/oauth2/access_token"
@@ -924,18 +921,15 @@ namespace LabelWise.Api.Controllers
                 var client = _httpClientFactory.CreateClient();
                 var request = new HttpRequestMessage(HttpMethod.Post, authUrl);
 
-                // 🚨 2. AJUSTE: Algumas contas DPY exigem Basic Auth, outras exigem no Body. Vamos tentar Basic Auth com remoção de espaços em branco.
+                // ✅ 1. Enviamos as credenciais APENAS no cabeçalho de autorização (Basic Auth)
                 var credentialsText = $"{clientId?.Trim()}:{clientSecret?.Trim()}";
                 var credentials = Convert.ToBase64String(Encoding.ASCII.GetBytes(credentialsText));
-
                 request.Headers.Authorization = new AuthenticationHeaderValue("Basic", credentials);
 
-                // 🚨 3. AJUSTE: Passar também as credenciais no Body. O Oauth2 DPY frequentemente exige isto.
+                // ✅ 2. O corpo do pedido leva APENAS o grant_type (removidos o client_id e secret daqui)
                 request.Content = new FormUrlEncodedContent(new[]
                 {
-                    new KeyValuePair<string, string>("grant_type", "client_credentials"),
-                    new KeyValuePair<string, string>("client_id", clientId?.Trim() ?? ""),
-                    new KeyValuePair<string, string>("client_secret", clientSecret?.Trim() ?? "")
+                    new KeyValuePair<string, string>("grant_type", "client_credentials")
                 });
 
                 var response = await client.SendAsync(request);
@@ -943,7 +937,6 @@ namespace LabelWise.Api.Controllers
                 if (!response.IsSuccessStatusCode)
                 {
                     var errorContent = await response.Content.ReadAsStringAsync();
-                    // 🚨 4. LOG DETALHADO DO ERRO
                     _logger.LogError("[GETNET TOKEN ERROR] Status: {StatusCode} | Body: {Error}", response.StatusCode, errorContent);
                     return null;
                 }
