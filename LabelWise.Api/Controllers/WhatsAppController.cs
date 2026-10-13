@@ -904,7 +904,6 @@ namespace LabelWise.Api.Controllers
         }
 
         // 🛠️ MÉTODOS PRIVADOS DE INTEGRAÇÃO COM GETNET (Corrigidos)
-        // 🛠️ MÉTODOS PRIVADOS DE INTEGRAÇÃO COM GETNET (Corrigidos Definitivamente)
         private async Task<string?> GerarTokenGetnetAsync()
         {
             try
@@ -913,27 +912,39 @@ namespace LabelWise.Api.Controllers
                 var clientSecret = _configuration["Getnet:ClientSecret"];
                 var isProd = _configuration.GetValue<bool>("Getnet:IsProduction");
 
-                // ✅ ROTA E DOMÍNIO CORRETOS DA GLOBAL GETNET
+                // 🚨 1. LOG DE SEGURANÇA: Verificar se as chaves estão a chegar ao código
+                _logger.LogInformation($"[GETNET TOKEN] ClientId: {(string.IsNullOrEmpty(clientId) ? "NULO/VAZIO" : clientId.Substring(0, Math.Min(10, clientId.Length)) + "...")}");
+                _logger.LogInformation($"[GETNET TOKEN] ClientSecret configurado: {!string.IsNullOrEmpty(clientSecret)}");
+                _logger.LogInformation($"[GETNET TOKEN] Ambiente: {(isProd ? "PROD" : "SANDBOX")}");
+
                 var authUrl = isProd
                     ? "https://api.globalgetnet.com/authentication/oauth2/access_token"
                     : "https://api-sbx.pre.globalgetnet.com/authentication/oauth2/access_token";
 
                 var client = _httpClientFactory.CreateClient();
                 var request = new HttpRequestMessage(HttpMethod.Post, authUrl);
-                var credentials = Convert.ToBase64String(Encoding.ASCII.GetBytes($"{clientId}:{clientSecret}"));
+
+                // 🚨 2. AJUSTE: Algumas contas DPY exigem Basic Auth, outras exigem no Body. Vamos tentar Basic Auth com remoção de espaços em branco.
+                var credentialsText = $"{clientId?.Trim()}:{clientSecret?.Trim()}";
+                var credentials = Convert.ToBase64String(Encoding.ASCII.GetBytes(credentialsText));
 
                 request.Headers.Authorization = new AuthenticationHeaderValue("Basic", credentials);
+
+                // 🚨 3. AJUSTE: Passar também as credenciais no Body. O Oauth2 DPY frequentemente exige isto.
                 request.Content = new FormUrlEncodedContent(new[]
                 {
-                    // Na plataforma Global, o grant_type costuma ser o único parâmetro obrigatório
-                    new KeyValuePair<string, string>("grant_type", "client_credentials")
+                    new KeyValuePair<string, string>("grant_type", "client_credentials"),
+                    new KeyValuePair<string, string>("client_id", clientId?.Trim() ?? ""),
+                    new KeyValuePair<string, string>("client_secret", clientSecret?.Trim() ?? "")
                 });
 
                 var response = await client.SendAsync(request);
+
                 if (!response.IsSuccessStatusCode)
                 {
                     var errorContent = await response.Content.ReadAsStringAsync();
-                    _logger.LogError("Erro ao autenticar na Getnet: {Error}", errorContent);
+                    // 🚨 4. LOG DETALHADO DO ERRO
+                    _logger.LogError("[GETNET TOKEN ERROR] Status: {StatusCode} | Body: {Error}", response.StatusCode, errorContent);
                     return null;
                 }
 
