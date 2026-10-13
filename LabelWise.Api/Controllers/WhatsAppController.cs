@@ -124,6 +124,27 @@ namespace LabelWise.Api.Controllers
 
                 string textoLimpoCmd = Regex.Replace(textoBruto, "[^a-zA-Z0-9áéíóúâêîôûãõçÁÉÍÓÚÂÊÎÔÛÃÕÇ ]", "").Trim().ToLowerInvariant();
 
+                // 💳 Atalho para Pagamento / Assinatura (Getnet)
+                if (textoLimpoCmd == "assinar" || textoLimpoCmd == "pagar" || textoLimpoCmd == "plano" || textoLimpoCmd == "assinatura")
+                {
+                    await _whatsAppSender.SendTextMessageAsync(senderPhone, "⏳ A gerar o seu link seguro de pagamento na Getnet...");
+                    string? paymentUrl = await GerarLinkPagamentoGetnetAsync(senderPhone, "Cliente Nutrição Fácil", 29.90m);
+
+                    if (!string.IsNullOrEmpty(paymentUrl))
+                    {
+                        string msgAssinatura = "💳 *Assinatura Mensal - Nutrição Fácil*\n\n" +
+                                               "Para continuar a usar o assistente de nutrição sem limites, clique no link seguro abaixo (R$ 29,90):\n\n" +
+                                               $"👉 {paymentUrl}\n\n" +
+                                               "Assim que concluir o pagamento, o seu acesso é liberado automaticamente!";
+                        await _whatsAppSender.SendTextMessageAsync(senderPhone, msgAssinatura);
+                    }
+                    else
+                    {
+                        await _whatsAppSender.SendTextMessageAsync(senderPhone, "⚠️ Ocorreu um erro ao gerar o link de pagamento. Tente novamente em instantes.");
+                    }
+                    return Ok();
+                }
+
                 var patientsCollectionCheck = _database.GetCollection<MongoDB.Bson.BsonDocument>("Nutrition_Patients");
                 var patientDocCheck = await patientsCollectionCheck.Find(Builders<MongoDB.Bson.BsonDocument>.Filter.Eq("_id", senderPhone)).FirstOrDefaultAsync();
 
@@ -214,10 +235,9 @@ namespace LabelWise.Api.Controllers
                                     string goalSelecionado = objetivosValidos[optGoal];
                                     var updateGoal = Builders<MongoDB.Bson.BsonDocument>.Update
                                         .Set("TempGoal", goalSelecionado)
-                                        .Set("OnboardingStep", "WaitingForProfile"); // Mudança aqui
+                                        .Set("OnboardingStep", "WaitingForProfile");
                                     await trialCollection.UpdateOneAsync(filterTrial, updateGoal);
 
-                                    // Nova pergunta inteligente
                                     await _whatsAppSender.SendTextMessageAsync(senderPhone,
                                         "🔥 **Passo 2 de 4:** Para eu calcular a sua dieta exata (como um nutricionista faria), preciso de te conhecer melhor!\n\n" +
                                         "👉 *Diga-me numa só mensagem: O seu Peso, Altura, Idade, Sexo e rotina de atividade física.*");
@@ -232,8 +252,6 @@ namespace LabelWise.Api.Controllers
                                 await _whatsAppSender.SendTextMessageAsync(senderPhone, "🧠 *A processar os seus dados biológicos e a calcular as metas ideais com IA...* ⏱️");
 
                                 string userGoal = userDoc.Contains("TempGoal") ? userDoc["TempGoal"].AsString : "Emagrecimento";
-
-                                // Chama o Gemini para calcular as metas matematicamente
                                 var calculatedGoals = await _nutritionAgentService.CalculateNutritionalGoalsAsync(textoBruto, userGoal);
 
                                 var updateProfile = Builders<MongoDB.Bson.BsonDocument>.Update
@@ -340,10 +358,16 @@ namespace LabelWise.Api.Controllers
                     if ((now - trialStartDate).TotalDays > 15)
                     {
                         _logger.LogWarning("[WhatsApp B2C] ⏳ Trial expirado para o número: {Phone}", senderPhone);
-                        await _whatsAppSender.SendTextMessageAsync(
-                            senderPhone,
-                            "⏳ O seu período experimental gratuito de 15 dias terminou. Para continuar a usar o assistente, por favor faça a subscrição do plano completo. 🥗"
-                        );
+
+                        // Gera link Getnet automaticamente ao expirar o trial
+                        string? paymentUrl = await GerarLinkPagamentoGetnetAsync(senderPhone, "Cliente Trial", 29.90m);
+
+                        string msgExpirado = "⏳ *O seu período experimental gratuito de 15 dias terminou.*\n\n" +
+                                             "Para continuar a usar o assistente sem interrupções, clique no link seguro abaixo para assinar o plano completo:\n\n" +
+                                             (!string.IsNullOrEmpty(paymentUrl) ? $"👉 {paymentUrl}\n\n" : "") +
+                                             "_Assim que pagar, o acesso será renovado automaticamente!_ 🥗";
+
+                        await _whatsAppSender.SendTextMessageAsync(senderPhone, msgExpirado);
                         return Ok();
                     }
 
@@ -359,10 +383,15 @@ namespace LabelWise.Api.Controllers
                     if (dailyCount >= 4)
                     {
                         _logger.LogWarning("[WhatsApp B2C] ⚠️ Limite diário de mensagens atingido para: {Phone}", senderPhone);
-                        await _whatsAppSender.SendTextMessageAsync(
-                            senderPhone,
-                            "⚠ Atingiu o limite de 4 interações gratuitas para hoje. O seu saldo diário será renovado amanhã! ⏰"
-                        );
+
+                        string? paymentUrl = await GerarLinkPagamentoGetnetAsync(senderPhone, "Cliente Limite", 29.90m);
+
+                        string msgLimite = "⚠ *Atingiu o limite de 4 interações gratuitas para hoje.*\n\n" +
+                                           "Quer desbloquear mensagens ilimitadas agora mesmo? Faça a assinatura mensal:\n\n" +
+                                           (!string.IsNullOrEmpty(paymentUrl) ? $"👉 {paymentUrl}\n\n" : "") +
+                                           "O seu saldo diário também será renovado amanhã! ⏰";
+
+                        await _whatsAppSender.SendTextMessageAsync(senderPhone, msgLimite);
                         return Ok();
                     }
 
@@ -376,12 +405,11 @@ namespace LabelWise.Api.Controllers
 
                 bool isNumeroIsolado = int.TryParse(textoLimpoCmd, out int numeroIsoladoVal);
 
-                // 🔄 FASE 5: ATALHO DE SUBSTITUIÇÃO INTELIGENTE NO WHATSAPP
                 if (textoLimpoCmd.StartsWith("substituir ") || textoLimpoCmd.StartsWith("trocar "))
                 {
                     var alimentoAlvo = textoBruto.Replace("substituir", "", StringComparison.OrdinalIgnoreCase)
-                                                   .Replace("trocar", "", StringComparison.OrdinalIgnoreCase)
-                                                   .Replace("por", "", StringComparison.OrdinalIgnoreCase).Trim();
+                                                 .Replace("trocar", "", StringComparison.OrdinalIgnoreCase)
+                                                 .Replace("por", "", StringComparison.OrdinalIgnoreCase).Trim();
 
                     if (!string.IsNullOrWhiteSpace(alimentoAlvo))
                     {
@@ -534,14 +562,13 @@ namespace LabelWise.Api.Controllers
                     return Ok();
                 }
 
-                // 🛡️ DETEÇÃO ROBUSTA DE ÁGUA (Suporta ml, litros, l, copos e garrafas)
                 bool mencionaAgua = textoBruto.Contains("agua", StringComparison.OrdinalIgnoreCase) ||
                                     textoBruto.Contains("água", StringComparison.OrdinalIgnoreCase) ||
                                     textoBruto.Contains("h2o", StringComparison.OrdinalIgnoreCase);
 
                 if (mencionaAgua)
                 {
-                    int quantidadeMl = 250; // Valor padrão se disser apenas "copo de água" ou "água"
+                    int quantidadeMl = 250;
 
                     var matchMl = Regex.Match(textoBruto, @"(\d+)\s*(ml|litros|l)\b", RegexOptions.IgnoreCase);
                     if (matchMl.Success)
@@ -562,7 +589,7 @@ namespace LabelWise.Api.Controllers
                             {
                                 qtd = parsedQtd;
                             }
-                            quantidadeMl = qtd * 250; // Considera 250 ml por copo/garrafa padrão
+                            quantidadeMl = qtd * 250;
                         }
                     }
 
@@ -585,7 +612,6 @@ namespace LabelWise.Api.Controllers
                     var registrosAgua = await waterCol.Find(filterWater).ToListAsync();
                     int totalAguaHoje = registrosAgua.Sum(w => w["AmountMl"].AsInt32);
 
-                    // 💧 BUSCAR A META DIÁRIA DINÂMICA (Definida pela nutricionista ou padrão B2C)
                     int metaAguaDiaria = 2500;
                     var goalsCollection = _database.GetCollection<MongoDB.Bson.BsonDocument>("DailyGoals");
                     var goalFilterWater = Builders<MongoDB.Bson.BsonDocument>.Filter.And(
@@ -642,8 +668,6 @@ namespace LabelWise.Api.Controllers
 
                 if (contextoPendente != null)
                 {
-                    _logger.LogInformation("[WhatsAppController] 🔄 Resposta de clarificação detetada para o utilizador {Phone}", senderPhone);
-
                     textoFinalParaIa = $"[Contexto Anterior da Refeição: {contextoPendente.OriginalTextInput}] " +
                                        $"[Alerta de Restrição Enviado: {contextoPendente.ClarificationQuestion}] " +
                                        $"[Confirmação / Resposta do Utilizador: {textoBruto}] " +
@@ -689,7 +713,6 @@ namespace LabelWise.Api.Controllers
 
                 var respostaTexto = FormatarRespostaParaWhatsApp(result, statusDoDia);
                 await _whatsAppSender.SendTextMessageAsync(senderPhone, respostaTexto);
-
                 await _nutritionRepository.SalvarMensagemHistoricoAsync(senderPhone, "assistant", respostaTexto);
 
                 return Ok();
@@ -812,82 +835,168 @@ namespace LabelWise.Api.Controllers
             return StatusCode(500, new { success = false, message = "Falha ao enviar lembrete." });
         }
 
-
         [HttpPost("send-trial-reminders")]
-public async Task<IActionResult> SendTrialReminders([FromHeader(Name = "X-Cron-Secret")] string secret)
-{
-    var expectedSecret = _configuration["CronSecret"];
-    if (string.IsNullOrEmpty(secret) || secret != expectedSecret)
-    {
-        return Unauthorized(new { success = false, message = "Acesso negado." });
-    }
-
-    try
-    {
-        var trialCollection = _database.GetCollection<MongoDB.Bson.BsonDocument>("B2C_Trial_Users");
-        var now = DateTime.UtcNow.AddHours(-3).Date; // Hora de Brasília / Data atual
-        var quinzeDiasAtras = now.AddDays(-15);
-
-        // Filtra utilizadores no período de trial de 15 dias
-        var filter = Builders<MongoDB.Bson.BsonDocument>.Filter.Gte("TrialStartDate", quinzeDiasAtras);
-        var allTrialUsers = await trialCollection.Find(filter).ToListAsync();
-
-        int sentCount = 0;
-        int skippedAlreadyInteracted = 0;
-        int errors = 0;
-
-        foreach (var user in allTrialUsers)
+        public async Task<IActionResult> SendTrialReminders([FromHeader(Name = "X-Cron-Secret")] string secret)
         {
-            string phone = user["_id"].AsString;
-
-            // Verifica a última interação do utilizador
-            DateTime lastInteraction = user.Contains("LastInteractionDate") 
-                ? user["LastInteractionDate"].ToUniversalTime().AddHours(-3).Date 
-                : DateTime.MinValue;
-
-            // Se o utilizador já falou com o bot HOJE, não enviamos nada para evitar spam
-            if (lastInteraction >= now)
+            var expectedSecret = _configuration["CronSecret"];
+            if (string.IsNullOrEmpty(secret) || secret != expectedSecret)
             {
-                skippedAlreadyInteracted++;
-                continue; 
+                return Unauthorized(new { success = false, message = "Acesso negado." });
             }
 
             try
             {
-                // Dispara o template aprovado pela Meta 'trial_engajamento'
-                // O parâmetro "Cliente" é o valor da variável do template (se o teu template tiver {{1}})
-                bool sucesso = await _whatsAppSender.SendTemplateReminderAsync(phone, "Cliente", "trial_engajamento");
+                var trialCollection = _database.GetCollection<MongoDB.Bson.BsonDocument>("B2C_Trial_Users");
+                var now = DateTime.UtcNow.AddHours(-3).Date;
+                var quinzeDiasAtras = now.AddDays(-15);
 
-                if (sucesso) 
+                var filter = Builders<MongoDB.Bson.BsonDocument>.Filter.Gte("TrialStartDate", quinzeDiasAtras);
+                var allTrialUsers = await trialCollection.Find(filter).ToListAsync();
+
+                int sentCount = 0;
+                int skippedAlreadyInteracted = 0;
+                int errors = 0;
+
+                foreach (var user in allTrialUsers)
                 {
-                    sentCount++;
-                } 
-                else 
-                {
-                    errors++;
+                    string phone = user["_id"].AsString;
+
+                    DateTime lastInteraction = user.Contains("LastInteractionDate")
+                        ? user["LastInteractionDate"].ToUniversalTime().AddHours(-3).Date
+                        : DateTime.MinValue;
+
+                    if (lastInteraction >= now)
+                    {
+                        skippedAlreadyInteracted++;
+                        continue;
+                    }
+
+                    try
+                    {
+                        bool sucesso = await _whatsAppSender.SendTemplateReminderAsync(phone, "Cliente", "trial_engajamento");
+
+                        if (sucesso)
+                        {
+                            sentCount++;
+                        }
+                        else
+                        {
+                            errors++;
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        _logger.LogError(ex, "Erro ao enviar template de trial para o telefone: {Phone}", phone);
+                        errors++;
+                    }
                 }
+
+                return Ok(new
+                {
+                    success = true,
+                    message = $"Disparos concluídos. Lembretes enviados: {sentCount}, Ignorados: {skippedAlreadyInteracted}, Erros: {errors}"
+                });
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "Erro ao enviar template de trial para o telefone: {Phone}", phone);
-                errors++;
+                _logger.LogError(ex, "Erro crítico no endpoint de lembretes de trial.");
+                return StatusCode(500, new { success = false, message = "Erro interno ao processar lembretes de trial." });
             }
         }
 
-        _logger.LogInformation("[Trial Reminders] Executado. Enviados: {Sent}, Ignorados (já ativos hoje): {Skipped}, Erros: {Errors}", 
-            sentCount, skippedAlreadyInteracted, errors);
+        // 🛠️ MÉTODOS PRIVADOS DE INTEGRAÇÃO COM GETNET
+        private async Task<string?> GerarTokenGetnetAsync()
+        {
+            try
+            {
+                var clientId = _configuration["Getnet:ClientId"];
+                var clientSecret = _configuration["Getnet:ClientSecret"];
+                var isProd = _configuration.GetValue<bool>("Getnet:IsProduction");
+                var baseUrl = isProd ? "https://api.getnet.com.br" : "https://api-sbx.pre.globalgetnet.com";
 
-        return Ok(new { 
-            success = true, 
-            message = $"Disparos concluídos. Lembretes enviados: {sentCount}, Ignorados (já ativos hoje): {skippedAlreadyInteracted}, Erros: {errors}" 
-        });
-    }
-    catch (Exception ex)
-    {
-        _logger.LogError(ex, "Erro crítico no endpoint de lembretes de trial.");
-        return StatusCode(500, new { success = false, message = "Erro interno ao processar lembretes de trial." });
-    }
-}
+                var client = _httpClientFactory.CreateClient();
+                var request = new HttpRequestMessage(HttpMethod.Post, $"{baseUrl}/auth/oauth/v2/token");
+                var credentials = Convert.ToBase64String(Encoding.ASCII.GetBytes($"{clientId}:{clientSecret}"));
+
+                request.Headers.Authorization = new AuthenticationHeaderValue("Basic", credentials);
+                request.Content = new FormUrlEncodedContent(new[]
+                {
+                    new KeyValuePair<string, string>("scope", "oob"),
+                    new KeyValuePair<string, string>("grant_type", "client_credentials")
+                });
+
+                var response = await client.SendAsync(request);
+                if (!response.IsSuccessStatusCode) return null;
+
+                var jsonResponse = await response.Content.ReadAsStringAsync();
+                using var doc = JsonDocument.Parse(jsonResponse);
+                return doc.RootElement.GetProperty("access_token").GetString();
+            }
+            catch
+            {
+                return null;
+            }
+        }
+
+        private async Task<string?> GerarLinkPagamentoGetnetAsync(string phone, string name, decimal valor)
+        {
+            try
+            {
+                var token = await GerarTokenGetnetAsync();
+                if (string.IsNullOrEmpty(token)) return null;
+
+                var sellerId = _configuration["Getnet:SellerId"];
+                var isProd = _configuration.GetValue<bool>("Getnet:IsProduction");
+                var baseUrl = isProd ? "https://api.getnet.com.br" : "https://api-sbx.pre.globalgetnet.com";
+
+                var client = _httpClientFactory.CreateClient();
+                var requestUrl = $"{baseUrl}/dpy/payment-link/v1/payment-links";
+
+                var payload = new
+                {
+                    seller_id = sellerId,
+                    expiration = DateTime.UtcNow.AddDays(7).ToString("yyyy-MM-ddTHH:mm:ss"),
+                    max_orders = 1,
+                    currency = "BRL",
+                    order_id = $"sub_{phone}_{DateTime.UtcNow.Ticks}",
+                    customer = new
+                    {
+                        name = string.IsNullOrWhiteSpace(name) ? "Cliente Nutrição Fácil" : name,
+                        phone_number = phone
+                    },
+                    products = new[]
+                    {
+                        new
+                        {
+                            product_type = "digital_goods",
+                            title = "Nutrição Fácil - Assinatura Mensal",
+                            amount = (int)(valor * 100),
+                            quantity = 1
+                        }
+                    }
+                };
+
+                var request = new HttpRequestMessage(HttpMethod.Post, requestUrl);
+                request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
+                request.Content = new StringContent(JsonSerializer.Serialize(payload), Encoding.UTF8, "application/json");
+
+                var response = await client.SendAsync(request);
+                if (!response.IsSuccessStatusCode) return null;
+
+                var jsonResponse = await response.Content.ReadAsStringAsync();
+                using var doc = JsonDocument.Parse(jsonResponse);
+                if (doc.RootElement.TryGetProperty("payment_url", out var urlProp))
+                {
+                    return urlProp.GetString();
+                }
+
+                return null;
+            }
+            catch
+            {
+                return null;
+            }
+        }
 
         private async Task<string> GerarFeedbackDiarioComGeminiAsync(
             string patientGoal,
@@ -1001,11 +1110,6 @@ Retorne APENAS o texto da mensagem pronto para envio.
             return doc.RootElement.GetProperty("choices")[0].GetProperty("message").GetProperty("content").GetString()?.Trim() ?? string.Empty;
         }
 
-        private async Task<SetupProfileDto> ExtrairPerfilComGeminiAsync(string userText)
-        {
-            return await Task.FromResult(new SetupProfileDto());
-        }
-
         private string FormatarRespostaParaWhatsApp(MealAnalysisResponseDto aiResult, DailyStatusResponseDto? statusDoDia)
         {
             if (aiResult.ClarificationQuestion != null && aiResult.ClarificationQuestion.Contains("instáveis", StringComparison.OrdinalIgnoreCase))
@@ -1057,14 +1161,6 @@ Retorne APENAS o texto da mensagem pronto para envio.
                 }
             }
             return msg;
-        }
-
-        private class SetupProfileDto
-        {
-            public int TargetCalories { get; set; } = 2000;
-            public string MainGoal { get; set; } = "";
-            public string MedicalRestrictions { get; set; } = "";
-            public string FoodAversions { get; set; } = "";
         }
     }
 
