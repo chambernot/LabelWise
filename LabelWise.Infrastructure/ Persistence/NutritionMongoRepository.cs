@@ -57,14 +57,25 @@ namespace LabelWise.Infrastructure.Repositories
 
             var telefonesGoals = await cursorGoals.ToListAsync();
 
-            // 2. Telefones dos utilizadores em trial ativo (dentro do prazo de 15 dias)
+            // 2. Telefones dos utilizadores em trial ativo (com conversão segura de _id)
             var limiteTrial = DateTime.UtcNow.AddDays(-15);
             var filterTrial = Builders<BsonDocument>.Filter.Gte("TrialStartDate", limiteTrial);
             var trialDocs = await _trialUsers.Find(filterTrial).ToListAsync();
 
-            var telefonesTrial = trialDocs
-                .Select(doc => doc.Contains("_id") ? doc["_id"].AsString : string.Empty)
-                .ToList();
+            var telefonesTrial = new List<string>();
+            foreach (var doc in trialDocs)
+            {
+                if (doc.Contains("_id"))
+                {
+                    var idElement = doc["_id"];
+                    // Garante a leitura correta independentemente de estar gravado como string ou ObjectId
+                    string phone = idElement.IsString ? idElement.AsString : idElement.ToString() ?? string.Empty;
+                    if (!string.IsNullOrWhiteSpace(phone))
+                    {
+                        telefonesTrial.Add(phone);
+                    }
+                }
+            }
 
             // 3. Combina as duas listas, remove nulos/vazios e elimina duplicados
             var telefonesAtivos = telefonesGoals

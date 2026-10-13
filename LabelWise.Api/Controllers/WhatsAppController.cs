@@ -814,81 +814,80 @@ namespace LabelWise.Api.Controllers
 
 
         [HttpPost("send-trial-reminders")]
-        public async Task<IActionResult> SendTrialReminders([FromHeader(Name = "X-Cron-Secret")] string secret)
+public async Task<IActionResult> SendTrialReminders([FromHeader(Name = "X-Cron-Secret")] string secret)
+{
+    var expectedSecret = _configuration["CronSecret"];
+    if (string.IsNullOrEmpty(secret) || secret != expectedSecret)
+    {
+        return Unauthorized(new { success = false, message = "Acesso negado." });
+    }
+
+    try
+    {
+        var trialCollection = _database.GetCollection<MongoDB.Bson.BsonDocument>("B2C_Trial_Users");
+        var now = DateTime.UtcNow.AddHours(-3).Date; // Hora de Brasília / Data atual
+        var quinzeDiasAtras = now.AddDays(-15);
+
+        // Filtra utilizadores no período de trial de 15 dias
+        var filter = Builders<MongoDB.Bson.BsonDocument>.Filter.Gte("TrialStartDate", quinzeDiasAtras);
+        var allTrialUsers = await trialCollection.Find(filter).ToListAsync();
+
+        int sentCount = 0;
+        int skippedAlreadyInteracted = 0;
+        int errors = 0;
+
+        foreach (var user in allTrialUsers)
         {
-            var expectedSecret = _configuration["CronSecret"];
-            if (string.IsNullOrEmpty(secret) || secret != expectedSecret)
+            string phone = user["_id"].AsString;
+
+            // Verifica a última interação do utilizador
+            DateTime lastInteraction = user.Contains("LastInteractionDate") 
+                ? user["LastInteractionDate"].ToUniversalTime().AddHours(-3).Date 
+                : DateTime.MinValue;
+
+            // Se o utilizador já falou com o bot HOJE, não enviamos nada para evitar spam
+            if (lastInteraction >= now)
             {
-                return Unauthorized(new { success = false, message = "Acesso negado." });
+                skippedAlreadyInteracted++;
+                continue; 
             }
 
             try
             {
-                var trialCollection = _database.GetCollection<MongoDB.Bson.BsonDocument>("B2C_Trial_Users");
-                var now = DateTime.UtcNow.AddHours(-3).Date; // Hora de Brasília / Data atual
-                var quinzeDiasAtras = now.AddDays(-15);
+                // Dispara o template aprovado pela Meta 'trial_engajamento'
+                // O parâmetro "Cliente" é o valor da variável do template (se o teu template tiver {{1}})
+                bool sucesso = await _whatsAppSender.SendTemplateReminderAsync(phone, "Cliente", "trial_engajamento");
 
-                // Filtra utilizadores no período de trial de 15 dias
-                var filter = Builders<MongoDB.Bson.BsonDocument>.Filter.Gte("TrialStartDate", quinzeDiasAtras);
-                var allTrialUsers = await trialCollection.Find(filter).ToListAsync();
-
-                int sentCount = 0;
-                int skippedAlreadyInteracted = 0;
-                int errors = 0;
-
-                foreach (var user in allTrialUsers)
+                if (sucesso) 
                 {
-                    string phone = user["_id"].AsString;
-
-                    // Verifica a última interação do utilizador
-                    DateTime lastInteraction = user.Contains("LastInteractionDate")
-                        ? user["LastInteractionDate"].ToUniversalTime().AddHours(-3).Date
-                        : DateTime.MinValue;
-
-                    // Se o utilizador já falou com o bot HOJE, não enviamos nada para evitar spam
-                    if (lastInteraction >= now)
-                    {
-                        skippedAlreadyInteracted++;
-                        continue;
-                    }
-
-                    try
-                    {
-                        // Dispara o template aprovado pela Meta 'trial_engajamento'
-                        // O parâmetro "Cliente" é o valor da variável do template (se o teu template tiver {{1}})
-                        bool sucesso = await _whatsAppSender.SendTemplateReminderAsync(phone, "Cliente", "trial_engajamento");
-
-                        if (sucesso)
-                        {
-                            sentCount++;
-                        }
-                        else
-                        {
-                            errors++;
-                        }
-                    }
-                    catch (Exception ex)
-                    {
-                        _logger.LogError(ex, "Erro ao enviar template de trial para o telefone: {Phone}", phone);
-                        errors++;
-                    }
+                    sentCount++;
+                } 
+                else 
+                {
+                    errors++;
                 }
-
-                _logger.LogInformation("[Trial Reminders] Executado. Enviados: {Sent}, Ignorados (já ativos hoje): {Skipped}, Erros: {Errors}",
-                    sentCount, skippedAlreadyInteracted, errors);
-
-                return Ok(new
-                {
-                    success = true,
-                    message = $"Disparos concluídos. Lembretes enviados: {sentCount}, Ignorados (já ativos hoje): {skippedAlreadyInteracted}, Erros: {errors}"
-                });
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "Erro crítico no endpoint de lembretes de trial.");
-                return StatusCode(500, new { success = false, message = "Erro interno ao processar lembretes de trial." });
+                _logger.LogError(ex, "Erro ao enviar template de trial para o telefone: {Phone}", phone);
+                errors++;
             }
         }
+
+        _logger.LogInformation("[Trial Reminders] Executado. Enviados: {Sent}, Ignorados (já ativos hoje): {Skipped}, Erros: {Errors}", 
+            sentCount, skippedAlreadyInteracted, errors);
+
+        return Ok(new { 
+            success = true, 
+            message = $"Disparos concluídos. Lembretes enviados: {sentCount}, Ignorados (já ativos hoje): {skippedAlreadyInteracted}, Erros: {errors}" 
+        });
+    }
+    catch (Exception ex)
+    {
+        _logger.LogError(ex, "Erro crítico no endpoint de lembretes de trial.");
+        return StatusCode(500, new { success = false, message = "Erro interno ao processar lembretes de trial." });
+    }
+}
 
         private async Task<string> GerarFeedbackDiarioComGeminiAsync(
             string patientGoal,
