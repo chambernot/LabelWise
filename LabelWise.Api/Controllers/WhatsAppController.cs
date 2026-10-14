@@ -904,6 +904,7 @@ namespace LabelWise.Api.Controllers
         }
 
         // 🛠️ MÉTODOS PRIVADOS DE INTEGRAÇÃO COM GETNET (Corrigidos)
+        // 🛠️ MÉTODOS PRIVADOS DE INTEGRAÇÃO COM GLOBAL GETNET (PAYMENT LINKS API)
         private async Task<string?> GerarTokenGetnetAsync()
         {
             try
@@ -912,26 +913,23 @@ namespace LabelWise.Api.Controllers
                 var clientSecret = _configuration["Getnet:ClientSecret"]?.Trim();
                 var isProd = _configuration.GetValue<bool>("Getnet:IsProduction");
 
-                // ✅ Usando o Base URL exato do módulo de Payment Links (DPY) para TUDO
-                var baseUrl = isProd
-                    ? "https://api.globalgetnet.com/dpy/payment-link/v1"
-                    : "https://api-sbx.pre.globalgetnet.com/dpy/payment-link/v1";
-
-                // ✅ URL completo combinando a base com a rota de token -core
-                var authUrl = $"{baseUrl}/authentication/oauth2/-core/access_token";
+                // ✅ VOLTAMOS AO CÓDIGO QUE FUNCIONOU (200 OK) NA TENTATIVA ANTERIOR!
+                var baseUrl = isProd ? "https://api.globalgetnet.com" : "https://api-sbx.globalgetnet.com";
+                var authUrl = $"{baseUrl}/authentication/oauth2/access_token";
 
                 _logger.LogInformation($"[GETNET TOKEN] URL: {authUrl}");
 
                 var client = _httpClientFactory.CreateClient();
                 var request = new HttpRequestMessage(HttpMethod.Post, authUrl);
 
-                // Formato exigido: body com client_id, client_secret, grant_type e scope
+                // Formato Basic Auth que foi aceite pelo servidor com sucesso
+                var credentialsText = $"{clientId}:{clientSecret}";
+                var credentials = Convert.ToBase64String(Encoding.ASCII.GetBytes(credentialsText));
+                request.Headers.Authorization = new AuthenticationHeaderValue("Basic", credentials);
+
                 request.Content = new FormUrlEncodedContent(new[]
                 {
-                    new KeyValuePair<string, string>("grant_type", "client_credentials"),
-                    new KeyValuePair<string, string>("client_id", clientId ?? ""),
-                    new KeyValuePair<string, string>("client_secret", clientSecret ?? ""),
-                    new KeyValuePair<string, string>("scope", "digital-plataform:gateway-api")
+                    new KeyValuePair<string, string>("grant_type", "client_credentials")
                 });
 
                 var response = await client.SendAsync(request);
@@ -963,7 +961,7 @@ namespace LabelWise.Api.Controllers
 
                 var isProd = _configuration.GetValue<bool>("Getnet:IsProduction");
 
-                // ✅ URL Base exato da documentação (com /dpy/payment-link/v1)
+                // ✅ URL OFICIAL DE LINKS (com o .pre. e /dpy/) DA DOCUMENTAÇÃO
                 var baseUrl = isProd
                     ? "https://api.globalgetnet.com/dpy/payment-link/v1"
                     : "https://api-sbx.pre.globalgetnet.com/dpy/payment-link/v1";
@@ -1026,7 +1024,6 @@ namespace LabelWise.Api.Controllers
                 return null;
             }
         }
-
         private async Task<string> GerarFeedbackDiarioComGeminiAsync(
             string patientGoal,
             int targetCalories,
