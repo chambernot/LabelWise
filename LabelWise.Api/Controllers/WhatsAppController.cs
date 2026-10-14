@@ -964,11 +964,10 @@ namespace LabelWise.Api.Controllers
                 var sellerId = _configuration["Getnet:SellerId"]?.Trim();
                 var isProd = _configuration.GetValue<bool>("Getnet:IsProduction");
 
-                // ✅ CORREÇÃO CRUCIAL BASEADA NO DOCUMENTO: O módulo Payment Link em Sandbox 
-                // exige o subdomínio '.pre.' e o roteamento '/dpy/'.
+                // ✅ REMOVIDO O ".pre." - Vamos usar exatamente a mesma base que funcionou para o Token
                 var baseUrl = isProd
                     ? "https://api.globalgetnet.com"
-                    : "https://api-sbx.pre.globalgetnet.com";
+                    : "https://api-sbx.globalgetnet.com";
 
                 var requestUrl = $"{baseUrl}/dpy/payment-link/v1/payment-links";
 
@@ -1002,7 +1001,7 @@ namespace LabelWise.Api.Controllers
                 var request = new HttpRequestMessage(HttpMethod.Post, requestUrl);
                 request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
 
-                // Cabeçalho x-seller-id exigido pela arquitetura DPY
+                // Cabeçalho x-seller-id (Exigido pela Global Getnet em rotas de criação)
                 request.Headers.Add("x-seller-id", sellerId);
 
                 request.Content = new StringContent(JsonSerializer.Serialize(payload), Encoding.UTF8, "application/json");
