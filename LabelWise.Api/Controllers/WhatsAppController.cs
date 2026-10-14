@@ -904,7 +904,6 @@ namespace LabelWise.Api.Controllers
         }
 
         // 🛠️ MÉTODOS PRIVADOS DE INTEGRAÇÃO COM GETNET (Corrigidos)
-        // 🛠️ MÉTODOS PRIVADOS DE INTEGRAÇÃO COM GLOBAL GETNET DPY (Definitivo)
         private async Task<string?> GerarTokenGetnetAsync()
         {
             try
@@ -913,9 +912,10 @@ namespace LabelWise.Api.Controllers
                 var clientSecret = _configuration["Getnet:ClientSecret"]?.Trim();
                 var isProd = _configuration.GetValue<bool>("Getnet:IsProduction");
 
-                _logger.LogInformation($"[GETNET TOKEN] Plataforma DPY. ClientId: {clientId}");
+                // 🚨 LOG DE VERIFICAÇÃO FINAL: Garante que o .NET conseguiu ler o Render
+                _logger.LogInformation($"[GETNET TOKEN] ClientId: {clientId}");
+                _logger.LogInformation($"[GETNET TOKEN] Tamanho do Secret lido: {clientSecret?.Length ?? 0} caracteres");
 
-                // ✅ Rota Oficial Global Getnet (DPY)
                 var authUrl = isProd
                     ? "https://api.globalgetnet.com/authentication/oauth2/access_token"
                     : "https://api-sbx.pre.globalgetnet.com/authentication/oauth2/access_token";
@@ -923,12 +923,15 @@ namespace LabelWise.Api.Controllers
                 var client = _httpClientFactory.CreateClient();
                 var request = new HttpRequestMessage(HttpMethod.Post, authUrl);
 
-                var credentials = Convert.ToBase64String(Encoding.ASCII.GetBytes($"{clientId}:{clientSecret}"));
-                request.Headers.Authorization = new AuthenticationHeaderValue("Basic", credentials);
+                // Garantir que a API nos responde em JSON
+                request.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue("application/json"));
 
+                // 🚀 SOLUÇÃO: Sem Basic Auth. As credenciais vão APENAS no corpo do pedido (exigência DPY).
                 request.Content = new FormUrlEncodedContent(new[]
                 {
-                    new KeyValuePair<string, string>("grant_type", "client_credentials")
+                    new KeyValuePair<string, string>("grant_type", "client_credentials"),
+                    new KeyValuePair<string, string>("client_id", clientId ?? ""),
+                    new KeyValuePair<string, string>("client_secret", clientSecret ?? "")
                 });
 
                 var response = await client.SendAsync(request);
