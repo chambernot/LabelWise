@@ -904,6 +904,7 @@ namespace LabelWise.Api.Controllers
         }
 
         // 🛠️ MÉTODOS PRIVADOS DE INTEGRAÇÃO COM GETNET (Corrigidos)
+        // 🛠️ MÉTODOS PRIVADOS DE INTEGRAÇÃO COM GLOBAL GETNET DPY
         private async Task<string?> GerarTokenGetnetAsync()
         {
             try
@@ -912,26 +913,22 @@ namespace LabelWise.Api.Controllers
                 var clientSecret = _configuration["Getnet:ClientSecret"]?.Trim();
                 var isProd = _configuration.GetValue<bool>("Getnet:IsProduction");
 
-                // LOG: Mostra apenas os primeiros 4 caracteres da senha para confirmar o que o Render está a injetar
-                string secretMasked = string.IsNullOrEmpty(clientSecret) ? "VAZIO" :
-                    (clientSecret.Length >= 4 ? clientSecret.Substring(0, 4) + "..." : "CURTO");
+                // ✅ URL Base Oficial da Documentação (Removido o .pre.)
+                var baseUrl = isProd ? "https://api.globalgetnet.com" : "https://api-sbx.globalgetnet.com";
+                var authUrl = $"{baseUrl}/authentication/oauth2/access_token";
 
                 _logger.LogInformation($"[GETNET TOKEN] ClientId: {clientId}");
-                _logger.LogInformation($"[GETNET TOKEN] Secret Lido: {secretMasked} (Tamanho total: {clientSecret?.Length})");
-
-                var authUrl = isProd
-                    ? "https://api.globalgetnet.com/authentication/oauth2/access_token"
-                    : "https://api-sbx.pre.globalgetnet.com/authentication/oauth2/access_token";
+                _logger.LogInformation($"[GETNET TOKEN] URL: {authUrl}");
 
                 var client = _httpClientFactory.CreateClient();
                 var request = new HttpRequestMessage(HttpMethod.Post, authUrl);
 
-                // ✅ FORMATO EXIGIDO: Credenciais codificadas em Base64 no cabeçalho
+                // ✅ Formato exato exigido pela documentação da Getnet Global: Basic Auth codificado em Base64
                 var credentialsText = $"{clientId}:{clientSecret}";
                 var credentials = Convert.ToBase64String(Encoding.ASCII.GetBytes(credentialsText));
                 request.Headers.Authorization = new AuthenticationHeaderValue("Basic", credentials);
 
-                // Corpo do pedido apenas com o grant_type
+                // ✅ Formato de corpo de pedido exigido pela documentação: x-www-form-urlencoded
                 request.Content = new FormUrlEncodedContent(new[]
                 {
                     new KeyValuePair<string, string>("grant_type", "client_credentials")
@@ -967,16 +964,15 @@ namespace LabelWise.Api.Controllers
                 var sellerId = _configuration["Getnet:SellerId"]?.Trim();
                 var isProd = _configuration.GetValue<bool>("Getnet:IsProduction");
 
-                // ✅ URL Base e Rota da Global Getnet (DPY)
-                var baseUrl = isProd
-                     ? "https://api.globalgetnet.com"
-                     : "https://api-sbx.pre.globalgetnet.com";
+                // ✅ URL Base Oficial da Documentação (Removido o .pre.)
+                var baseUrl = isProd ? "https://api.globalgetnet.com" : "https://api-sbx.globalgetnet.com";
 
+                // Rota assumida para Link de Pagamento (já que a documentação focava em cartões de crédito diretos)
                 var requestUrl = $"{baseUrl}/dpy/payment-link/v1/payment-links";
 
                 var client = _httpClientFactory.CreateClient();
 
-                // ✅ Payload formatado para DPY
+                // Payload assumido para Link de Pagamento
                 var payload = new
                 {
                     seller_id = sellerId,
@@ -1003,6 +999,10 @@ namespace LabelWise.Api.Controllers
 
                 var request = new HttpRequestMessage(HttpMethod.Post, requestUrl);
                 request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
+
+                // ✅ Cabeçalho x-seller-id exigido por muitas APIs da Getnet
+                request.Headers.Add("x-seller-id", sellerId);
+
                 request.Content = new StringContent(JsonSerializer.Serialize(payload), Encoding.UTF8, "application/json");
 
                 var response = await client.SendAsync(request);
