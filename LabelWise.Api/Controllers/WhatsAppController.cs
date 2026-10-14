@@ -964,15 +964,14 @@ namespace LabelWise.Api.Controllers
                 var sellerId = _configuration["Getnet:SellerId"]?.Trim();
                 var isProd = _configuration.GetValue<bool>("Getnet:IsProduction");
 
-                // ✅ URL Base Oficial da Documentação (Removido o .pre.)
                 var baseUrl = isProd ? "https://api.globalgetnet.com" : "https://api-sbx.globalgetnet.com";
 
-                // Rota assumida para Link de Pagamento (já que a documentação focava em cartões de crédito diretos)
-                var requestUrl = $"{baseUrl}/dpy/payment-link/v1/payment-links";
+                // ✅ Rota corrigida: Trocamos 'dpy' para 'dpm', que é o padrão de roteamento da Global Getnet
+                var requestUrl = $"{baseUrl}/dpm/payment-link/v1/payment-links";
 
                 var client = _httpClientFactory.CreateClient();
 
-                // Payload assumido para Link de Pagamento
+                // Payload baseado na estrutura da Getnet Global
                 var payload = new
                 {
                     seller_id = sellerId,
@@ -1000,7 +999,7 @@ namespace LabelWise.Api.Controllers
                 var request = new HttpRequestMessage(HttpMethod.Post, requestUrl);
                 request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
 
-                // ✅ Cabeçalho x-seller-id exigido por muitas APIs da Getnet
+                // ✅ Cabeçalho obrigatório nas rotas /dpm/
                 request.Headers.Add("x-seller-id", sellerId);
 
                 request.Content = new StringContent(JsonSerializer.Serialize(payload), Encoding.UTF8, "application/json");
