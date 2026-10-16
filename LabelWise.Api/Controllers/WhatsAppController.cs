@@ -15,6 +15,7 @@ using System.IO;
 using System.Linq;
 using System.Net.Http;
 using System.Net.Http.Headers;
+using System.Net.Http.Json;
 using System.Text;
 using System.Text.Json;
 using System.Text.RegularExpressions;
@@ -903,7 +904,6 @@ namespace LabelWise.Api.Controllers
             }
         }
 
-        // 🛠️ MÉTODOS PRIVADOS DE INTEGRAÇÃO COM GETNET (Corrigidos)
         // 🛠️ MÉTODOS PRIVADOS DE INTEGRAÇÃO COM GLOBAL GETNET (PAYMENT LINKS API)
         private async Task<string?> GerarTokenGetnetAsync()
         {
@@ -913,18 +913,13 @@ namespace LabelWise.Api.Controllers
                 var clientSecret = _configuration["Getnet:ClientSecret"]?.Trim();
                 var isProd = _configuration.GetValue<bool>("Getnet:IsProduction");
 
-                // ✅ VOLTAMOS AO CÓDIGO QUE FUNCIONOU (200 OK) NA TENTATIVA ANTERIOR!
                 var baseUrl = isProd ? "https://api.globalgetnet.com" : "https://api-sbx.globalgetnet.com";
                 var authUrl = $"{baseUrl}/authentication/oauth2/access_token";
-
-                _logger.LogInformation($"[GETNET TOKEN] URL: {authUrl}");
 
                 var client = _httpClientFactory.CreateClient();
                 var request = new HttpRequestMessage(HttpMethod.Post, authUrl);
 
-                // Formato Basic Auth que foi aceite pelo servidor com sucesso
-                var credentialsText = $"{clientId}:{clientSecret}";
-                var credentials = Convert.ToBase64String(Encoding.ASCII.GetBytes(credentialsText));
+                var credentials = Convert.ToBase64String(Encoding.ASCII.GetBytes($"{clientId}:{clientSecret}"));
                 request.Headers.Authorization = new AuthenticationHeaderValue("Basic", credentials);
 
                 request.Content = new FormUrlEncodedContent(new[]
@@ -941,9 +936,8 @@ namespace LabelWise.Api.Controllers
                     return null;
                 }
 
-                var jsonResponse = await response.Content.ReadAsStringAsync();
-                using var doc = JsonDocument.Parse(jsonResponse);
-                return doc.RootElement.GetProperty("access_token").GetString();
+                var tokenData = await response.Content.ReadFromJsonAsync<GetnetTokenResponse>();
+                return tokenData?.access_token;
             }
             catch (Exception ex)
             {
@@ -952,53 +946,58 @@ namespace LabelWise.Api.Controllers
             }
         }
 
-        private async Task<string?> GerarLinkPagamentoGetnetAsync(string phone, string name, decimal valor)
+        private async Task<string?> GerarLinkPagamentoGetnetAsync(string phone, string name, decimal valorOriginal)
         {
             try
             {
                 var token = await GerarTokenGetnetAsync();
                 if (string.IsNullOrEmpty(token)) return null;
 
+                var sellerId = _configuration["Getnet:SellerId"]?.Trim();
                 var isProd = _configuration.GetValue<bool>("Getnet:IsProduction");
 
-                // ✅ URL OFICIAL DE LINKS (com o .pre. e /dpy/) DA DOCUMENTAÇÃO
                 var baseUrl = isProd
                     ? "https://api.globalgetnet.com/dpy/payment-link/v1"
                     : "https://api-sbx.pre.globalgetnet.com/dpy/payment-link/v1";
 
                 var requestUrl = $"{baseUrl}/payment-links";
 
-                var client = _httpClientFactory.CreateClient();
-
-                // Payload do Link de Pagamento
-                var payload = new
+                var linkRequest = new GlobalGetnetLinkRequest
                 {
+                    seller_id = sellerId,
                     expiration = DateTime.UtcNow.AddDays(7).ToString("yyyy-MM-ddTHH:mm:ss"),
                     max_orders = 1,
                     currency = "BRL",
                     order_id = $"sub_{phone}_{DateTime.UtcNow.Ticks}",
-                    customer = new
+                    customer = new GlobalGetnetCustomer
                     {
                         name = string.IsNullOrWhiteSpace(name) ? "Cliente Nutrição Fácil" : name,
                         phone_number = phone
                     },
                     products = new[]
                     {
-                        new
+                        new GlobalGetnetProduct
                         {
                             product_type = "digital_goods",
                             title = "Nutrição Fácil - Assinatura Mensal",
-                            amount = (int)(valor * 100),
+                            amount = (int)(valorOriginal * 100),
                             quantity = 1
                         }
                     }
                 };
 
+                var client = _httpClientFactory.CreateClient();
                 var request = new HttpRequestMessage(HttpMethod.Post, requestUrl);
+
                 request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
                 request.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue("application/json"));
 
-                request.Content = new StringContent(JsonSerializer.Serialize(payload), Encoding.UTF8, "application/json");
+                if (!string.IsNullOrEmpty(sellerId))
+                {
+                    request.Headers.Add("x-seller-id", sellerId);
+                }
+
+                request.Content = JsonContent.Create(linkRequest);
 
                 var response = await client.SendAsync(request);
                 if (!response.IsSuccessStatusCode)
@@ -1008,15 +1007,8 @@ namespace LabelWise.Api.Controllers
                     return null;
                 }
 
-                var jsonResponse = await response.Content.ReadAsStringAsync();
-                using var doc = JsonDocument.Parse(jsonResponse);
-
-                if (doc.RootElement.TryGetProperty("payment_url", out var urlProp))
-                {
-                    return urlProp.GetString();
-                }
-
-                return null;
+                var linkResult = await response.Content.ReadFromJsonAsync<GetnetLinkResponse>();
+                return linkResult?.payment_url;
             }
             catch (Exception ex)
             {
@@ -1024,6 +1016,7 @@ namespace LabelWise.Api.Controllers
                 return null;
             }
         }
+
         private async Task<string> GerarFeedbackDiarioComGeminiAsync(
             string patientGoal,
             int targetCalories,
@@ -1190,6 +1183,7 @@ Retorne APENAS o texto da mensagem pronto para envio.
         }
     }
 
+    // CLASSES DO WHATSAPP (META)
     public class MetaWebhookPayload { public List<MetaEntry>? Entry { get; set; } }
     public class MetaEntry { public List<MetaChange>? Changes { get; set; } }
     public class MetaChange { public MetaValue? Value { get; set; } }
@@ -1197,4 +1191,42 @@ Retorne APENAS o texto da mensagem pronto para envio.
     public class MetaMessage { public string? From { get; set; } public string? Type { get; set; } public MetaText? Text { get; set; } public MetaMedia? Image { get; set; } public MetaMedia? Audio { get; set; } }
     public class MetaText { public string? Body { get; set; } }
     public class MetaMedia { public string? Id { get; set; } public string? Mime_Typea { get; set; } }
+
+    // CLASSES DE MODELO DA GLOBAL GETNET (ADICIONADAS)
+    public class GetnetTokenResponse
+    {
+        public string access_token { get; set; }
+        public string token_type { get; set; }
+        public int expires_in { get; set; }
+    }
+
+    public class GetnetLinkResponse
+    {
+        public string payment_url { get; set; }
+    }
+
+    public class GlobalGetnetLinkRequest
+    {
+        public string seller_id { get; set; }
+        public string expiration { get; set; }
+        public int max_orders { get; set; }
+        public string currency { get; set; }
+        public string order_id { get; set; }
+        public GlobalGetnetCustomer customer { get; set; }
+        public GlobalGetnetProduct[] products { get; set; }
+    }
+
+    public class GlobalGetnetCustomer
+    {
+        public string name { get; set; }
+        public string phone_number { get; set; }
+    }
+
+    public class GlobalGetnetProduct
+    {
+        public string product_type { get; set; }
+        public string title { get; set; }
+        public int amount { get; set; }
+        public int quantity { get; set; }
+    }
 }
