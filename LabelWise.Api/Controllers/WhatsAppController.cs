@@ -10,6 +10,7 @@ using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
 using MongoDB.Driver;
 using System;
+using System.Diagnostics;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
@@ -904,62 +905,106 @@ namespace LabelWise.Api.Controllers
             }
         }
 
-        // 🛠️ MÉTODOS PRIVADOS DE INTEGRAÇÃO COM GLOBAL GETNET (PAYMENT LINKS API)
-        private async Task<string?> GerarTokenGetnetAsync()
+        // Métodos privados de integração com Global Getnet (Payment Links API)
+        private async Task<string?> GerarTokenGetnetAsync(string operationId)
         {
+            var timer = Stopwatch.StartNew();
+            var clientId = _configuration["Getnet:ClientId"]?.Trim();
+            var clientSecret = _configuration["Getnet:ClientSecret"]?.Trim();
+            var isProd = _configuration.GetValue<bool>("Getnet:IsProduction");
+            var environment = isProd ? "Production" : "Sandbox";
+            var baseUrl = isProd ? "https://api.globalgetnet.com" : "https://api-sbx.globalgetnet.com";
+            var authUrl = $"{baseUrl}/authentication/oauth2/access_token";
+
+            if (string.IsNullOrWhiteSpace(clientId) || string.IsNullOrWhiteSpace(clientSecret))
+            {
+                _logger.LogError("[GETNET][{OperationId}] OAuth não iniciado: configuração incompleta. Ambiente={Environment}, ClientIdConfigurado={ClientIdConfigured}, ClientSecretConfigurado={ClientSecretConfigured}",
+                    operationId, environment, !string.IsNullOrWhiteSpace(clientId), !string.IsNullOrWhiteSpace(clientSecret));
+                return null;
+            }
+
             try
             {
-                var clientId = _configuration["Getnet:ClientId"]?.Trim();
-                var clientSecret = _configuration["Getnet:ClientSecret"]?.Trim();
-                var isProd = _configuration.GetValue<bool>("Getnet:IsProduction");
-
-                var baseUrl = isProd ? "https://api.globalgetnet.com" : "https://api-sbx.globalgetnet.com";
-                var authUrl = $"{baseUrl}/authentication/oauth2/access_token";
+                _logger.LogInformation("[GETNET][{OperationId}] OAuth iniciado. Ambiente={Environment}, Endpoint={Endpoint}", operationId, environment, authUrl);
 
                 var client = _httpClientFactory.CreateClient();
-                var request = new HttpRequestMessage(HttpMethod.Post, authUrl);
-
+                using var request = new HttpRequestMessage(HttpMethod.Post, authUrl);
                 var credentials = Convert.ToBase64String(Encoding.ASCII.GetBytes($"{clientId}:{clientSecret}"));
                 request.Headers.Authorization = new AuthenticationHeaderValue("Basic", credentials);
-
                 request.Content = new FormUrlEncodedContent(new[]
                 {
                     new KeyValuePair<string, string>("grant_type", "client_credentials")
                 });
 
-                var response = await client.SendAsync(request);
+                using var response = await client.SendAsync(request);
+                var responseBody = await response.Content.ReadAsStringAsync();
+                var requestId = ObterHeaderRespostaGetnet(response, "x-request-id", "request-id", "trace-id");
 
                 if (!response.IsSuccessStatusCode)
                 {
-                    var errorContent = await response.Content.ReadAsStringAsync();
-                    _logger.LogError("[GETNET TOKEN ERROR] Status: {StatusCode} | Body: {Error}", response.StatusCode, errorContent);
+                    _logger.LogError("[GETNET][{OperationId}] OAuth falhou. Ambiente={Environment}, Endpoint={Endpoint}, Status={StatusCode}, DuracaoMs={DurationMs}, ContentType={ContentType}, RequestId={RequestId}, Resposta={ResponseBody}",
+                        operationId, environment, authUrl, (int)response.StatusCode, timer.ElapsedMilliseconds,
+                        response.Content.Headers.ContentType?.MediaType ?? "indisponível", requestId,
+                        SanitizarRespostaGetnet(responseBody));
                     return null;
                 }
 
-                var tokenData = await response.Content.ReadFromJsonAsync<GetnetTokenResponse>();
-                return tokenData?.access_token;
+                var tokenData = JsonSerializer.Deserialize<GetnetTokenResponse>(responseBody,
+                    new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
+
+                if (string.IsNullOrWhiteSpace(tokenData?.access_token))
+                {
+                    _logger.LogError("[GETNET][{OperationId}] OAuth respondeu sucesso, mas não retornou access_token. Status={StatusCode}, DuracaoMs={DurationMs}, RequestId={RequestId}, Resposta={ResponseBody}",
+                        operationId, (int)response.StatusCode, timer.ElapsedMilliseconds, requestId,
+                        SanitizarRespostaGetnet(responseBody));
+                    return null;
+                }
+
+                _logger.LogInformation("[GETNET][{OperationId}] OAuth concluído. Ambiente={Environment}, Status={StatusCode}, DuracaoMs={DurationMs}, TokenType={TokenType}, ExpiraEmSegundos={ExpiresIn}, Scope={Scope}, RequestId={RequestId}",
+                    operationId, environment, (int)response.StatusCode, timer.ElapsedMilliseconds,
+                    tokenData.token_type ?? "indisponível", tokenData.expires_in,
+                    string.IsNullOrWhiteSpace(tokenData.scope) ? "não informado" : tokenData.scope, requestId);
+
+                return tokenData.access_token;
+            }
+            catch (HttpRequestException ex)
+            {
+                _logger.LogError(ex, "[GETNET][{OperationId}] Falha de transporte no OAuth. Ambiente={Environment}, Endpoint={Endpoint}, DuracaoMs={DurationMs}",
+                    operationId, environment, authUrl, timer.ElapsedMilliseconds);
+                return null;
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "Exceção ao autenticar na Getnet.");
+                _logger.LogError(ex, "[GETNET][{OperationId}] Exceção ao autenticar. Ambiente={Environment}, Endpoint={Endpoint}, DuracaoMs={DurationMs}",
+                    operationId, environment, authUrl, timer.ElapsedMilliseconds);
                 return null;
             }
         }
 
         private async Task<string?> GerarLinkPagamentoGetnetAsync(string phone, string name, decimal valorOriginal)
         {
+            var operationId = Guid.NewGuid().ToString("N");
+            var timer = Stopwatch.StartNew();
+            var isProd = _configuration.GetValue<bool>("Getnet:IsProduction");
+            var environment = isProd ? "Production" : "Sandbox";
+            var sellerId = _configuration["Getnet:SellerId"]?.Trim();
+
             try
             {
-                var token = await GerarTokenGetnetAsync();
-                if (string.IsNullOrEmpty(token)) return null;
+                _logger.LogInformation("[GETNET][{OperationId}] Iniciando criação de Payment Link. Ambiente={Environment}, Valor={Amount}, Moeda=BRL, SellerIdConfigurado={SellerIdConfigured}",
+                    operationId, environment, valorOriginal, !string.IsNullOrWhiteSpace(sellerId));
 
-                var sellerId = _configuration["Getnet:SellerId"]?.Trim();
-                var isProd = _configuration.GetValue<bool>("Getnet:IsProduction");
+                var token = await GerarTokenGetnetAsync(operationId);
+                if (string.IsNullOrWhiteSpace(token))
+                {
+                    _logger.LogError("[GETNET][{OperationId}] Criação do Payment Link cancelada: OAuth não forneceu token. DuracaoTotalMs={DurationMs}",
+                        operationId, timer.ElapsedMilliseconds);
+                    return null;
+                }
 
                 var baseUrl = isProd
                     ? "https://api.globalgetnet.com/dpy/payment-link/v1"
                     : "https://api-sbx.pre.globalgetnet.com/dpy/payment-link/v1";
-
                 var requestUrl = $"{baseUrl}/payment-links";
 
                 var linkRequest = new GlobalGetnetLinkRequest
@@ -986,35 +1031,98 @@ namespace LabelWise.Api.Controllers
                     }
                 };
 
-                var client = _httpClientFactory.CreateClient();
-                var request = new HttpRequestMessage(HttpMethod.Post, requestUrl);
+                _logger.LogInformation("[GETNET][{OperationId}] Enviando criação de Payment Link. Ambiente={Environment}, Endpoint={Endpoint}, SellerIdConfigurado={SellerIdConfigured}, QuantidadeProdutos={ProductCount}, ValorCentavos={AmountInCents}, ContentType=application/json",
+                    operationId, environment, requestUrl, !string.IsNullOrWhiteSpace(sellerId),
+                    linkRequest.products?.Length ?? 0, (int)(valorOriginal * 100));
 
+                var client = _httpClientFactory.CreateClient();
+                using var request = new HttpRequestMessage(HttpMethod.Post, requestUrl);
                 request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
                 request.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue("application/json"));
 
-                if (!string.IsNullOrEmpty(sellerId))
-                {
+                if (!string.IsNullOrWhiteSpace(sellerId))
                     request.Headers.Add("x-seller-id", sellerId);
-                }
 
                 request.Content = JsonContent.Create(linkRequest);
 
-                var response = await client.SendAsync(request);
+                using var response = await client.SendAsync(request);
+                var responseBody = await response.Content.ReadAsStringAsync();
+                var requestId = ObterHeaderRespostaGetnet(response, "x-request-id", "request-id", "trace-id");
+                var contentType = response.Content.Headers.ContentType?.MediaType ?? "indisponível";
+
                 if (!response.IsSuccessStatusCode)
                 {
-                    var errorContent = await response.Content.ReadAsStringAsync();
-                    _logger.LogError("[GETNET LINK ERROR] Status: {StatusCode} | Body: {Error}", response.StatusCode, errorContent);
+                    _logger.LogError("[GETNET][{OperationId}] Criação de Payment Link falhou. Ambiente={Environment}, Endpoint={Endpoint}, Status={StatusCode}, DuracaoTotalMs={DurationMs}, ContentType={ContentType}, RequestId={RequestId}, Resposta={ResponseBody}",
+                        operationId, environment, requestUrl, (int)response.StatusCode, timer.ElapsedMilliseconds,
+                        contentType, requestId, SanitizarRespostaGetnet(responseBody));
                     return null;
                 }
 
-                var linkResult = await response.Content.ReadFromJsonAsync<GetnetLinkResponse>();
-                return linkResult?.payment_url;
+                var linkResult = JsonSerializer.Deserialize<GetnetLinkResponse>(responseBody,
+                    new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
+                var paymentUrl = linkResult?.payment_url;
+
+                if (string.IsNullOrWhiteSpace(paymentUrl))
+                {
+                    _logger.LogError("[GETNET][{OperationId}] Getnet respondeu sucesso sem payment_url. Status={StatusCode}, DuracaoTotalMs={DurationMs}, ContentType={ContentType}, RequestId={RequestId}, CamposResposta={ResponseFields}",
+                        operationId, (int)response.StatusCode, timer.ElapsedMilliseconds, contentType, requestId,
+                        ObterCamposRespostaGetnet(responseBody));
+                    return null;
+                }
+
+                _logger.LogInformation("[GETNET][{OperationId}] Payment Link criado. Ambiente={Environment}, Status={StatusCode}, DuracaoTotalMs={DurationMs}, ContentType={ContentType}, RequestId={RequestId}, UrlRetornada=true",
+                    operationId, environment, (int)response.StatusCode, timer.ElapsedMilliseconds, contentType, requestId);
+                return paymentUrl;
+            }
+            catch (HttpRequestException ex)
+            {
+                _logger.LogError(ex, "[GETNET][{OperationId}] Falha de transporte ao criar Payment Link. Ambiente={Environment}, DuracaoTotalMs={DurationMs}",
+                    operationId, environment, timer.ElapsedMilliseconds);
+                return null;
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "Exceção ao gerar link de pagamento.");
+                _logger.LogError(ex, "[GETNET][{OperationId}] Exceção ao criar Payment Link. Ambiente={Environment}, DuracaoTotalMs={DurationMs}",
+                    operationId, environment, timer.ElapsedMilliseconds);
                 return null;
             }
+        }
+
+        private static string ObterHeaderRespostaGetnet(HttpResponseMessage response, params string[] headerNames)
+        {
+            foreach (var name in headerNames)
+            {
+                if (response.Headers.TryGetValues(name, out var values))
+                {
+                    var value = string.Join(",", values);
+                    return value.Length <= 200 ? value : value.Substring(0, 200);
+                }
+            }
+            return "não informado";
+        }
+
+        private static string SanitizarRespostaGetnet(string? body)
+        {
+            if (string.IsNullOrWhiteSpace(body)) return "(vazia)";
+
+            var sanitized = Regex.Replace(body,
+                @"(?i)(""?(?:access_token|refresh_token|client_secret|client_id|authorization|password|phone_number|phone|seller_id|order_id|name|email|token)""?\s*[:=]\s*)(""[^""]*""|[^,}\s]+)",
+                "$1\"[REDACTED]\"");
+            sanitized = Regex.Replace(sanitized, @"(?i)Bearer\s+[A-Za-z0-9._~+/-]+=*", "Bearer [REDACTED]");
+            sanitized = Regex.Replace(sanitized, @"(?<!\w)\+?\d[\d ().-]{7,}\d(?!\w)", "[REDACTED_NUMBER]");
+            return sanitized.Length <= 1200 ? sanitized : sanitized.Substring(0, 1200) + "…[truncado]";
+        }
+
+        private static string ObterCamposRespostaGetnet(string body)
+        {
+            try
+            {
+                using var document = JsonDocument.Parse(body);
+                if (document.RootElement.ValueKind == JsonValueKind.Object)
+                    return string.Join(",", document.RootElement.EnumerateObject().Select(property => property.Name).Take(30));
+            }
+            catch (JsonException) { }
+            return "JSON não reconhecido";
         }
 
         private async Task<string> GerarFeedbackDiarioComGeminiAsync(
@@ -1195,9 +1303,10 @@ Retorne APENAS o texto da mensagem pronto para envio.
     // CLASSES DE MODELO DA GLOBAL GETNET (ADICIONADAS)
     public class GetnetTokenResponse
     {
-        public string access_token { get; set; }
-        public string token_type { get; set; }
+        public string? access_token { get; set; }
+        public string? token_type { get; set; }
         public int expires_in { get; set; }
+        public string? scope { get; set; }
     }
 
     public class GetnetLinkResponse
