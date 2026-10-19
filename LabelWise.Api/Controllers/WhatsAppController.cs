@@ -10,7 +10,6 @@ using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
 using MongoDB.Driver;
 using System;
-using System.Diagnostics;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
@@ -29,6 +28,10 @@ namespace LabelWise.Api.Controllers
     [AllowAnonymous]
     public class WhatsAppController : ControllerBase
     {
+        private const int TrialDurationDays = 15;
+        private const int DailyTrialInteractionLimit = 4;
+        private static readonly int[] TrialReminderDays = { 3, 7, 13 };
+
         private readonly INutritionService _nutritionService;
         private readonly IWhatsAppSenderService _whatsAppSender;
         private readonly IMetaMediaService _metaMediaService;
@@ -137,7 +140,7 @@ namespace LabelWise.Api.Controllers
                         string msgAssinatura = "💳 *Assinatura Mensal - Nutrição Fácil*\n\n" +
                                                "Para continuar a usar o assistente de nutrição sem limites, clique no link seguro abaixo (R$ 29,90):\n\n" +
                                                $"👉 {paymentUrl}\n\n" +
-                                               "Assim que concluir o pagamento, o seu acesso é liberado automaticamente!";
+                                               "A liberação do acesso depende da confirmação e ativação da assinatura no sistema.";
                         await _whatsAppSender.SendTextMessageAsync(senderPhone, msgAssinatura);
                     }
                     else
@@ -154,6 +157,14 @@ namespace LabelWise.Api.Controllers
                                     patientDocCheck.Contains("ProfessionalId") &&
                                     patientDocCheck["ProfessionalId"].AsString != "b2c_autonomous_user";
 
+                var trialCollection = _database.GetCollection<MongoDB.Bson.BsonDocument>("B2C_Trial_Users");
+                var filterTrial = Builders<MongoDB.Bson.BsonDocument>.Filter.Eq("_id", senderPhone);
+                var userDoc = await trialCollection.Find(filterTrial).FirstOrDefaultAsync();
+                bool isPremium = userDoc != null &&
+                                 userDoc.TryGetValue("Premium", out var premiumValue) &&
+                                 premiumValue.IsBoolean && premiumValue.AsBoolean;
+                bool isTrialLimitedUser = !isB2bPatient && !isPremium;
+
                 string? protocoloClinico = null;
                 if (patientDocCheck != null && patientDocCheck.Contains("ClinicalProtocol"))
                 {
@@ -166,11 +177,7 @@ namespace LabelWise.Api.Controllers
                     foodAversions = patientDocCheck["FoodAversions"].AsString;
                 }
 
-                var trialCollection = _database.GetCollection<MongoDB.Bson.BsonDocument>("B2C_Trial_Users");
-                var filterTrial = Builders<MongoDB.Bson.BsonDocument>.Filter.Eq("_id", senderPhone);
-                var userDoc = await trialCollection.Find(filterTrial).FirstOrDefaultAsync();
-
-                if (!isB2bPatient)
+                if (!isB2bPatient && !isPremium)
                 {
                     var now = DateTime.UtcNow;
 
@@ -180,7 +187,7 @@ namespace LabelWise.Api.Controllers
                         {
                             { "_id", senderPhone },
                             { "TrialStartDate", now },
-                            { "LastInteractionDate", now.Date },
+                            { "LastInteractionDate", DateTime.SpecifyKind(now.AddHours(-3).Date, DateTimeKind.Utc) },
                             { "DailyMessageCount", 0 },
                             { "ProfileConfigured", false },
                             { "OnboardingStep", "WaitingForGoal" }
@@ -197,6 +204,23 @@ namespace LabelWise.Api.Controllers
 
                         await _whatsAppSender.SendTextMessageAsync(senderPhone, mensagemBoasVindas);
                         return Ok();
+                    }
+
+                    if (userDoc.TryGetValue("TrialStartDate", out var trialStartValue) && trialStartValue.IsBsonDateTime)
+                    {
+                        var trialStartDate = trialStartValue.ToUniversalTime();
+                        if (now >= trialStartDate.AddDays(TrialDurationDays))
+                        {
+                            _logger.LogInformation("[WhatsApp B2C] Trial expirado após {TrialDays} dias.", TrialDurationDays);
+
+                            string? paymentUrl = await GerarLinkPagamentoGetnetAsync(senderPhone, "Cliente Trial", 29.90m);
+                            string msgExpirado = "⏳ *Seu período de teste de 15 dias terminou.*\n\n" +
+                                                 "Se quiser continuar, veja os detalhes da assinatura mensal abaixo:\n\n" +
+                                                 (!string.IsNullOrEmpty(paymentUrl) ? $"👉 {paymentUrl}\n\n" : "") +
+                                                 "A liberação do acesso depende da confirmação e ativação da assinatura no sistema.";
+                            await _whatsAppSender.SendTextMessageAsync(senderPhone, msgExpirado);
+                            return Ok();
+                        }
                     }
 
                     if (textoLimpoCmd == "meta" || textoLimpoCmd == "perfil" || textoLimpoCmd == "configurar" || textoLimpoCmd == "ajustar")
@@ -356,52 +380,6 @@ namespace LabelWise.Api.Controllers
                         }
                     }
 
-                    var trialStartDate = userDoc["TrialStartDate"].ToUniversalTime();
-                    if ((now - trialStartDate).TotalDays > 15)
-                    {
-                        _logger.LogWarning("[WhatsApp B2C] ⏳ Trial expirado para o número: {Phone}", senderPhone);
-
-                        string? paymentUrl = await GerarLinkPagamentoGetnetAsync(senderPhone, "Cliente Trial", 29.90m);
-
-                        string msgExpirado = "⏳ *O seu período experimental gratuito de 15 dias terminou.*\n\n" +
-                                             "Para continuar a usar o assistente sem interrupções, clique no link seguro abaixo para assinar o plano completo:\n\n" +
-                                             (!string.IsNullOrEmpty(paymentUrl) ? $"👉 {paymentUrl}\n\n" : "") +
-                                             "_Assim que pagar, o acesso será renovado automaticamente!_ 🥗";
-
-                        await _whatsAppSender.SendTextMessageAsync(senderPhone, msgExpirado);
-                        return Ok();
-                    }
-
-                    var lastInteractionDate = userDoc.Contains("LastInteractionDate") ? userDoc["LastInteractionDate"].ToUniversalTime().Date : now.Date;
-                    int dailyCount = userDoc.Contains("DailyMessageCount") ? userDoc["DailyMessageCount"].AsInt32 : 0;
-
-                    if (lastInteractionDate < now.Date)
-                    {
-                        dailyCount = 0;
-                        lastInteractionDate = now.Date;
-                    }
-
-                    if (dailyCount >= 4)
-                    {
-                        _logger.LogWarning("[WhatsApp B2C] ⚠️ Limite diário de mensagens atingido para: {Phone}", senderPhone);
-
-                        string? paymentUrl = await GerarLinkPagamentoGetnetAsync(senderPhone, "Cliente Limite", 29.90m);
-
-                        string msgLimite = "⚠ *Atingiu o limite de 4 interações gratuitas para hoje.*\n\n" +
-                                           "Quer desbloquear mensagens ilimitadas agora mesmo? Faça a assinatura mensal:\n\n" +
-                                           (!string.IsNullOrEmpty(paymentUrl) ? $"👉 {paymentUrl}\n\n" : "") +
-                                           "O seu saldo diário também será renovado amanhã! ⏰";
-
-                        await _whatsAppSender.SendTextMessageAsync(senderPhone, msgLimite);
-                        return Ok();
-                    }
-
-                    dailyCount++;
-                    var updateB2C = Builders<MongoDB.Bson.BsonDocument>.Update
-                        .Set("LastInteractionDate", lastInteractionDate)
-                        .Set("DailyMessageCount", dailyCount);
-
-                    await trialCollection.UpdateOneAsync(filterTrial, updateB2C);
                 }
 
                 bool isNumeroIsolado = int.TryParse(textoLimpoCmd, out int numeroIsoladoVal);
@@ -435,6 +413,11 @@ namespace LabelWise.Api.Controllers
                             Math.Max(0, targetCarbs - consumedCarbs),
                             Math.Max(0, targetFat - consumedFat)
                         );
+
+                        if (isTrialLimitedUser && !await ReserveTrialInteractionOrNotifyAsync(senderPhone, trialCollection))
+                        {
+                            return Ok();
+                        }
 
                         string respostaTroca = await _nutritionAgentService.GenerateSmartSubstitutionAsync(
                             alimentoAlvo, remaining, protocoloClinico ?? "", foodAversions ?? ""
@@ -663,6 +646,11 @@ namespace LabelWise.Api.Controllers
                     }
                 }
 
+                if (isTrialLimitedUser && !await ReserveTrialInteractionOrNotifyAsync(senderPhone, trialCollection))
+                {
+                    return Ok();
+                }
+
                 var contextoPendente = await _nutritionRepository.ObterClarificacaoPendenteAsync(senderPhone);
                 string textoFinalParaIa = textoBruto;
                 string? imagemFinalParaIa = imagemBase64;
@@ -840,7 +828,7 @@ namespace LabelWise.Api.Controllers
         public async Task<IActionResult> SendTrialReminders([FromHeader(Name = "X-Cron-Secret")] string secret)
         {
             var expectedSecret = _configuration["CronSecret"];
-            if (string.IsNullOrEmpty(secret) || secret != expectedSecret)
+            if (string.IsNullOrEmpty(secret) || string.IsNullOrEmpty(expectedSecret) || secret != expectedSecret)
             {
                 return Unauthorized(new { success = false, message = "Acesso negado." });
             }
@@ -848,46 +836,96 @@ namespace LabelWise.Api.Controllers
             try
             {
                 var trialCollection = _database.GetCollection<MongoDB.Bson.BsonDocument>("B2C_Trial_Users");
-                var now = DateTime.UtcNow.AddHours(-3).Date;
-                var quinzeDiasAtras = now.AddDays(-15);
+                var utcNow = DateTime.UtcNow;
+                var todayBrazil = GetBrazilDate(utcNow);
+                var earliestStart = utcNow.AddDays(-TrialDurationDays);
+                var filter = Builders<MongoDB.Bson.BsonDocument>.Filter.And(
+                    Builders<MongoDB.Bson.BsonDocument>.Filter.Gte("TrialStartDate", earliestStart),
+                    Builders<MongoDB.Bson.BsonDocument>.Filter.Lte("TrialStartDate", utcNow));
 
-                var filter = Builders<MongoDB.Bson.BsonDocument>.Filter.Gte("TrialStartDate", quinzeDiasAtras);
-                var allTrialUsers = await trialCollection.Find(filter).ToListAsync();
-
+                var trialUsers = await trialCollection.Find(filter).ToListAsync();
                 int sentCount = 0;
+                int skippedNotCampaignDay = 0;
                 int skippedAlreadyInteracted = 0;
+                int skippedAlreadySent = 0;
                 int errors = 0;
 
-                foreach (var user in allTrialUsers)
+                foreach (var user in trialUsers)
                 {
-                    string phone = user["_id"].AsString;
+                    if (!user.TryGetValue("_id", out var idValue) || !idValue.IsString ||
+                        !user.TryGetValue("TrialStartDate", out var startValue) || !startValue.IsBsonDateTime)
+                    {
+                        continue;
+                    }
 
-                    DateTime lastInteraction = user.Contains("LastInteractionDate")
-                        ? user["LastInteractionDate"].ToUniversalTime().AddHours(-3).Date
-                        : DateTime.MinValue;
+                    string phone = idValue.AsString;
+                    bool premium = user.TryGetValue("Premium", out var premiumValue) &&
+                                   premiumValue.IsBoolean && premiumValue.AsBoolean;
+                    if (premium) continue;
 
-                    if (lastInteraction >= now)
+                    var trialStart = startValue.ToUniversalTime();
+                    var elapsedDays = (utcNow - trialStart).TotalDays;
+                    if (elapsedDays < 0 || elapsedDays >= TrialDurationDays)
+                    {
+                        continue;
+                    }
+
+                    int trialDay = (int)Math.Floor(elapsedDays) + 1;
+                    if (!TrialReminderDays.Contains(trialDay))
+                    {
+                        skippedNotCampaignDay++;
+                        continue;
+                    }
+
+                    DateTime lastInteractionDate = DateTime.MinValue;
+                    if (user.TryGetValue("LastInteractionDate", out var interactionValue) && interactionValue.IsBsonDateTime)
+                    {
+                        lastInteractionDate = interactionValue.ToUniversalTime().Date;
+                    }
+
+                    if (lastInteractionDate == todayBrazil.Date)
                     {
                         skippedAlreadyInteracted++;
                         continue;
                     }
 
+                    // Claim the campaign day atomically so overlapping cron runs do not send duplicates.
+                    var claimFilter = Builders<MongoDB.Bson.BsonDocument>.Filter.And(
+                        Builders<MongoDB.Bson.BsonDocument>.Filter.Eq("_id", phone),
+                        Builders<MongoDB.Bson.BsonDocument>.Filter.Ne("TrialReminderDaysSent", trialDay));
+                    var claimUpdate = Builders<MongoDB.Bson.BsonDocument>.Update
+                        .AddToSet("TrialReminderDaysSent", trialDay);
+                    var claim = await trialCollection.UpdateOneAsync(claimFilter, claimUpdate);
+                    if (claim.ModifiedCount == 0)
+                    {
+                        skippedAlreadySent++;
+                        continue;
+                    }
+
                     try
                     {
-                        bool sucesso = await _whatsAppSender.SendTemplateReminderAsync(phone, "Cliente", "trial_engajamento");
+                        bool success = await _whatsAppSender.SendTemplateReminderAsync(
+                            phone, "Cliente", "trial_engajamento");
 
-                        if (sucesso)
+                        if (success)
                         {
                             sentCount++;
+                            _logger.LogInformation("Lembrete do trial enviado no dia {TrialDay}.", trialDay);
                         }
                         else
                         {
+                            await trialCollection.UpdateOneAsync(
+                                Builders<MongoDB.Bson.BsonDocument>.Filter.Eq("_id", phone),
+                                Builders<MongoDB.Bson.BsonDocument>.Update.Pull("TrialReminderDaysSent", trialDay));
                             errors++;
                         }
                     }
                     catch (Exception ex)
                     {
-                        _logger.LogError(ex, "Erro ao enviar template de trial para o telefone: {Phone}", phone);
+                        await trialCollection.UpdateOneAsync(
+                            Builders<MongoDB.Bson.BsonDocument>.Filter.Eq("_id", phone),
+                            Builders<MongoDB.Bson.BsonDocument>.Update.Pull("TrialReminderDaysSent", trialDay));
+                        _logger.LogError(ex, "Erro ao enviar lembrete de trial no dia {TrialDay}.", trialDay);
                         errors++;
                     }
                 }
@@ -895,7 +933,7 @@ namespace LabelWise.Api.Controllers
                 return Ok(new
                 {
                     success = true,
-                    message = $"Disparos concluídos. Lembretes enviados: {sentCount}, Ignorados: {skippedAlreadyInteracted}, Erros: {errors}"
+                    message = $"Campanha concluída. Enviados: {sentCount}; já interagiram hoje: {skippedAlreadyInteracted}; já enviados: {skippedAlreadySent}; fora dos dias da campanha: {skippedNotCampaignDay}; erros: {errors}"
                 });
             }
             catch (Exception ex)
@@ -905,106 +943,135 @@ namespace LabelWise.Api.Controllers
             }
         }
 
-        // Métodos privados de integração com Global Getnet (Payment Links API)
-        private async Task<string?> GerarTokenGetnetAsync(string operationId)
+        private async Task<bool> ReserveTrialInteractionOrNotifyAsync(
+            string phone,
+            IMongoCollection<MongoDB.Bson.BsonDocument> trialCollection)
         {
-            var timer = Stopwatch.StartNew();
-            var clientId = _configuration["Getnet:ClientId"]?.Trim();
-            var clientSecret = _configuration["Getnet:ClientSecret"]?.Trim();
-            var isProd = _configuration.GetValue<bool>("Getnet:IsProduction");
-            var environment = isProd ? "Production" : "Sandbox";
-            var baseUrl = isProd ? "https://api.globalgetnet.com" : "https://api-sbx.globalgetnet.com";
-            var authUrl = $"{baseUrl}/authentication/oauth2/access_token";
+            bool reserved = await TryReserveDailyTrialInteractionAsync(
+                trialCollection, phone, DateTime.UtcNow);
+            if (reserved) return true;
 
-            if (string.IsNullOrWhiteSpace(clientId) || string.IsNullOrWhiteSpace(clientSecret))
+            _logger.LogInformation("[WhatsApp B2C] Limite diário do trial atingido para interação de IA.");
+            string? paymentUrl = await GerarLinkPagamentoGetnetAsync(phone, "Cliente Limite", 29.90m);
+            string message = "⚠️ *Você chegou ao limite de 4 análises de IA do teste de hoje.*\n\n" +
+                             "Mensagens simples e registros básicos não contam para esse limite. Amanhã você poderá continuar.\n\n" +
+                             (!string.IsNullOrEmpty(paymentUrl)
+                                 ? $"Se quiser conhecer a assinatura mensal: 👉 {paymentUrl}"
+                                 : "Se quiser saber sobre a assinatura mensal, responda *assinar*.");
+            await _whatsAppSender.SendTextMessageAsync(phone, message);
+            return false;
+        }
+
+        private static DateTime GetBrazilDate(DateTime utcNow)
+        {
+            return DateTime.SpecifyKind(utcNow.AddHours(-3).Date, DateTimeKind.Utc);
+        }
+
+        private static async Task<bool> TryReserveDailyTrialInteractionAsync(
+            IMongoCollection<MongoDB.Bson.BsonDocument> collection,
+            string userId,
+            DateTime utcNow)
+        {
+            var today = GetBrazilDate(utcNow);
+            var todayBson = new MongoDB.Bson.BsonDateTime(today);
+
+            // Retry optimistic compare-and-set when simultaneous WhatsApp webhooks race.
+            for (var attempt = 0; attempt < 5; attempt++)
             {
-                _logger.LogError("[GETNET][{OperationId}] OAuth não iniciado: configuração incompleta. Ambiente={Environment}, ClientIdConfigurado={ClientIdConfigured}, ClientSecretConfigurado={ClientSecretConfigured}",
-                    operationId, environment, !string.IsNullOrWhiteSpace(clientId), !string.IsNullOrWhiteSpace(clientSecret));
-                return null;
+                var document = await collection.Find(
+                    Builders<MongoDB.Bson.BsonDocument>.Filter.Eq("_id", userId)).FirstOrDefaultAsync();
+                if (document == null) return false;
+
+                var hasDate = document.TryGetValue("LastInteractionDate", out var oldDateValue) && !oldDateValue.IsBsonNull;
+                var oldDate = hasDate && oldDateValue.IsBsonDateTime
+                    ? oldDateValue.ToUniversalTime().Date
+                    : DateTime.MinValue;
+                var isSameDay = oldDate == today.Date;
+
+                int oldCount = 0;
+                var hasCount = document.TryGetValue("DailyMessageCount", out var oldCountValue) && !oldCountValue.IsBsonNull;
+                if (hasCount && oldCountValue.IsNumeric)
+                {
+                    oldCount = oldCountValue.ToInt32();
+                }
+
+                var currentCount = isSameDay ? oldCount : 0;
+                if (currentCount >= DailyTrialInteractionLimit) return false;
+
+                var compareFilter = Builders<MongoDB.Bson.BsonDocument>.Filter.Eq("_id", userId);
+                compareFilter &= hasDate
+                    ? Builders<MongoDB.Bson.BsonDocument>.Filter.Eq("LastInteractionDate", oldDateValue)
+                    : Builders<MongoDB.Bson.BsonDocument>.Filter.Exists("LastInteractionDate", false);
+                compareFilter &= hasCount
+                    ? Builders<MongoDB.Bson.BsonDocument>.Filter.Eq("DailyMessageCount", oldCountValue)
+                    : Builders<MongoDB.Bson.BsonDocument>.Filter.Exists("DailyMessageCount", false);
+
+                var update = Builders<MongoDB.Bson.BsonDocument>.Update
+                    .Set("LastInteractionDate", todayBson)
+                    .Set("DailyMessageCount", currentCount + 1);
+                var result = await collection.UpdateOneAsync(compareFilter, update);
+                if (result.ModifiedCount == 1) return true;
             }
 
+            return false;
+        }
+
+        // 🛠️ MÉTODOS PRIVADOS DE INTEGRAÇÃO COM GLOBAL GETNET (PAYMENT LINKS API)
+        private async Task<string?> GerarTokenGetnetAsync()
+        {
             try
             {
-                _logger.LogInformation("[GETNET][{OperationId}] OAuth iniciado. Ambiente={Environment}, Endpoint={Endpoint}", operationId, environment, authUrl);
+                var clientId = _configuration["Getnet:ClientId"]?.Trim();
+                var clientSecret = _configuration["Getnet:ClientSecret"]?.Trim();
+                var isProd = _configuration.GetValue<bool>("Getnet:IsProduction");
+
+                var baseUrl = isProd ? "https://api.globalgetnet.com" : "https://api-sbx.globalgetnet.com";
+                var authUrl = $"{baseUrl}/authentication/oauth2/access_token";
 
                 var client = _httpClientFactory.CreateClient();
-                using var request = new HttpRequestMessage(HttpMethod.Post, authUrl);
+                var request = new HttpRequestMessage(HttpMethod.Post, authUrl);
+
                 var credentials = Convert.ToBase64String(Encoding.ASCII.GetBytes($"{clientId}:{clientSecret}"));
                 request.Headers.Authorization = new AuthenticationHeaderValue("Basic", credentials);
+
                 request.Content = new FormUrlEncodedContent(new[]
                 {
                     new KeyValuePair<string, string>("grant_type", "client_credentials")
                 });
 
-                using var response = await client.SendAsync(request);
-                var responseBody = await response.Content.ReadAsStringAsync();
-                var requestId = ObterHeaderRespostaGetnet(response, "x-request-id", "request-id", "trace-id");
+                var response = await client.SendAsync(request);
 
                 if (!response.IsSuccessStatusCode)
                 {
-                    _logger.LogError("[GETNET][{OperationId}] OAuth falhou. Ambiente={Environment}, Endpoint={Endpoint}, Status={StatusCode}, DuracaoMs={DurationMs}, ContentType={ContentType}, RequestId={RequestId}, Resposta={ResponseBody}",
-                        operationId, environment, authUrl, (int)response.StatusCode, timer.ElapsedMilliseconds,
-                        response.Content.Headers.ContentType?.MediaType ?? "indisponível", requestId,
-                        SanitizarRespostaGetnet(responseBody));
+                    var errorContent = await response.Content.ReadAsStringAsync();
+                    _logger.LogError("[GETNET TOKEN ERROR] Status: {StatusCode} | Body: {Error}", response.StatusCode, errorContent);
                     return null;
                 }
 
-                var tokenData = JsonSerializer.Deserialize<GetnetTokenResponse>(responseBody,
-                    new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
-
-                if (string.IsNullOrWhiteSpace(tokenData?.access_token))
-                {
-                    _logger.LogError("[GETNET][{OperationId}] OAuth respondeu sucesso, mas não retornou access_token. Status={StatusCode}, DuracaoMs={DurationMs}, RequestId={RequestId}, Resposta={ResponseBody}",
-                        operationId, (int)response.StatusCode, timer.ElapsedMilliseconds, requestId,
-                        SanitizarRespostaGetnet(responseBody));
-                    return null;
-                }
-
-                _logger.LogInformation("[GETNET][{OperationId}] OAuth concluído. Ambiente={Environment}, Status={StatusCode}, DuracaoMs={DurationMs}, TokenType={TokenType}, ExpiraEmSegundos={ExpiresIn}, Scope={Scope}, RequestId={RequestId}",
-                    operationId, environment, (int)response.StatusCode, timer.ElapsedMilliseconds,
-                    tokenData.token_type ?? "indisponível", tokenData.expires_in,
-                    string.IsNullOrWhiteSpace(tokenData.scope) ? "não informado" : tokenData.scope, requestId);
-
-                return tokenData.access_token;
-            }
-            catch (HttpRequestException ex)
-            {
-                _logger.LogError(ex, "[GETNET][{OperationId}] Falha de transporte no OAuth. Ambiente={Environment}, Endpoint={Endpoint}, DuracaoMs={DurationMs}",
-                    operationId, environment, authUrl, timer.ElapsedMilliseconds);
-                return null;
+                var tokenData = await response.Content.ReadFromJsonAsync<GetnetTokenResponse>();
+                return tokenData?.access_token;
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "[GETNET][{OperationId}] Exceção ao autenticar. Ambiente={Environment}, Endpoint={Endpoint}, DuracaoMs={DurationMs}",
-                    operationId, environment, authUrl, timer.ElapsedMilliseconds);
+                _logger.LogError(ex, "Exceção ao autenticar na Getnet.");
                 return null;
             }
         }
 
         private async Task<string?> GerarLinkPagamentoGetnetAsync(string phone, string name, decimal valorOriginal)
         {
-            var operationId = Guid.NewGuid().ToString("N");
-            var timer = Stopwatch.StartNew();
-            var isProd = _configuration.GetValue<bool>("Getnet:IsProduction");
-            var environment = isProd ? "Production" : "Sandbox";
-            var sellerId = _configuration["Getnet:SellerId"]?.Trim();
-
             try
             {
-                _logger.LogInformation("[GETNET][{OperationId}] Iniciando criação de Payment Link. Ambiente={Environment}, Valor={Amount}, Moeda=BRL, SellerIdConfigurado={SellerIdConfigured}",
-                    operationId, environment, valorOriginal, !string.IsNullOrWhiteSpace(sellerId));
+                var token = await GerarTokenGetnetAsync();
+                if (string.IsNullOrEmpty(token)) return null;
 
-                var token = await GerarTokenGetnetAsync(operationId);
-                if (string.IsNullOrWhiteSpace(token))
-                {
-                    _logger.LogError("[GETNET][{OperationId}] Criação do Payment Link cancelada: OAuth não forneceu token. DuracaoTotalMs={DurationMs}",
-                        operationId, timer.ElapsedMilliseconds);
-                    return null;
-                }
+                var sellerId = _configuration["Getnet:SellerId"]?.Trim();
+                var isProd = _configuration.GetValue<bool>("Getnet:IsProduction");
 
                 var baseUrl = isProd
                     ? "https://api.globalgetnet.com/dpy/payment-link/v1"
                     : "https://api-sbx.pre.globalgetnet.com/dpy/payment-link/v1";
+
                 var requestUrl = $"{baseUrl}/payment-links";
 
                 var linkRequest = new GlobalGetnetLinkRequest
@@ -1031,98 +1098,35 @@ namespace LabelWise.Api.Controllers
                     }
                 };
 
-                _logger.LogInformation("[GETNET][{OperationId}] Enviando criação de Payment Link. Ambiente={Environment}, Endpoint={Endpoint}, SellerIdConfigurado={SellerIdConfigured}, QuantidadeProdutos={ProductCount}, ValorCentavos={AmountInCents}, ContentType=application/json",
-                    operationId, environment, requestUrl, !string.IsNullOrWhiteSpace(sellerId),
-                    linkRequest.products?.Length ?? 0, (int)(valorOriginal * 100));
-
                 var client = _httpClientFactory.CreateClient();
-                using var request = new HttpRequestMessage(HttpMethod.Post, requestUrl);
+                var request = new HttpRequestMessage(HttpMethod.Post, requestUrl);
+
                 request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
                 request.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue("application/json"));
 
-                if (!string.IsNullOrWhiteSpace(sellerId))
+                if (!string.IsNullOrEmpty(sellerId))
+                {
                     request.Headers.Add("x-seller-id", sellerId);
+                }
 
                 request.Content = JsonContent.Create(linkRequest);
 
-                using var response = await client.SendAsync(request);
-                var responseBody = await response.Content.ReadAsStringAsync();
-                var requestId = ObterHeaderRespostaGetnet(response, "x-request-id", "request-id", "trace-id");
-                var contentType = response.Content.Headers.ContentType?.MediaType ?? "indisponível";
-
+                var response = await client.SendAsync(request);
                 if (!response.IsSuccessStatusCode)
                 {
-                    _logger.LogError("[GETNET][{OperationId}] Criação de Payment Link falhou. Ambiente={Environment}, Endpoint={Endpoint}, Status={StatusCode}, DuracaoTotalMs={DurationMs}, ContentType={ContentType}, RequestId={RequestId}, Resposta={ResponseBody}",
-                        operationId, environment, requestUrl, (int)response.StatusCode, timer.ElapsedMilliseconds,
-                        contentType, requestId, SanitizarRespostaGetnet(responseBody));
+                    var errorContent = await response.Content.ReadAsStringAsync();
+                    _logger.LogError("[GETNET LINK ERROR] Status: {StatusCode} | Body: {Error}", response.StatusCode, errorContent);
                     return null;
                 }
 
-                var linkResult = JsonSerializer.Deserialize<GetnetLinkResponse>(responseBody,
-                    new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
-                var paymentUrl = linkResult?.payment_url;
-
-                if (string.IsNullOrWhiteSpace(paymentUrl))
-                {
-                    _logger.LogError("[GETNET][{OperationId}] Getnet respondeu sucesso sem payment_url. Status={StatusCode}, DuracaoTotalMs={DurationMs}, ContentType={ContentType}, RequestId={RequestId}, CamposResposta={ResponseFields}",
-                        operationId, (int)response.StatusCode, timer.ElapsedMilliseconds, contentType, requestId,
-                        ObterCamposRespostaGetnet(responseBody));
-                    return null;
-                }
-
-                _logger.LogInformation("[GETNET][{OperationId}] Payment Link criado. Ambiente={Environment}, Status={StatusCode}, DuracaoTotalMs={DurationMs}, ContentType={ContentType}, RequestId={RequestId}, UrlRetornada=true",
-                    operationId, environment, (int)response.StatusCode, timer.ElapsedMilliseconds, contentType, requestId);
-                return paymentUrl;
-            }
-            catch (HttpRequestException ex)
-            {
-                _logger.LogError(ex, "[GETNET][{OperationId}] Falha de transporte ao criar Payment Link. Ambiente={Environment}, DuracaoTotalMs={DurationMs}",
-                    operationId, environment, timer.ElapsedMilliseconds);
-                return null;
+                var linkResult = await response.Content.ReadFromJsonAsync<GetnetLinkResponse>();
+                return linkResult?.payment_url;
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "[GETNET][{OperationId}] Exceção ao criar Payment Link. Ambiente={Environment}, DuracaoTotalMs={DurationMs}",
-                    operationId, environment, timer.ElapsedMilliseconds);
+                _logger.LogError(ex, "Exceção ao gerar link de pagamento.");
                 return null;
             }
-        }
-
-        private static string ObterHeaderRespostaGetnet(HttpResponseMessage response, params string[] headerNames)
-        {
-            foreach (var name in headerNames)
-            {
-                if (response.Headers.TryGetValues(name, out var values))
-                {
-                    var value = string.Join(",", values);
-                    return value.Length <= 200 ? value : value.Substring(0, 200);
-                }
-            }
-            return "não informado";
-        }
-
-        private static string SanitizarRespostaGetnet(string? body)
-        {
-            if (string.IsNullOrWhiteSpace(body)) return "(vazia)";
-
-            var sanitized = Regex.Replace(body,
-                @"(?i)(""?(?:access_token|refresh_token|client_secret|client_id|authorization|password|phone_number|phone|seller_id|order_id|name|email|token)""?\s*[:=]\s*)(""[^""]*""|[^,}\s]+)",
-                "$1\"[REDACTED]\"");
-            sanitized = Regex.Replace(sanitized, @"(?i)Bearer\s+[A-Za-z0-9._~+/-]+=*", "Bearer [REDACTED]");
-            sanitized = Regex.Replace(sanitized, @"(?<!\w)\+?\d[\d ().-]{7,}\d(?!\w)", "[REDACTED_NUMBER]");
-            return sanitized.Length <= 1200 ? sanitized : sanitized.Substring(0, 1200) + "…[truncado]";
-        }
-
-        private static string ObterCamposRespostaGetnet(string body)
-        {
-            try
-            {
-                using var document = JsonDocument.Parse(body);
-                if (document.RootElement.ValueKind == JsonValueKind.Object)
-                    return string.Join(",", document.RootElement.EnumerateObject().Select(property => property.Name).Take(30));
-            }
-            catch (JsonException) { }
-            return "JSON não reconhecido";
         }
 
         private async Task<string> GerarFeedbackDiarioComGeminiAsync(
@@ -1303,10 +1307,9 @@ Retorne APENAS o texto da mensagem pronto para envio.
     // CLASSES DE MODELO DA GLOBAL GETNET (ADICIONADAS)
     public class GetnetTokenResponse
     {
-        public string? access_token { get; set; }
-        public string? token_type { get; set; }
+        public string access_token { get; set; }
+        public string token_type { get; set; }
         public int expires_in { get; set; }
-        public string? scope { get; set; }
     }
 
     public class GetnetLinkResponse
