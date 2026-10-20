@@ -646,9 +646,9 @@ namespace LabelWise.Api.Controllers
                 }
 
                 // 🛠️ ATIVIDADE 2: REGISTO DE EXERCÍCIO / GASTO CALÓRICO
-                var palavrasTreino = new[] { "treinei", "meu treino", "corri ", "caminhada", "caminhei", "pedalei", "natação", "crossfit", "musculação", "pilates", "fiz academia", "exercício" };
-                var palavrasComida = new[] { "comi", "bebi", "almoço", "jantar", "café", "lanche", "prato", "fome", "comida", "refeição" };
-
+                var palavrasTreino = new[] { "treino", "treinei", "correr", "corri ", "caminhada", "caminhei", "pedalar", "pedalei", "bike", "bicicleta", "natação", "natacao", "crossfit", "musculação", "musculacao", "pilates", "academia", "exercício", "exercicio", "esteira", "malhar", "malhei", "yoga", "futebol" };
+                var palavrasComida = new[] { "comi", "bebi", "almoço", "almoco", "jantar", "café", "cafe", "lanche", "prato", "fome", "comida", "refeição", "refeicao" };
+               
                 // Só assume que é treino se tiver uma palavra de exercício E NÃO tiver palavras de comida no meio
                 bool pareceTreino = palavrasTreino.Any(p => textoLimpoCmd.Contains(p)) && !palavrasComida.Any(p => textoLimpoCmd.Contains(p));
 
