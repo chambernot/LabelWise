@@ -113,9 +113,9 @@ namespace LabelWise.Api.Controllers
                 }
                 else if (messageType == "image" && messagingEvent?.Image?.Id != null)
                 {
-                    await _whatsAppSender.SendTextMessageAsync(senderPhone, "📸 A analisar o seu prato, só um instante...");
+                    await _whatsAppSender.SendTextMessageAsync(senderPhone, "📸 A analisar a imagem, só um instante...");
                     imagemBase64 = await _metaMediaService.DownloadMediaAsBase64Async(messagingEvent.Image.Id);
-                    textoBruto = "Analise esta refeição da imagem.";
+                    textoBruto = "Analise esta imagem nutricional.";
                 }
                 else
                 {
@@ -129,7 +129,6 @@ namespace LabelWise.Api.Controllers
 
                 string textoLimpoCmd = Regex.Replace(textoBruto, "[^a-zA-Z0-9áéíóúâêîôûãõçÁÉÍÓÚÂÊÎÔÛÃÕÇ ]", "").Trim().ToLowerInvariant();
 
-                // 💳 Atalho para Pagamento / Assinatura (Getnet)
                 if (textoLimpoCmd == "assinar" || textoLimpoCmd == "pagar" || textoLimpoCmd == "plano" || textoLimpoCmd == "assinatura")
                 {
                     await _whatsAppSender.SendTextMessageAsync(senderPhone, "⏳ A gerar o seu link seguro de pagamento na Getnet...");
@@ -646,6 +645,55 @@ namespace LabelWise.Api.Controllers
                     }
                 }
 
+                // 🛠️ ATIVIDADE 2: REGISTO DE EXERCÍCIO / GASTO CALÓRICO
+                var palavrasTreino = new[] { "treinei", "meu treino", "corri ", "caminhada", "caminhei", "pedalei", "natação", "crossfit", "musculação", "pilates", "fiz academia", "exercício" };
+                var palavrasComida = new[] { "comi", "bebi", "almoço", "jantar", "café", "lanche", "prato", "fome", "comida", "refeição" };
+
+                // Só assume que é treino se tiver uma palavra de exercício E NÃO tiver palavras de comida no meio
+                bool pareceTreino = palavrasTreino.Any(p => textoLimpoCmd.Contains(p)) && !palavrasComida.Any(p => textoLimpoCmd.Contains(p));
+
+                if (pareceTreino && string.IsNullOrWhiteSpace(imagemBase64))
+                {
+                    await _whatsAppSender.SendTextMessageAsync(senderPhone, "💪 A estimar as calorias gastas no seu treino...");
+
+                    int caloriasGastas = await EstimarGastoCaloricoComGeminiAsync(textoBruto);
+
+                    if (caloriasGastas > 0)
+                    {
+                        var dataHojeBr = DateTime.UtcNow.AddHours(-3);
+                        var mealCol = _database.GetCollection<MongoDB.Bson.BsonDocument>("MealLogs");
+
+                        var mealDoc = new MongoDB.Bson.BsonDocument
+                        {
+                            { "_id", Guid.NewGuid().ToString() },
+                            { "UserId", senderPhone },
+                            { "MealType", "Treino" },
+                            { "DishName", $"🔥 {textoBruto}" },
+                            { "Calories", -caloriasGastas }, // ✨ Calorias Negativas para gerar "Crédito"
+                            { "ProteinG", 0.0 },
+                            { "CarbsG", 0.0 },
+                            { "FatG", 0.0 },
+                            { "LoggedAt", DateTime.UtcNow },
+                            { "Items", new MongoDB.Bson.BsonArray() }
+                        };
+
+                        await mealCol.InsertOneAsync(mealDoc);
+
+                        var statusAtualizado = await _nutritionService.GetDailyStatusAndSuggestionAsync(senderPhone, dataHojeBr);
+
+                        string respostaTreino = $"🔥 *Treino registado com sucesso!*\n\n" +
+                                                $"Gastou aproximadamente *{caloriasGastas} kcal* com essa atividade.\n" +
+                                                $"Isso gerou um bónus calórico no seu saldo de hoje! 🏃‍♂️💨\n\n" +
+                                                $"📊 *O SEU NOVO SALDO*\n" +
+                                                $"• *Calorias Consumidas (Líquidas):* {statusAtualizado.Consumed.Calories} / {statusAtualizado.Target.Calories} kcal\n" +
+                                                $"_Pode consumir mais {statusAtualizado.Remaining.Calories} kcal hoje._";
+
+                        await _whatsAppSender.SendTextMessageAsync(senderPhone, respostaTreino);
+                        await _nutritionRepository.SalvarMensagemHistoricoAsync(senderPhone, "assistant", respostaTreino);
+                        return Ok();
+                    }
+                }
+
                 if (isTrialLimitedUser && !await ReserveTrialInteractionOrNotifyAsync(senderPhone, trialCollection))
                 {
                     return Ok();
@@ -668,7 +716,6 @@ namespace LabelWise.Api.Controllers
                 else
                 {
                     // 🛠️ ATIVIDADE 1: MODO CORREÇÃO INTELIGENTE
-                    // Identifica se a frase do utilizador sugere uma correção de refeição anterior
                     var palavrasCorrecao = new[] { "esqueci", "corrigir", "não tinha", "adiciona", "tira", "remova", "errei", "faltei" };
                     bool pareceCorrecao = palavrasCorrecao.Any(p => textoLimpoCmd.Contains(p));
 
@@ -677,7 +724,6 @@ namespace LabelWise.Api.Controllers
                         var dataHojeBr = DateTime.UtcNow.AddHours(-3);
                         var logsHoje = await _nutritionRepository.ObterRefeicoesDoDiaAsync(senderPhone, dataHojeBr);
 
-                        // Pega na última refeição registada hoje
                         var ultimaRefeicao = logsHoje?.OrderByDescending(x => x.LoggedAt).FirstOrDefault();
 
                         if (ultimaRefeicao != null)
@@ -689,7 +735,6 @@ namespace LabelWise.Api.Controllers
                                                $"Novo comando do utilizador: '{textoBruto}'. " +
                                                $"Instrução: Refaça os cálculos adicionando ou removendo o que o utilizador pediu e registe como uma refeição completa corrigida.";
 
-                            // Removemos a antiga para a IA criar a nova versão corrigida no fluxo normal
                             await _nutritionRepository.ExcluirMealLogAsync(ultimaRefeicao.Id);
                         }
                     }
@@ -918,7 +963,6 @@ namespace LabelWise.Api.Controllers
                         continue;
                     }
 
-                    // Claim the campaign day atomically so overlapping cron runs do not send duplicates.
                     var claimFilter = Builders<MongoDB.Bson.BsonDocument>.Filter.And(
                         Builders<MongoDB.Bson.BsonDocument>.Filter.Eq("_id", phone),
                         Builders<MongoDB.Bson.BsonDocument>.Filter.Ne("TrialReminderDaysSent", trialDay));
@@ -1004,7 +1048,6 @@ namespace LabelWise.Api.Controllers
             var today = GetBrazilDate(utcNow);
             var todayBson = new MongoDB.Bson.BsonDateTime(today);
 
-            // Retry optimistic compare-and-set when simultaneous WhatsApp webhooks race.
             for (var attempt = 0; attempt < 5; attempt++)
             {
                 var document = await collection.Find(
@@ -1045,7 +1088,6 @@ namespace LabelWise.Api.Controllers
             return false;
         }
 
-        // 🛠️ MÉTODOS PRIVADOS DE INTEGRAÇÃO COM GLOBAL GETNET (PAYMENT LINKS API)
         private async Task<string?> GerarTokenGetnetAsync()
         {
             try
@@ -1270,6 +1312,52 @@ Retorne APENAS o texto da mensagem pronto para envio.
             return doc.RootElement.GetProperty("choices")[0].GetProperty("message").GetProperty("content").GetString()?.Trim() ?? string.Empty;
         }
 
+        private async Task<int> EstimarGastoCaloricoComGeminiAsync(string textoAtividade)
+        {
+            try
+            {
+                var apiKey = _configuration["GeminiApiKey"] ?? _configuration["Gemini:ApiKey"];
+                var endpoint = _configuration["Gemini:Endpoint"] ?? "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions";
+                var model = _configuration["Model"] ?? "gemini-1.5-flash";
+
+                var prompt = $"O utilizador relatou a seguinte atividade física: '{textoAtividade}'. " +
+                             $"Estime o gasto calórico médio dessa atividade em kcal para um adulto médio. " +
+                             $"Responda APENAS com o número inteiro correspondente às calorias gastas. " +
+                             $"Se não for uma atividade física reconhecível, responda 0.";
+
+                var client = _httpClientFactory.CreateClient();
+                var requestBody = new
+                {
+                    model = model,
+                    temperature = 0.1,
+                    messages = new[] { new { role = "user", content = prompt } }
+                };
+
+                var content = new StringContent(JsonSerializer.Serialize(requestBody), Encoding.UTF8, "application/json");
+                using var requestMessage = new HttpRequestMessage(HttpMethod.Post, endpoint) { Content = content };
+                requestMessage.Headers.Authorization = new AuthenticationHeaderValue("Bearer", apiKey);
+
+                var response = await client.SendAsync(requestMessage);
+                if (!response.IsSuccessStatusCode) return 0;
+
+                var jsonResponse = await response.Content.ReadAsStringAsync();
+                using var doc = JsonDocument.Parse(jsonResponse);
+                var rawText = doc.RootElement.GetProperty("choices")[0].GetProperty("message").GetProperty("content").GetString()?.Trim() ?? "0";
+
+                var match = Regex.Match(rawText, @"\d+");
+                if (match.Success && int.TryParse(match.Value, out int kcal))
+                {
+                    return kcal;
+                }
+                return 0;
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Erro ao estimar gasto calórico.");
+                return 0;
+            }
+        }
+
         private string FormatarRespostaParaWhatsApp(MealAnalysisResponseDto aiResult, DailyStatusResponseDto? statusDoDia)
         {
             if (aiResult.ClarificationQuestion != null && aiResult.ClarificationQuestion.Contains("instáveis", StringComparison.OrdinalIgnoreCase))
@@ -1324,7 +1412,6 @@ Retorne APENAS o texto da mensagem pronto para envio.
         }
     }
 
-    // CLASSES DO WHATSAPP (META)
     public class MetaWebhookPayload { public List<MetaEntry>? Entry { get; set; } }
     public class MetaEntry { public List<MetaChange>? Changes { get; set; } }
     public class MetaChange { public MetaValue? Value { get; set; } }
@@ -1333,7 +1420,6 @@ Retorne APENAS o texto da mensagem pronto para envio.
     public class MetaText { public string? Body { get; set; } }
     public class MetaMedia { public string? Id { get; set; } public string? Mime_Typea { get; set; } }
 
-    // CLASSES DE MODELO DA GLOBAL GETNET (ADICIONADAS)
     public class GetnetTokenResponse
     {
         public string access_token { get; set; }
