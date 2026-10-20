@@ -665,6 +665,35 @@ namespace LabelWise.Api.Controllers
                     imagemFinalParaIa ??= contextoPendente.OriginalBase64Image;
                     await _nutritionRepository.RemoverClarificacaoPendenteAsync(senderPhone);
                 }
+                else
+                {
+                    // 🛠️ ATIVIDADE 1: MODO CORREÇÃO INTELIGENTE
+                    // Identifica se a frase do utilizador sugere uma correção de refeição anterior
+                    var palavrasCorrecao = new[] { "esqueci", "corrigir", "não tinha", "adiciona", "tira", "remova", "errei", "faltei" };
+                    bool pareceCorrecao = palavrasCorrecao.Any(p => textoLimpoCmd.Contains(p));
+
+                    if (pareceCorrecao && string.IsNullOrWhiteSpace(imagemBase64))
+                    {
+                        var dataHojeBr = DateTime.UtcNow.AddHours(-3);
+                        var logsHoje = await _nutritionRepository.ObterRefeicoesDoDiaAsync(senderPhone, dataHojeBr);
+
+                        // Pega na última refeição registada hoje
+                        var ultimaRefeicao = logsHoje?.OrderByDescending(x => x.LoggedAt).FirstOrDefault();
+
+                        if (ultimaRefeicao != null)
+                        {
+                            await _whatsAppSender.SendTextMessageAsync(senderPhone, "🛠️ A corrigir a sua última refeição...");
+
+                            textoFinalParaIa = $"[MODO CORREÇÃO] O utilizador quer ajustar a sua última refeição. " +
+                                               $"Refeição original guardada: '{ultimaRefeicao.DishName ?? ultimaRefeicao.MealType}' com {ultimaRefeicao.Calories} kcal. " +
+                                               $"Novo comando do utilizador: '{textoBruto}'. " +
+                                               $"Instrução: Refaça os cálculos adicionando ou removendo o que o utilizador pediu e registe como uma refeição completa corrigida.";
+
+                            // Removemos a antiga para a IA criar a nova versão corrigida no fluxo normal
+                            await _nutritionRepository.ExcluirMealLogAsync(ultimaRefeicao.Id);
+                        }
+                    }
+                }
 
                 await _nutritionRepository.SalvarMensagemHistoricoAsync(senderPhone, "user", textoFinalParaIa);
 
