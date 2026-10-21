@@ -135,6 +135,18 @@ namespace LabelWise.Api.Controllers
 
                 string textoLimpoCmd = Regex.Replace(textoBruto ?? "", "[^a-zA-Z0-9áéíóúâêîôûãõçÁÉÍÓÚÂÊÎÔÛÃÕÇ ]", "").Trim().ToLowerInvariant();
 
+                // 📊 INTERCETOR DE RESUMO / PAINEL VISUAL (DIÁRIO E MENSAL)
+                if (textoLimpoCmd == "resumo" || textoLimpoCmd == "relatorio" || textoLimpoCmd == "relatório" ||
+                    textoLimpoCmd == "resumo do mes" || textoLimpoCmd == "resumo do mês" || textoLimpoCmd == "resumo diario" ||
+                    textoLimpoCmd == "resumo diário" || textoLimpoCmd == "progresso" || textoLimpoCmd == "painel")
+                {
+                    await _whatsAppSender.SendTextMessageAsync(senderPhone, "⏳ A calcular o seu resumo diário e mensal...");
+                    string painelTexto = await ObterResumoFormatadoWhatsappAsync(senderPhone);
+                    await _whatsAppSender.SendTextMessageAsync(senderPhone, painelTexto);
+                    await _nutritionRepository.SalvarMensagemHistoricoAsync(senderPhone, "assistant", painelTexto);
+                    return Ok();
+                }
+
                 // 🚀 INTERCETOR DE NOVIDADES
                 if (textoLimpoCmd == "quero ver a novidade")
                 {
@@ -579,7 +591,7 @@ namespace LabelWise.Api.Controllers
                 {
                     string respostaSaudacao = "👋 Olá! Sou o seu assistente nutricional do Nutrição Facil.\n\n" +
                                               "Pode enviar-me uma **foto**, um **áudio** ou o **texto** do que comeu para eu registar a refeição. 🥗\n\n" +
-                                              "💡 *Dica:* Diga *remover* para ver a lista de refeições de hoje ou *minha dieta* para ver o seu plano completo!";
+                                              "💡 *Dica:* Diga *resumo* para ver o seu painel de hoje/mês, *remover* para ver as refeições ou *minha dieta* para o plano completo!";
 
                     await _whatsAppSender.SendTextMessageAsync(senderPhone, respostaSaudacao);
                     await _nutritionRepository.SalvarMensagemHistoricoAsync(senderPhone, "assistant", respostaSaudacao);
@@ -791,7 +803,8 @@ namespace LabelWise.Api.Controllers
                 if (!eIntencaoRefeicao)
                 {
                     string msgOrientacao = "Não consegui identificar uma refeição no seu texto. 🥗\n\n" +
-                                           "Para registrar o que comeu, descreva os alimentos e quantidades (ex: *'150g de frango e 2 colheres de arroz'*), ou envie um *áudio* ou *foto* do seu prato!";
+                                           "Para registrar o que comeu, descreva os alimentos e quantidades (ex: *'150g de frango e 2 colheres de arroz'*), ou envie um *áudio* ou *foto* do seu prato!\n\n" +
+                                           "💡 *Outros comandos:* Digite *resumo* para o seu relatório ou *minha dieta* para o plano completo.";
                     await _whatsAppSender.SendTextMessageAsync(senderPhone, msgOrientacao);
                     return Ok();
                 }
@@ -860,6 +873,126 @@ namespace LabelWise.Api.Controllers
             }
         }
 
+        #region Helper Methods - Painel / Resumo Visual
+
+        private static string GerarBarraProgresso(decimal atual, decimal meta, int tamanhoBarra = 10)
+        {
+            if (meta <= 0) meta = 1;
+            decimal porcentagem = Math.Min(1.0m, Math.Max(0.0m, atual / meta));
+            int preenchidos = (int)Math.Round(porcentagem * tamanhoBarra);
+            int vazios = tamanhoBarra - preenchidos;
+
+            var sb = new StringBuilder();
+            for (int i = 0; i < preenchidos; i++) sb.Append("🟩");
+            for (int i = 0; i < vazios; i++) sb.Append("⬜");
+
+            return $"{sb} {porcentagem * 100:F0}%";
+        }
+
+        private async Task<string> ObterResumoFormatadoWhatsappAsync(string phone)
+        {
+            var hojeBr = DateTime.UtcNow.AddHours(-3);
+            var inicioMes = new DateTime(hojeBr.Year, hojeBr.Month, 1);
+
+            // 1. Status Diário Atualizado via Serviço
+            var statusHoje = await _nutritionService.GetDailyStatusAndSuggestionAsync(phone, hojeBr);
+
+            // 2. Consulta de Água do Dia
+            int totalAguaHoje = 0;
+            try
+            {
+                var waterCol = _database.GetCollection<MongoDB.Bson.BsonDocument>("WaterLogs");
+                var filterWater = Builders<MongoDB.Bson.BsonDocument>.Filter.And(
+                    Builders<MongoDB.Bson.BsonDocument>.Filter.Eq("UserId", phone),
+                    Builders<MongoDB.Bson.BsonDocument>.Filter.Gte("LoggedAt", hojeBr.Date)
+                );
+                var registrosAgua = await waterCol.Find(filterWater).ToListAsync();
+                totalAguaHoje = registrosAgua.Sum(w => w.Contains("AmountMl") && w["AmountMl"].IsInt32 ? w["AmountMl"].AsInt32 : 0);
+            }
+            catch { }
+
+            // 3. Consulta de Dados Acumulados do Mês no MongoDB (MealLogs)
+            int diasComRegistro = 0;
+            int totalCaloriasMes = 0;
+            int mediaCaloriasDiaria = 0;
+
+            try
+            {
+                var mealCol = _database.GetCollection<MongoDB.Bson.BsonDocument>("MealLogs");
+                var filterMes = Builders<MongoDB.Bson.BsonDocument>.Filter.And(
+                    Builders<MongoDB.Bson.BsonDocument>.Filter.Eq("UserId", phone),
+                    Builders<MongoDB.Bson.BsonDocument>.Filter.Gte("LoggedAt", inicioMes)
+                );
+
+                var logsDoMes = await mealCol.Find(filterMes).ToListAsync();
+
+                if (logsDoMes != null && logsDoMes.Any())
+                {
+                    diasComRegistro = logsDoMes
+                        .Where(x => x.Contains("LoggedAt") && x["LoggedAt"].IsBsonDateTime)
+                        .Select(x => x["LoggedAt"].ToUniversalTime().AddHours(-3).Date)
+                        .Distinct()
+                        .Count();
+
+                    totalCaloriasMes = logsDoMes.Sum(x =>
+                    {
+                        if (!x.Contains("Calories")) return 0;
+                        if (x["Calories"].IsInt32) return x["Calories"].AsInt32;
+                        if (x["Calories"].IsDouble) return (int)x["Calories"].AsDouble;
+                        return 0;
+                    });
+
+                    mediaCaloriasDiaria = diasComRegistro > 0 ? totalCaloriasMes / diasComRegistro : 0;
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Erro ao consultar dados mensais de nutrição para o telefone {Phone}", phone);
+            }
+
+            // 4. Montagem da Mensagem do Painel
+            var sb = new StringBuilder();
+
+            sb.AppendLine("📊 *PAINEL DE DESEMPENHO NUTRICIONAL* 📊\n");
+
+            // SEÇÃO HOJE
+            sb.AppendLine($"🗓️ *RESUMO DE HOJE ({hojeBr:dd/MM})*");
+            sb.AppendLine($"🔥 *Calorias:* {statusHoje.Consumed.Calories} / {statusHoje.Target.Calories} kcal");
+            sb.AppendLine(GerarBarraProgresso(statusHoje.Consumed.Calories, statusHoje.Target.Calories));
+
+            sb.AppendLine($"🥩 *Proteínas:* {statusHoje.Consumed.ProteinG:F0}g / {statusHoje.Target.ProteinG:F0}g");
+            sb.AppendLine(GerarBarraProgresso(statusHoje.Consumed.ProteinG, statusHoje.Target.ProteinG));
+
+            sb.AppendLine($"🍞 *Carboidratos:* {statusHoje.Consumed.CarbsG:F0}g / {statusHoje.Target.CarbsG:F0}g");
+            sb.AppendLine(GerarBarraProgresso(statusHoje.Consumed.CarbsG, statusHoje.Target.CarbsG));
+
+            sb.AppendLine($"🥑 *Gorduras:* {statusHoje.Consumed.FatG:F0}g / {statusHoje.Target.FatG:F0}g");
+            sb.AppendLine(GerarBarraProgresso(statusHoje.Consumed.FatG, statusHoje.Target.FatG));
+
+            int metaAgua = 2500;
+            sb.AppendLine($"💧 *Água:* {totalAguaHoje} / {metaAgua} ml");
+            sb.AppendLine(GerarBarraProgresso(totalAguaHoje, metaAgua));
+
+            if (statusHoje.StreakDays > 0)
+            {
+                sb.AppendLine($"\n🔥 *Sequência:* {statusHoje.StreakDays} dia(s) consecutivos no foco!");
+            }
+
+            sb.AppendLine("\n----------------------------------");
+
+            // SEÇÃO MÊS
+            sb.AppendLine($"📅 *ACUMULADO DO MÊS ({hojeBr:MMMM/yyyy})*");
+            sb.AppendLine($"✅ *Dias Ativos:* {diasComRegistro} dia(s) registrados");
+            sb.AppendLine($"🔥 *Média Diária:* {mediaCaloriasDiaria} kcal/dia");
+            sb.AppendLine($"📦 *Total Consumido:* {totalCaloriasMes:N0} kcal");
+
+            sb.AppendLine("\n💡 *Dica:* Digite *minha dieta* para ver o plano em página externa ou *remover* para ajustar uma refeição de hoje.");
+
+            return sb.ToString();
+        }
+
+        #endregion
+
         private static bool EhIntencaoRefeicaoOuComida(string textoLimpo, string textoOriginal, bool temImagem, bool temContextoPendente)
         {
             if (temImagem || temContextoPendente) return true;
@@ -877,7 +1010,6 @@ namespace LabelWise.Api.Controllers
 
             if (palavrasChaveRefeicao.Any(p => textoLimpo.Contains(p))) return true;
 
-            // Se contém números acompanhados de letras (ex: "200g", "2 fatias", "100 ml")
             if (Regex.IsMatch(textoOriginal, @"\d+\s*[a-zA-ZáéíóúâêîôûãõçÁÉÍÓÚÂÊÎÔÛÃÕÇ]+")) return true;
 
             return false;
