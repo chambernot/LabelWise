@@ -110,6 +110,12 @@ namespace LabelWise.Api.Controllers
                     await _whatsAppSender.SendTextMessageAsync(senderPhone, "🎙 A ouvir o seu áudio e a transcrever...");
                     var audioBytes = await _metaMediaService.DownloadMediaAsBytesAsync(messagingEvent.Audio.Id);
                     textoBruto = await TranscreverAudioComGeminiAsync(audioBytes);
+
+                    if (string.IsNullOrWhiteSpace(textoBruto))
+                    {
+                        await _whatsAppSender.SendTextMessageAsync(senderPhone, "⚠️ Não consegui compreender o áudio. Por favor, tente enviar novamente ou digite por texto.");
+                        return Ok();
+                    }
                 }
                 else if (messageType == "image" && messagingEvent?.Image?.Id != null)
                 {
@@ -127,9 +133,9 @@ namespace LabelWise.Api.Controllers
                     return Ok();
                 }
 
-                string textoLimpoCmd = Regex.Replace(textoBruto, "[^a-zA-Z0-9áéíóúâêîôûãõçÁÉÍÓÚÂÊÎÔÛÃÕÇ ]", "").Trim().ToLowerInvariant();
+                string textoLimpoCmd = Regex.Replace(textoBruto ?? "", "[^a-zA-Z0-9áéíóúâêîôûãõçÁÉÍÓÚÂÊÎÔÛÃÕÇ ]", "").Trim().ToLowerInvariant();
 
-                // 🚀 INTERCETOR DE NOVIDADES (ESTRATÉGIA 2 PASSOS)
+                // 🚀 INTERCETOR DE NOVIDADES
                 if (textoLimpoCmd == "quero ver a novidade")
                 {
                     string novidadeTexto = "🔥 *A Mágica das Calorias!* \n\n" +
@@ -298,7 +304,7 @@ namespace LabelWise.Api.Controllers
                                 await _whatsAppSender.SendTextMessageAsync(senderPhone, "🧠 *A processar os seus dados biológicos e a calcular as metas ideais com IA...* ⏱️");
 
                                 string userGoal = userDoc.Contains("TempGoal") ? userDoc["TempGoal"].AsString : "Emagrecimento";
-                                var calculatedGoals = await _nutritionAgentService.CalculateNutritionalGoalsAsync(textoBruto, userGoal);
+                                var calculatedGoals = await _nutritionAgentService.CalculateNutritionalGoalsAsync(textoBruto!, userGoal);
 
                                 var updateProfile = Builders<MongoDB.Bson.BsonDocument>.Update
                                     .Set("TempCalories", calculatedGoals.TargetCalories)
@@ -322,7 +328,7 @@ namespace LabelWise.Api.Controllers
                                 return Ok();
 
                             case "WaitingForRestrictions":
-                                var restrictions = textoBruto.Equals("nenhuma", StringComparison.OrdinalIgnoreCase) ? "" : textoBruto;
+                                var restrictions = string.Equals(textoBruto, "nenhuma", StringComparison.OrdinalIgnoreCase) ? "" : textoBruto;
 
                                 var updateRest = Builders<MongoDB.Bson.BsonDocument>.Update
                                     .Set("TempRestrictions", restrictions)
@@ -333,7 +339,7 @@ namespace LabelWise.Api.Controllers
                                 return Ok();
 
                             case "WaitingForAversions":
-                                var aversions = textoBruto.Equals("nenhuma", StringComparison.OrdinalIgnoreCase) ? "" : textoBruto;
+                                var aversions = string.Equals(textoBruto, "nenhuma", StringComparison.OrdinalIgnoreCase) ? "" : textoBruto;
 
                                 string goal = userDoc.Contains("TempGoal") ? userDoc["TempGoal"].AsString : "Emagrecimento";
                                 int calories = userDoc.Contains("TempCalories") ? userDoc["TempCalories"].AsInt32 : 2000;
@@ -405,12 +411,17 @@ namespace LabelWise.Api.Controllers
 
                 if (textoLimpoCmd.StartsWith("substituir ") || textoLimpoCmd.StartsWith("trocar "))
                 {
-                    var alimentoAlvo = textoBruto.Replace("substituir", "", StringComparison.OrdinalIgnoreCase)
-                                                 .Replace("trocar", "", StringComparison.OrdinalIgnoreCase)
-                                                 .Replace("por", "", StringComparison.OrdinalIgnoreCase).Trim();
+                    var alimentoAlvo = (textoBruto ?? "").Replace("substituir", "", StringComparison.OrdinalIgnoreCase)
+                                                         .Replace("trocar", "", StringComparison.OrdinalIgnoreCase)
+                                                         .Replace("por", "", StringComparison.OrdinalIgnoreCase).Trim();
 
                     if (!string.IsNullOrWhiteSpace(alimentoAlvo))
                     {
+                        if (isTrialLimitedUser && !await ReserveTrialInteractionOrNotifyAsync(senderPhone, trialCollection))
+                        {
+                            return Ok();
+                        }
+
                         await _whatsAppSender.SendTextMessageAsync(senderPhone, $"🔄 A procurar as melhores alternativas para *{alimentoAlvo}* respeitando o seu plano...");
 
                         var dataHojeBr = DateTime.UtcNow.AddHours(-3);
@@ -433,11 +444,6 @@ namespace LabelWise.Api.Controllers
                             Math.Max(0, targetFat - consumedFat)
                         );
 
-                        if (isTrialLimitedUser && !await ReserveTrialInteractionOrNotifyAsync(senderPhone, trialCollection))
-                        {
-                            return Ok();
-                        }
-
                         string respostaTroca = await _nutritionAgentService.GenerateSmartSubstitutionAsync(
                             alimentoAlvo, remaining, protocoloClinico ?? "", foodAversions ?? ""
                         );
@@ -448,7 +454,15 @@ namespace LabelWise.Api.Controllers
                     }
                 }
 
-                if (textoLimpoCmd == "remover" || textoLimpoCmd == "apagar" || textoLimpoCmd == "excluir" || textoLimpoCmd == "listar refeicoes" || textoLimpoCmd == "remover refeicao")
+                // 🗑️ REMOÇÃO SIMPLES
+                bool eIntencaoRemoverSimples =
+                    textoLimpoCmd == "remover" || textoLimpoCmd == "apagar" || textoLimpoCmd == "excluir" ||
+                    textoLimpoCmd == "deletar" || textoLimpoCmd == "listar refeicoes" || textoLimpoCmd == "remover refeicao" ||
+                    Regex.IsMatch(textoLimpoCmd, @"^r+[em]*o+v+e*r*$") ||
+                    Regex.IsMatch(textoLimpoCmd, @"^a+p+a+g+a*r*$") ||
+                    Regex.IsMatch(textoLimpoCmd, @"^e+x+c+l+u+i*r*$");
+
+                if (eIntencaoRemoverSimples)
                 {
                     var dataHojeBr = DateTime.UtcNow.AddHours(-3);
                     var refeicoesHoje = await _nutritionRepository.ObterRefeicoesDoDiaAsync(senderPhone, dataHojeBr);
@@ -473,7 +487,14 @@ namespace LabelWise.Api.Controllers
                     return Ok();
                 }
 
-                if (textoLimpoCmd.StartsWith("remover ") || textoLimpoCmd.StartsWith("apagar ") || textoLimpoCmd.StartsWith("excluir ") || isNumeroIsolado)
+                // 🗑️ REMOÇÃO COM ARGUMENTO OU NÚMERO ISOLADO
+                bool eIntencaoRemoverComArg =
+                    textoLimpoCmd.StartsWith("remover ") || textoLimpoCmd.StartsWith("rrmover ") ||
+                    textoLimpoCmd.StartsWith("rmover ") || textoLimpoCmd.StartsWith("apagar ") ||
+                    textoLimpoCmd.StartsWith("excluir ") || textoLimpoCmd.StartsWith("deletar ") ||
+                    isNumeroIsolado;
+
+                if (eIntencaoRemoverComArg)
                 {
                     var dataHojeBr = DateTime.UtcNow.AddHours(-3);
                     var refeicoesHoje = await _nutritionRepository.ObterRefeicoesDoDiaAsync(senderPhone, dataHojeBr);
@@ -497,7 +518,7 @@ namespace LabelWise.Api.Controllers
                     }
                     else
                     {
-                        var partes = textoBruto.Split(' ', 2, StringSplitOptions.RemoveEmptyEntries);
+                        var partes = (textoBruto ?? "").Split(' ', 2, StringSplitOptions.RemoveEmptyEntries);
                         if (partes.Length > 1)
                         {
                             var argumento = partes[1].Trim();
@@ -534,7 +555,7 @@ namespace LabelWise.Api.Controllers
                     }
                     else
                     {
-                        await _whatsAppSender.SendTextMessageAsync(senderPhone, "❌ Número inválido. Diga *remover* para ver a lista atualizada das suas refeições.");
+                        await _whatsAppSender.SendTextMessageAsync(senderPhone, "❌ Número ou refeição inválida. Diga *remover* para ver a lista atualizada das suas refeições.");
                         return Ok();
                     }
                 }
@@ -565,15 +586,15 @@ namespace LabelWise.Api.Controllers
                     return Ok();
                 }
 
-                bool mencionaAgua = textoBruto.Contains("agua", StringComparison.OrdinalIgnoreCase) ||
-                                    textoBruto.Contains("água", StringComparison.OrdinalIgnoreCase) ||
-                                    textoBruto.Contains("h2o", StringComparison.OrdinalIgnoreCase);
+                bool mencionaAgua = (textoBruto ?? "").Contains("agua", StringComparison.OrdinalIgnoreCase) ||
+                                    (textoBruto ?? "").Contains("água", StringComparison.OrdinalIgnoreCase) ||
+                                    (textoBruto ?? "").Contains("h2o", StringComparison.OrdinalIgnoreCase);
 
                 if (mencionaAgua)
                 {
                     int quantidadeMl = 250;
 
-                    var matchMl = Regex.Match(textoBruto, @"(\d+)\s*(ml|litros|l)\b", RegexOptions.IgnoreCase);
+                    var matchMl = Regex.Match(textoBruto ?? "", @"(\d+)\s*(ml|litros|l)\b", RegexOptions.IgnoreCase);
                     if (matchMl.Success)
                     {
                         quantidadeMl = int.Parse(matchMl.Groups[1].Value);
@@ -584,7 +605,7 @@ namespace LabelWise.Api.Controllers
                     }
                     else
                     {
-                        var matchCopo = Regex.Match(textoBruto, @"(\d+)?\s*(copo|copos|garrafa|garrafas)\b", RegexOptions.IgnoreCase);
+                        var matchCopo = Regex.Match(textoBruto ?? "", @"(\d+)?\s*(copo|copos|garrafa|garrafas)\b", RegexOptions.IgnoreCase);
                         if (matchCopo.Success)
                         {
                             int qtd = 1;
@@ -633,10 +654,10 @@ namespace LabelWise.Api.Controllers
                     return Ok();
                 }
 
-                var matchPeso = Regex.Match(textoBruto, @"(?:peso|peso hoje|estou com|estou pesando)\D*(\d+[\.,]?\d*)\s*kg", RegexOptions.IgnoreCase);
-                if (matchPeso.Success || (textoBruto.Contains("kg", StringComparison.OrdinalIgnoreCase) && Regex.IsMatch(textoBruto, @"\d+[\.,]?\d*")))
+                var matchPeso = Regex.Match(textoBruto ?? "", @"(?:peso|peso hoje|estou com|estou pesando)\D*(\d+[\.,]?\d*)\s*kg", RegexOptions.IgnoreCase);
+                if (matchPeso.Success || ((textoBruto ?? "").Contains("kg", StringComparison.OrdinalIgnoreCase) && Regex.IsMatch(textoBruto ?? "", @"\d+[\.,]?\d*")))
                 {
-                    string valorPesoStr = matchPeso.Success ? matchPeso.Groups[1].Value : Regex.Match(textoBruto, @"\d+[\.,]?\d*").Value;
+                    string valorPesoStr = matchPeso.Success ? matchPeso.Groups[1].Value : Regex.Match(textoBruto ?? "", @"\d+[\.,]?\d*").Value;
                     if (decimal.TryParse(valorPesoStr.Replace(",", "."), System.Globalization.NumberStyles.Any, System.Globalization.CultureInfo.InvariantCulture, out decimal pesoInformado))
                     {
                         var dataHojeBrPeso = DateTime.UtcNow.AddHours(-3).Date;
@@ -665,18 +686,21 @@ namespace LabelWise.Api.Controllers
                     }
                 }
 
-                // 🛠️ ATIVIDADE 2: REGISTO DE EXERCÍCIO / GASTO CALÓRICO
-                var palavrasTreino = new[] { "treino", "treinei", "correr", "corri ", "caminhada", "caminhei", "pedalar", "pedalei", "bike", "bicicleta", "natação", "natacao", "crossfit", "musculação", "musculacao", "pilates", "academia", "exercício", "exercicio", "esteira", "malhar", "malhei", "yoga", "futebol" };
+                // 🏃‍♂️ REGISTO DE EXERCÍCIO / TREINO
+                var palavrasTreino = new[] { "treino", "treinei", "correr", "corri", "caminhada", "caminhei", "pedalar", "pedalei", "bike", "bicicleta", "natação", "natacao", "crossfit", "musculação", "musculacao", "pilates", "academia", "exercício", "exercicio", "esteira", "malhar", "malhei", "yoga", "futebol" };
                 var palavrasComida = new[] { "comi", "bebi", "almoço", "almoco", "jantar", "café", "cafe", "lanche", "prato", "fome", "comida", "refeição", "refeicao" };
 
-                // Só assume que é treino se tiver uma palavra de exercício E NÃO tiver palavras de comida no meio
                 bool pareceTreino = palavrasTreino.Any(p => textoLimpoCmd.Contains(p)) && !palavrasComida.Any(p => textoLimpoCmd.Contains(p));
 
                 if (pareceTreino && string.IsNullOrWhiteSpace(imagemBase64))
                 {
-                    await _whatsAppSender.SendTextMessageAsync(senderPhone, "💪 A estimar as calorias gastas no seu treino...");
+                    if (isTrialLimitedUser && !await ReserveTrialInteractionOrNotifyAsync(senderPhone, trialCollection))
+                    {
+                        return Ok();
+                    }
 
-                    int caloriasGastas = await EstimarGastoCaloricoComGeminiAsync(textoBruto);
+                    await _whatsAppSender.SendTextMessageAsync(senderPhone, "💪 A estimar as calorias gastas no seu treino...");
+                    int caloriasGastas = await EstimarGastoCaloricoComGeminiAsync(textoBruto ?? "");
 
                     if (caloriasGastas > 0)
                     {
@@ -689,7 +713,7 @@ namespace LabelWise.Api.Controllers
                             { "UserId", senderPhone },
                             { "MealType", "Treino" },
                             { "DishName", $"🔥 {textoBruto}" },
-                            { "Calories", -caloriasGastas }, // ✨ Calorias Negativas para gerar "Crédito"
+                            { "Calories", -caloriasGastas }, // Calorias Negativas
                             { "ProteinG", 0.0 },
                             { "CarbsG", 0.0 },
                             { "FatG", 0.0 },
@@ -712,15 +736,17 @@ namespace LabelWise.Api.Controllers
                         await _nutritionRepository.SalvarMensagemHistoricoAsync(senderPhone, "assistant", respostaTreino);
                         return Ok();
                     }
+                    else
+                    {
+                        string msgTreinoNaoIdentificado = "🏃‍♂️ Não consegui estimar o gasto calórico para essa atividade.\n\nTente detalhar o tempo ou distância (ex: *'30 min de caminhada'* ou *'Corri 5km'*).";
+                        await _whatsAppSender.SendTextMessageAsync(senderPhone, msgTreinoNaoIdentificado);
+                        return Ok();
+                    }
                 }
 
-                if (isTrialLimitedUser && !await ReserveTrialInteractionOrNotifyAsync(senderPhone, trialCollection))
-                {
-                    return Ok();
-                }
-
+                // 🧠 CONTEXTO PENDENTE & MODO CORREÇÃO
                 var contextoPendente = await _nutritionRepository.ObterClarificacaoPendenteAsync(senderPhone);
-                string textoFinalParaIa = textoBruto;
+                string textoFinalParaIa = textoBruto ?? "";
                 string? imagemFinalParaIa = imagemBase64;
 
                 if (contextoPendente != null)
@@ -735,7 +761,6 @@ namespace LabelWise.Api.Controllers
                 }
                 else
                 {
-                    // 🛠️ ATIVIDADE 1: MODO CORREÇÃO INTELIGENTE
                     var palavrasCorrecao = new[] { "esqueci", "corrigir", "não tinha", "adiciona", "tira", "remova", "errei", "faltei" };
                     bool pareceCorrecao = palavrasCorrecao.Any(p => textoLimpoCmd.Contains(p));
 
@@ -758,6 +783,23 @@ namespace LabelWise.Api.Controllers
                             await _nutritionRepository.ExcluirMealLogAsync(ultimaRefeicao.Id);
                         }
                     }
+                }
+
+                // 🛡️ GUARDRAIL: FILTRO ANTI-GASTOS DE IA E MENSAGENS GENÉRICAS
+                bool eIntencaoRefeicao = EhIntencaoRefeicaoOuComida(textoLimpoCmd, textoBruto ?? "", !string.IsNullOrWhiteSpace(imagemBase64), contextoPendente != null);
+
+                if (!eIntencaoRefeicao)
+                {
+                    string msgOrientacao = "Não consegui identificar uma refeição no seu texto. 🥗\n\n" +
+                                           "Para registrar o que comeu, descreva os alimentos e quantidades (ex: *'150g de frango e 2 colheres de arroz'*), ou envie um *áudio* ou *foto* do seu prato!";
+                    await _whatsAppSender.SendTextMessageAsync(senderPhone, msgOrientacao);
+                    return Ok();
+                }
+
+                // RESERVA DE IA PARA PROCESSAMENTO DE REFEIÇÃO
+                if (isTrialLimitedUser && !await ReserveTrialInteractionOrNotifyAsync(senderPhone, trialCollection))
+                {
+                    return Ok();
                 }
 
                 await _nutritionRepository.SalvarMensagemHistoricoAsync(senderPhone, "user", textoFinalParaIa);
@@ -818,6 +860,29 @@ namespace LabelWise.Api.Controllers
             }
         }
 
+        private static bool EhIntencaoRefeicaoOuComida(string textoLimpo, string textoOriginal, bool temImagem, bool temContextoPendente)
+        {
+            if (temImagem || temContextoPendente) return true;
+            if (string.IsNullOrWhiteSpace(textoLimpo)) return false;
+
+            var palavrasChaveRefeicao = new[]
+            {
+                "comi", "jantei", "almocei", "tomei", "bebi", "lanchei", "saboreei", "consumi", "prato",
+                "arroz", "feijao", "feijão", "frango", "carne", "ovo", "ovos", "pao", "pão", "salada",
+                "massa", "macarrao", "macarrão", "peixe", "batata", "queijo", "leite", "iogurte", "fruta",
+                "maca", "maçã", "banana", "whey", "suco", "cafe", "café", "tapioca", "aveia",
+                "colher", "colheres", "fatia", "fatias", "porcao", "porção", "xicara", "xícara", "copo",
+                "gramas", "gr", "g", "ml", "kcal", "calorias", "marmita", "buffet", "restaurante"
+            };
+
+            if (palavrasChaveRefeicao.Any(p => textoLimpo.Contains(p))) return true;
+
+            // Se contém números acompanhados de letras (ex: "200g", "2 fatias", "100 ml")
+            if (Regex.IsMatch(textoOriginal, @"\d+\s*[a-zA-ZáéíóúâêîôûãõçÁÉÍÓÚÂÊÎÔÛÃÕÇ]+")) return true;
+
+            return false;
+        }
+
         [HttpPost("send-daily-reminders")]
         public async Task<IActionResult> SendDailyReminders([FromHeader(Name = "X-Cron-Secret")] string secret)
         {
@@ -835,7 +900,6 @@ namespace LabelWise.Api.Controllers
                 if (horaBrasilia >= 11 && horaBrasilia < 16) mealTime = "almoço";
                 else if (horaBrasilia >= 16 && horaBrasilia < 24) mealTime = "jantar";
 
-                // 🔒 TRAVA DE SEGURANÇA: Verifica se já correu para esta refeição hoje
                 var logCollection = _database.GetCollection<MongoDB.Bson.BsonDocument>("CronExecutionLogs");
                 string logId = $"reminder_{mealTime}_{dataHojeBr}";
 
@@ -845,7 +909,6 @@ namespace LabelWise.Api.Controllers
                     return Ok(new { success = true, message = $"Os lembretes para {mealTime} já foram enviados hoje. Ignorando." });
                 }
 
-                // Regista que está a iniciar agora para bloquear chamadas simultâneas
                 await logCollection.InsertOneAsync(new MongoDB.Bson.BsonDocument { { "_id", logId }, { "ExecutedAt", DateTime.UtcNow } });
 
                 var telefones = await _nutritionRepository.ObterTelefonesAtivosAsync();
@@ -856,7 +919,6 @@ namespace LabelWise.Api.Controllers
                 {
                     try
                     {
-                        // 🔒 VERIFICAÇÃO DE VALIDADE DO TESTE
                         var trialDoc = await trialCollection.Find(Builders<MongoDB.Bson.BsonDocument>.Filter.Eq("_id", telefone)).FirstOrDefaultAsync();
                         if (trialDoc != null)
                         {
@@ -866,7 +928,7 @@ namespace LabelWise.Api.Controllers
                                 var trialStart = startVal.ToUniversalTime();
                                 if (DateTime.UtcNow >= trialStart.AddDays(TrialDurationDays))
                                 {
-                                    continue; // PULA ESTE UTILIZADOR, POIS O TESTE EXPIROU E NÃO É PREMIUM
+                                    continue;
                                 }
                             }
                         }
@@ -898,7 +960,6 @@ namespace LabelWise.Api.Controllers
                 var dataHojeBrDt = DateTime.UtcNow.AddHours(-3).Date;
                 var dataHojeBrStr = dataHojeBrDt.ToString("yyyy-MM-dd");
 
-                // 🔒 TRAVA DE SEGURANÇA
                 var logCollection = _database.GetCollection<MongoDB.Bson.BsonDocument>("CronExecutionLogs");
                 string logId = $"feedback_{dataHojeBrStr}";
 
@@ -918,7 +979,6 @@ namespace LabelWise.Api.Controllers
                 {
                     try
                     {
-                        // 🔒 VERIFICAÇÃO DE VALIDADE DO TESTE
                         var trialDoc = await trialCollection.Find(Builders<MongoDB.Bson.BsonDocument>.Filter.Eq("_id", phone)).FirstOrDefaultAsync();
                         if (trialDoc != null)
                         {
@@ -928,7 +988,7 @@ namespace LabelWise.Api.Controllers
                                 var trialStart = startVal.ToUniversalTime();
                                 if (DateTime.UtcNow >= trialStart.AddDays(TrialDurationDays))
                                 {
-                                    continue; // PULA ESTE UTILIZADOR, POIS O TESTE EXPIROU E NÃO É PREMIUM
+                                    continue;
                                 }
                             }
                         }
@@ -1000,8 +1060,7 @@ namespace LabelWise.Api.Controllers
                         string phone = idValue.AsString;
                         try
                         {
-                            // 🚀 Dispara via Template aprovado na Meta para furar a janela de 24h
-                            string nomeTemplate = "oferta_fim_trial"; // Nome do template cadastrado no Meta Business
+                            string nomeTemplate = "oferta_fim_trial";
 
                             bool sucesso = await _whatsAppSender.SendTemplateReminderAsync(phone, "Cliente", nomeTemplate);
 
@@ -1423,33 +1482,43 @@ Retorne APENAS o texto da mensagem pronto para envio.
 
         private async Task<string> TranscreverAudioComGeminiAsync(byte[] audioBytes)
         {
-            var apiKey = _configuration["GeminiApiKey"] ?? _configuration["Gemini:ApiKey"];
-            var endpoint = _configuration["Gemini:Endpoint"] ?? "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions";
-            var model = _configuration["Model"] ?? "gemini-3.1-flash-lite";
-
-            var client = _httpClientFactory.CreateClient();
-            var base64Audio = Convert.ToBase64String(audioBytes);
-            var dataUri = $"data:audio/ogg;base64,{base64Audio}";
-
-            var requestBody = new
+            try
             {
-                model = model,
-                temperature = 0.0,
-                messages = new object[]
+                var apiKey = _configuration["GeminiApiKey"] ?? _configuration["Gemini:ApiKey"];
+                var endpoint = _configuration["Gemini:Endpoint"] ?? "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions";
+                var model = _configuration["Model"] ?? "gemini-3.1-flash-lite";
+
+                var client = _httpClientFactory.CreateClient();
+                var base64Audio = Convert.ToBase64String(audioBytes);
+                var dataUri = $"data:audio/ogg;base64,{base64Audio}";
+
+                var requestBody = new
                 {
-                    new { role = "system", content = "Você é um transcritor. Transcreva fielmente o áudio. Retorne APENAS o texto." },
-                    new { role = "user", content = new object[] { new { type = "text", text = "Transcreva:" }, new { type = "image_url", image_url = new { url = dataUri } } } }
-                }
-            };
+                    model = model,
+                    temperature = 0.0,
+                    messages = new object[]
+                    {
+                        new { role = "system", content = "Você é um transcritor. Transcreva fielmente o áudio. Retorne APENAS o texto." },
+                        new { role = "user", content = new object[] { new { type = "text", text = "Transcreva:" }, new { type = "image_url", image_url = new { url = dataUri } } } }
+                    }
+                };
 
-            var content = new StringContent(JsonSerializer.Serialize(requestBody), Encoding.UTF8, "application/json");
-            using var requestMessage = new HttpRequestMessage(HttpMethod.Post, endpoint) { Content = content };
-            requestMessage.Headers.Authorization = new AuthenticationHeaderValue("Bearer", apiKey);
+                var content = new StringContent(JsonSerializer.Serialize(requestBody), Encoding.UTF8, "application/json");
+                using var requestMessage = new HttpRequestMessage(HttpMethod.Post, endpoint) { Content = content };
+                requestMessage.Headers.Authorization = new AuthenticationHeaderValue("Bearer", apiKey);
 
-            var response = await client.SendAsync(requestMessage);
-            var jsonResponse = await response.Content.ReadAsStringAsync();
-            using var doc = JsonDocument.Parse(jsonResponse);
-            return doc.RootElement.GetProperty("choices")[0].GetProperty("message").GetProperty("content").GetString()?.Trim() ?? string.Empty;
+                var response = await client.SendAsync(requestMessage);
+                if (!response.IsSuccessStatusCode) return string.Empty;
+
+                var jsonResponse = await response.Content.ReadAsStringAsync();
+                using var doc = JsonDocument.Parse(jsonResponse);
+                return doc.RootElement.GetProperty("choices")[0].GetProperty("message").GetProperty("content").GetString()?.Trim() ?? string.Empty;
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Erro ao transcrever áudio com Gemini.");
+                return string.Empty;
+            }
         }
 
         private async Task<int> EstimarGastoCaloricoComGeminiAsync(string textoAtividade)
