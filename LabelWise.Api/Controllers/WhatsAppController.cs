@@ -399,7 +399,6 @@ namespace LabelWise.Api.Controllers
                                 return Ok();
                         }
                     }
-
                 }
 
                 bool isNumeroIsolado = int.TryParse(textoLimpoCmd, out int numeroIsoladoVal);
@@ -597,7 +596,7 @@ namespace LabelWise.Api.Controllers
                         }
                     }
 
-                    var dataHojeBr = DateTime.UtcNow.AddHours(-3).Date;
+                    var dataHojeBrAgua = DateTime.UtcNow.AddHours(-3).Date;
                     var waterCol = _database.GetCollection<MongoDB.Bson.BsonDocument>("WaterLogs");
 
                     var waterDoc = new MongoDB.Bson.BsonDocument
@@ -611,7 +610,7 @@ namespace LabelWise.Api.Controllers
 
                     var filterWater = Builders<MongoDB.Bson.BsonDocument>.Filter.And(
                         Builders<MongoDB.Bson.BsonDocument>.Filter.Eq("UserId", senderPhone),
-                        Builders<MongoDB.Bson.BsonDocument>.Filter.Gte("LoggedAt", dataHojeBr)
+                        Builders<MongoDB.Bson.BsonDocument>.Filter.Gte("LoggedAt", dataHojeBrAgua)
                     );
                     var registrosAgua = await waterCol.Find(filterWater).ToListAsync();
                     int totalAguaHoje = registrosAgua.Sum(w => w["AmountMl"].AsInt32);
@@ -620,7 +619,7 @@ namespace LabelWise.Api.Controllers
                     var goalsCollection = _database.GetCollection<MongoDB.Bson.BsonDocument>("DailyGoals");
                     var goalFilterWater = Builders<MongoDB.Bson.BsonDocument>.Filter.And(
                         Builders<MongoDB.Bson.BsonDocument>.Filter.Eq("UserId", senderPhone),
-                        Builders<MongoDB.Bson.BsonDocument>.Filter.Eq("TargetDate", dataHojeBr)
+                        Builders<MongoDB.Bson.BsonDocument>.Filter.Eq("TargetDate", dataHojeBrAgua)
                     );
                     var goalDocWater = await goalsCollection.Find(goalFilterWater).FirstOrDefaultAsync();
                     if (goalDocWater != null && goalDocWater.Contains("TargetWaterMl"))
@@ -640,7 +639,7 @@ namespace LabelWise.Api.Controllers
                     string valorPesoStr = matchPeso.Success ? matchPeso.Groups[1].Value : Regex.Match(textoBruto, @"\d+[\.,]?\d*").Value;
                     if (decimal.TryParse(valorPesoStr.Replace(",", "."), System.Globalization.NumberStyles.Any, System.Globalization.CultureInfo.InvariantCulture, out decimal pesoInformado))
                     {
-                        var dataHojeBr = DateTime.UtcNow.AddHours(-3).Date;
+                        var dataHojeBrPeso = DateTime.UtcNow.AddHours(-3).Date;
                         var weightCol = _database.GetCollection<MongoDB.Bson.BsonDocument>("WeightLogs");
 
                         var weightDoc = new MongoDB.Bson.BsonDocument
@@ -653,7 +652,7 @@ namespace LabelWise.Api.Controllers
                         await weightCol.ReplaceOneAsync(
                             Builders<MongoDB.Bson.BsonDocument>.Filter.And(
                                 Builders<MongoDB.Bson.BsonDocument>.Filter.Eq("UserId", senderPhone),
-                                Builders<MongoDB.Bson.BsonDocument>.Filter.Gte("LoggedAt", dataHojeBr)
+                                Builders<MongoDB.Bson.BsonDocument>.Filter.Gte("LoggedAt", dataHojeBrPeso)
                             ),
                             weightDoc,
                             new ReplaceOptions { IsUpsert = true }
@@ -681,7 +680,7 @@ namespace LabelWise.Api.Controllers
 
                     if (caloriasGastas > 0)
                     {
-                        var dataHojeBr = DateTime.UtcNow.AddHours(-3);
+                        var dataHojeBrTreino = DateTime.UtcNow.AddHours(-3);
                         var mealCol = _database.GetCollection<MongoDB.Bson.BsonDocument>("MealLogs");
 
                         var mealDoc = new MongoDB.Bson.BsonDocument
@@ -700,7 +699,7 @@ namespace LabelWise.Api.Controllers
 
                         await mealCol.InsertOneAsync(mealDoc);
 
-                        var statusAtualizado = await _nutritionService.GetDailyStatusAndSuggestionAsync(senderPhone, dataHojeBr);
+                        var statusAtualizado = await _nutritionService.GetDailyStatusAndSuggestionAsync(senderPhone, dataHojeBrTreino);
 
                         string respostaTreino = $"🔥 *Treino registado com sucesso!*\n\n" +
                                                 $"Gastou aproximadamente *{caloriasGastas} kcal* com essa atividade.\n" +
@@ -742,8 +741,8 @@ namespace LabelWise.Api.Controllers
 
                     if (pareceCorrecao && string.IsNullOrWhiteSpace(imagemBase64))
                     {
-                        var dataHojeBr = DateTime.UtcNow.AddHours(-3);
-                        var logsHoje = await _nutritionRepository.ObterRefeicoesDoDiaAsync(senderPhone, dataHojeBr);
+                        var dataHojeBrCorrecao = DateTime.UtcNow.AddHours(-3);
+                        var logsHoje = await _nutritionRepository.ObterRefeicoesDoDiaAsync(senderPhone, dataHojeBrCorrecao);
 
                         var ultimaRefeicao = logsHoje?.OrderByDescending(x => x.LoggedAt).FirstOrDefault();
 
@@ -791,8 +790,8 @@ namespace LabelWise.Api.Controllers
                 }
                 else if (result.TotalMeal != null && !isSystemError && !result.IsAdvice)
                 {
-                    var dataHojeBr = DateTime.UtcNow.AddHours(-3);
-                    statusDoDia = await _nutritionService.GetDailyStatusAndSuggestionAsync(senderPhone, dataHojeBr);
+                    var dataHojeBrFinal = DateTime.UtcNow.AddHours(-3);
+                    statusDoDia = await _nutritionService.GetDailyStatusAndSuggestionAsync(senderPhone, dataHojeBrFinal);
                 }
 
                 var respostaTexto = FormatarRespostaParaWhatsApp(result, statusDoDia);
@@ -830,18 +829,48 @@ namespace LabelWise.Api.Controllers
 
             try
             {
+                var dataHojeBr = DateTime.UtcNow.AddHours(-3).ToString("yyyy-MM-dd");
                 var horaBrasilia = DateTime.UtcNow.AddHours(-3).Hour;
                 string mealTime = "café da manhã";
                 if (horaBrasilia >= 11 && horaBrasilia < 16) mealTime = "almoço";
                 else if (horaBrasilia >= 16 && horaBrasilia < 24) mealTime = "jantar";
 
+                // 🔒 TRAVA DE SEGURANÇA: Verifica se já correu para esta refeição hoje
+                var logCollection = _database.GetCollection<MongoDB.Bson.BsonDocument>("CronExecutionLogs");
+                string logId = $"reminder_{mealTime}_{dataHojeBr}";
+
+                var existingLog = await logCollection.Find(Builders<MongoDB.Bson.BsonDocument>.Filter.Eq("_id", logId)).FirstOrDefaultAsync();
+                if (existingLog != null)
+                {
+                    return Ok(new { success = true, message = $"Os lembretes para {mealTime} já foram enviados hoje. Ignorando." });
+                }
+
+                // Regista que está a iniciar agora para bloquear chamadas simultâneas
+                await logCollection.InsertOneAsync(new MongoDB.Bson.BsonDocument { { "_id", logId }, { "ExecutedAt", DateTime.UtcNow } });
+
                 var telefones = await _nutritionRepository.ObterTelefonesAtivosAsync();
+                var trialCollection = _database.GetCollection<MongoDB.Bson.BsonDocument>("B2C_Trial_Users");
                 int enviados = 0, falhas = 0;
 
                 foreach (var telefone in telefones)
                 {
                     try
                     {
+                        // 🔒 VERIFICAÇÃO DE VALIDADE DO TESTE
+                        var trialDoc = await trialCollection.Find(Builders<MongoDB.Bson.BsonDocument>.Filter.Eq("_id", telefone)).FirstOrDefaultAsync();
+                        if (trialDoc != null)
+                        {
+                            bool isPremium = trialDoc.TryGetValue("Premium", out var pVal) && pVal.IsBoolean && pVal.AsBoolean;
+                            if (!isPremium && trialDoc.TryGetValue("TrialStartDate", out var startVal) && startVal.IsBsonDateTime)
+                            {
+                                var trialStart = startVal.ToUniversalTime();
+                                if (DateTime.UtcNow >= trialStart.AddDays(TrialDurationDays))
+                                {
+                                    continue; // PULA ESTE UTILIZADOR, POIS O TESTE EXPIROU E NÃO É PREMIUM
+                                }
+                            }
+                        }
+
                         bool sucesso = await _whatsAppSender.SendTemplateReminderAsync(telefone, "Paciente", mealTime);
                         if (sucesso) enviados++; else falhas++;
                     }
@@ -866,16 +895,46 @@ namespace LabelWise.Api.Controllers
 
             try
             {
-                var dataHojeBr = DateTime.UtcNow.AddHours(-3).Date;
+                var dataHojeBrDt = DateTime.UtcNow.AddHours(-3).Date;
+                var dataHojeBrStr = dataHojeBrDt.ToString("yyyy-MM-dd");
+
+                // 🔒 TRAVA DE SEGURANÇA
+                var logCollection = _database.GetCollection<MongoDB.Bson.BsonDocument>("CronExecutionLogs");
+                string logId = $"feedback_{dataHojeBrStr}";
+
+                var existingLog = await logCollection.Find(Builders<MongoDB.Bson.BsonDocument>.Filter.Eq("_id", logId)).FirstOrDefaultAsync();
+                if (existingLog != null)
+                {
+                    return Ok(new { success = true, message = "Os feedbacks de fim de dia já foram enviados hoje. Ignorando." });
+                }
+
+                await logCollection.InsertOneAsync(new MongoDB.Bson.BsonDocument { { "_id", logId }, { "ExecutedAt", DateTime.UtcNow } });
+
                 var telefones = await _nutritionRepository.ObterTelefonesAtivosAsync();
+                var trialCollection = _database.GetCollection<MongoDB.Bson.BsonDocument>("B2C_Trial_Users");
                 int enviados = 0, falhas = 0;
 
                 foreach (var phone in telefones)
                 {
                     try
                     {
-                        var goal = await _nutritionRepository.ObterMetaDiariaAsync(phone, dataHojeBr);
-                        var logs = await _nutritionRepository.ObterRefeicoesDoDiaAsync(phone, dataHojeBr);
+                        // 🔒 VERIFICAÇÃO DE VALIDADE DO TESTE
+                        var trialDoc = await trialCollection.Find(Builders<MongoDB.Bson.BsonDocument>.Filter.Eq("_id", phone)).FirstOrDefaultAsync();
+                        if (trialDoc != null)
+                        {
+                            bool isPremium = trialDoc.TryGetValue("Premium", out var pVal) && pVal.IsBoolean && pVal.AsBoolean;
+                            if (!isPremium && trialDoc.TryGetValue("TrialStartDate", out var startVal) && startVal.IsBsonDateTime)
+                            {
+                                var trialStart = startVal.ToUniversalTime();
+                                if (DateTime.UtcNow >= trialStart.AddDays(TrialDurationDays))
+                                {
+                                    continue; // PULA ESTE UTILIZADOR, POIS O TESTE EXPIROU E NÃO É PREMIUM
+                                }
+                            }
+                        }
+
+                        var goal = await _nutritionRepository.ObterMetaDiariaAsync(phone, dataHojeBrDt);
+                        var logs = await _nutritionRepository.ObterRefeicoesDoDiaAsync(phone, dataHojeBrDt);
 
                         int targetCal = goal?.TargetCalories ?? 2000;
                         decimal targetProt = goal?.TargetProteinG ?? 150;
@@ -907,6 +966,66 @@ namespace LabelWise.Api.Controllers
             {
                 _logger.LogError(ex, "Erro no envio de feedback diário.");
                 return StatusCode(500, new { success = false, message = "Erro ao processar feedbacks diários." });
+            }
+        }
+
+        [HttpPost("send-expired-offers")]
+        public async Task<IActionResult> SendExpiredOffers([FromHeader(Name = "X-Cron-Secret")] string secret)
+        {
+            var expectedSecret = _configuration["CronSecret"];
+            if (string.IsNullOrEmpty(secret) || secret != expectedSecret)
+            {
+                return Unauthorized(new { success = false, message = "Acesso negado." });
+            }
+
+            try
+            {
+                var trialCollection = _database.GetCollection<MongoDB.Bson.BsonDocument>("B2C_Trial_Users");
+                var utcNow = DateTime.UtcNow;
+                var limitDate = utcNow.AddDays(-TrialDurationDays);
+
+                var filter = Builders<MongoDB.Bson.BsonDocument>.Filter.And(
+                    Builders<MongoDB.Bson.BsonDocument>.Filter.Lte("TrialStartDate", limitDate),
+                    Builders<MongoDB.Bson.BsonDocument>.Filter.Ne("Premium", true),
+                    Builders<MongoDB.Bson.BsonDocument>.Filter.Ne("ExpiredOfferSent", true)
+                );
+
+                var expiredUsers = await trialCollection.Find(filter).ToListAsync();
+                int enviados = 0, falhas = 0;
+
+                foreach (var user in expiredUsers)
+                {
+                    if (user.TryGetValue("_id", out var idValue) && idValue.IsString)
+                    {
+                        string phone = idValue.AsString;
+                        try
+                        {
+                            string? paymentUrl = await GerarLinkPagamentoGetnetAsync(phone, "Cliente Nutrição Fácil", 29.90m);
+
+                            if (!string.IsNullOrEmpty(paymentUrl))
+                            {
+                                string msgRecuperacao = "😢 *Notei que o seu período de teste chegou ao fim.*\n\n" +
+                                                        "Adorei acompanhar as suas refeições nestes últimos dias! Para não perder o foco e continuar a ter a minha ajuda diária com os seus registos e macros, pode assinar o plano mensal (R$ 29,90) através do link seguro abaixo:\n\n" +
+                                                        $"👉 {paymentUrl}\n\n" +
+                                                        "Assim que o pagamento for confirmed, o seu acesso é libertado automaticamente! Vamos continuar juntos? 💪";
+
+                                await _whatsAppSender.SendTextMessageAsync(phone, msgRecuperacao);
+                                enviados++;
+
+                                var update = Builders<MongoDB.Bson.BsonDocument>.Update.Set("ExpiredOfferSent", true);
+                                await trialCollection.UpdateOneAsync(Builders<MongoDB.Bson.BsonDocument>.Filter.Eq("_id", phone), update);
+                            }
+                        }
+                        catch { falhas++; }
+                    }
+                }
+
+                return Ok(new { success = true, message = $"Ofertas de recuperação enviadas: {enviados}, Falhas: {falhas}" });
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Erro no envio de ofertas de expiração.");
+                return StatusCode(500, new { success = false, message = "Erro ao processar envios." });
             }
         }
 
@@ -1435,7 +1554,6 @@ Retorne APENAS o texto da mensagem pronto para envio.
         [HttpPost("broadcast-novidade")]
         public async Task<IActionResult> DispararNovidade([FromHeader(Name = "X-Admin-Secret")] string secret)
         {
-            // Proteção simples para não ser disparado por engano
             var expectedSecret = _configuration["CronSecret"] ?? "senha_secreta_123";
             if (string.IsNullOrEmpty(secret) || secret != expectedSecret)
             {
@@ -1444,7 +1562,6 @@ Retorne APENAS o texto da mensagem pronto para envio.
 
             try
             {
-                // Vai buscar todos os telemóveis ativos na coleção Trial
                 var trialCollection = _database.GetCollection<MongoDB.Bson.BsonDocument>("B2C_Trial_Users");
                 var users = await trialCollection.Find(Builders<MongoDB.Bson.BsonDocument>.Filter.Empty).ToListAsync();
 
@@ -1458,10 +1575,8 @@ Retorne APENAS o texto da mensagem pronto para envio.
                         string phone = idValue.AsString;
                         try
                         {
-                            // O nome do template que criou no painel do Meta
                             string nomeTemplate = "alerta_novidade_app";
 
-                            // Tenta enviar o template. Se o seu SendTemplateReminderAsync aceitar o nome do template, use-o assim.
                             bool sucesso = await _whatsAppSender.SendTemplateReminderAsync(phone, "Cliente", nomeTemplate);
                             if (sucesso) enviados++; else falhas++;
                         }
