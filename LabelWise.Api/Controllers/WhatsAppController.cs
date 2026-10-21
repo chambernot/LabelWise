@@ -273,7 +273,7 @@ namespace LabelWise.Api.Controllers
                                                "*1️⃣* Emagrecimento\n" +
                                                "*2️⃣* Hipertrofia\n" +
                                                "*3️⃣* Manutenção\n\n" +
-                                               "_(Responda apenas com o número correspondente)_";
+                                               "_(Responda com o número, ou digite *cancelar* para sair)_"; // <-- MENSAGEM ATUALIZADA
                         await _whatsAppSender.SendTextMessageAsync(senderPhone, mensagemReset);
                         return Ok();
                     }
@@ -283,6 +283,27 @@ namespace LabelWise.Api.Controllers
                     if (!profileConfigured)
                     {
                         string step = userDoc.Contains("OnboardingStep") ? userDoc["OnboardingStep"].AsString : "WaitingForGoal";
+
+                        // 🚀 NOVIDADE: ROTA DE FUGA APLICADA AQUI
+                        if (textoLimpoCmd == "cancelar" || textoLimpoCmd == "sair" || textoLimpoCmd == "voltar")
+                        {
+                            var goalsCollectionCheck = _database.GetCollection<MongoDB.Bson.BsonDocument>("DailyGoals");
+                            var existingGoalCheck = await goalsCollectionCheck.Find(Builders<MongoDB.Bson.BsonDocument>.Filter.Eq("UserId", senderPhone)).FirstOrDefaultAsync();
+
+                            if (existingGoalCheck != null)
+                            {
+                                var updateCancel = Builders<MongoDB.Bson.BsonDocument>.Update.Set("ProfileConfigured", true);
+                                await trialCollection.UpdateOneAsync(filterTrial, updateCancel);
+
+                                await _whatsAppSender.SendTextMessageAsync(senderPhone, "✅ *Configuração cancelada!* \n\nO seu perfil e metas anteriores foram mantidos. Pode continuar a registar as suas refeições normalmente! 🥗");
+                                return Ok();
+                            }
+                            else
+                            {
+                                await _whatsAppSender.SendTextMessageAsync(senderPhone, "⚠️ Como é o seu primeiro acesso, preciso que termine esta configuração rápida para poder calcular as suas metas diárias.\n\nPor favor, escolha uma das opções (Ex: digite 1, 2 ou 3).");
+                                return Ok();
+                            }
+                        }
 
                         switch (step)
                         {
@@ -308,7 +329,8 @@ namespace LabelWise.Api.Controllers
                                 }
                                 else
                                 {
-                                    await _whatsAppSender.SendTextMessageAsync(senderPhone, "❌ Opção inválida.\n\n🎯 **Passo 1 de 4:** Escolha o número correspondente ao seu principal objetivo:\n*1️⃣* Emagrecimento\n*2️⃣* Hipertrofia\n*3️⃣* Manutenção");
+                                    // <-- MENSAGEM DE ERRO ATUALIZADA
+                                    await _whatsAppSender.SendTextMessageAsync(senderPhone, "❌ Opção inválida.\n\n🎯 **Passo 1 de 4:** Escolha o número correspondente ao seu principal objetivo:\n*1️⃣* Emagrecimento\n*2️⃣* Hipertrofia\n*3️⃣* Manutenção\n\n_(Ou digite *cancelar* para sair)_");
                                 }
                                 return Ok();
 
@@ -1801,7 +1823,9 @@ Retorne APENAS o texto da mensagem pronto para envio.
     public class MetaValue { public List<MetaMessage>? Messages { get; set; } }
     public class MetaMessage { public string? From { get; set; } public string? Type { get; set; } public MetaText? Text { get; set; } public MetaMedia? Image { get; set; } public MetaMedia? Audio { get; set; } }
     public class MetaText { public string? Body { get; set; } }
-    public class MetaMedia { public string? Id { get; set; } public string? Mime_Typea { get; set; } }
+
+    // Corrigido aqui (Mime_Typea para MimeType)
+    public class MetaMedia { public string? Id { get; set; } public string? MimeType { get; set; } }
 
     public class GetnetTokenResponse
     {
