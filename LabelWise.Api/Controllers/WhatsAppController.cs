@@ -1040,11 +1040,9 @@ namespace LabelWise.Api.Controllers
         [HttpPost("send-daily-reminders")]
         public async Task<IActionResult> SendDailyReminders([FromHeader(Name = "X-Cron-Secret")] string secret)
         {
+            // ... (validação do secret continua igual) ...
             var expectedSecret = _configuration["CronSecret"];
-            if (string.IsNullOrEmpty(secret) || secret != expectedSecret)
-            {
-                return Unauthorized(new { success = false, message = "Acesso negado." });
-            }
+            if (string.IsNullOrEmpty(secret) || secret != expectedSecret) return Unauthorized(new { success = false, message = "Acesso negado." });
 
             try
             {
@@ -1058,10 +1056,7 @@ namespace LabelWise.Api.Controllers
                 string logId = $"reminder_{mealTime}_{dataHojeBr}";
 
                 var existingLog = await logCollection.Find(Builders<MongoDB.Bson.BsonDocument>.Filter.Eq("_id", logId)).FirstOrDefaultAsync();
-                if (existingLog != null)
-                {
-                    return Ok(new { success = true, message = $"Os lembretes para {mealTime} já foram enviados hoje. Ignorando." });
-                }
+                if (existingLog != null) return Ok(new { success = true, message = $"Os lembretes para {mealTime} já foram enviados hoje. Ignorando." });
 
                 await logCollection.InsertOneAsync(new MongoDB.Bson.BsonDocument { { "_id", logId }, { "ExecutedAt", DateTime.UtcNow } });
 
@@ -1080,14 +1075,12 @@ namespace LabelWise.Api.Controllers
                             if (!isPremium && trialDoc.TryGetValue("TrialStartDate", out var startVal) && startVal.IsBsonDateTime)
                             {
                                 var trialStart = startVal.ToUniversalTime();
-                                if (DateTime.UtcNow >= trialStart.AddDays(TrialDurationDays))
-                                {
-                                    continue;
-                                }
+                                if (DateTime.UtcNow >= trialStart.AddDays(TrialDurationDays)) continue;
                             }
                         }
 
-                        bool sucesso = await _whatsAppSender.SendTemplateReminderAsync(telefone, "Paciente", mealTime);
+                        // 🔥 AQUI: Ajustado para o novo método dinâmico
+                        bool sucesso = await _whatsAppSender.SendTemplateMessageAsync(telefone, "lembrete_diario_nutri", "Paciente", mealTime);
                         if (sucesso) enviados++; else falhas++;
                     }
                     catch { falhas++; }
@@ -1187,10 +1180,7 @@ namespace LabelWise.Api.Controllers
         public async Task<IActionResult> SendExpiredOffers([FromHeader(Name = "X-Cron-Secret")] string secret)
         {
             var expectedSecret = _configuration["CronSecret"];
-            if (string.IsNullOrEmpty(secret) || secret != expectedSecret)
-            {
-                return Unauthorized(new { success = false, message = "Acesso negado." });
-            }
+            if (string.IsNullOrEmpty(secret) || secret != expectedSecret) return Unauthorized(new { success = false, message = "Acesso negado." });
 
             try
             {
@@ -1214,9 +1204,8 @@ namespace LabelWise.Api.Controllers
                         string phone = idValue.AsString;
                         try
                         {
-                            string nomeTemplate = "oferta_fim_trial";
-
-                            bool sucesso = await _whatsAppSender.SendTemplateReminderAsync(phone, "Cliente", nomeTemplate);
+                            // 🔥 AQUI: Ajustado para o novo método
+                            bool sucesso = await _whatsAppSender.SendTemplateMessageAsync(phone, "oferta_fim_trial", "Cliente");
 
                             if (sucesso)
                             {
@@ -1224,15 +1213,11 @@ namespace LabelWise.Api.Controllers
                                 var update = Builders<MongoDB.Bson.BsonDocument>.Update.Set("ExpiredOfferSent", true);
                                 await trialCollection.UpdateOneAsync(Builders<MongoDB.Bson.BsonDocument>.Filter.Eq("_id", phone), update);
                             }
-                            else
-                            {
-                                falhas++;
-                            }
+                            else falhas++;
                         }
                         catch { falhas++; }
                     }
                 }
-
                 return Ok(new { success = true, message = $"Ofertas de recuperação enviadas via template: {enviados}, Falhas: {falhas}" });
             }
             catch (Exception ex)
@@ -1246,7 +1231,8 @@ namespace LabelWise.Api.Controllers
         public async Task<IActionResult> SendReminder([FromQuery] string phone, [FromQuery] string userName = "Anderson", [FromQuery] string mealTime = "café da manhã")
         {
             if (string.IsNullOrWhiteSpace(phone)) return BadRequest(new { success = false, message = "Telefone obrigatório." });
-            bool enviado = await _whatsAppSender.SendTemplateReminderAsync(phone, userName, mealTime);
+            // 🔥 AQUI
+            bool enviado = await _whatsAppSender.SendTemplateMessageAsync(phone, "lembrete_diario_nutri", userName, mealTime);
             if (enviado) return Ok(new { success = true, message = $"Lembrete enviado para {phone}!" });
             return StatusCode(500, new { success = false, message = "Falha ao enviar lembrete." });
         }
@@ -1254,11 +1240,10 @@ namespace LabelWise.Api.Controllers
         [HttpPost("send-trial-reminders")]
         public async Task<IActionResult> SendTrialReminders([FromHeader(Name = "X-Cron-Secret")] string secret)
         {
+            // ... (validação e lógica de datas continua igual) ...
             var expectedSecret = _configuration["CronSecret"];
             if (string.IsNullOrEmpty(secret) || string.IsNullOrEmpty(expectedSecret) || secret != expectedSecret)
-            {
                 return Unauthorized(new { success = false, message = "Acesso negado." });
-            }
 
             try
             {
@@ -1271,96 +1256,59 @@ namespace LabelWise.Api.Controllers
                     Builders<MongoDB.Bson.BsonDocument>.Filter.Lte("TrialStartDate", utcNow));
 
                 var trialUsers = await trialCollection.Find(filter).ToListAsync();
-                int sentCount = 0;
-                int skippedNotCampaignDay = 0;
-                int skippedAlreadyInteracted = 0;
-                int skippedAlreadySent = 0;
-                int errors = 0;
+                int sentCount = 0, skippedNotCampaignDay = 0, skippedAlreadyInteracted = 0, skippedAlreadySent = 0, errors = 0;
 
                 foreach (var user in trialUsers)
                 {
+                    // Lógica de skip mantida...
                     if (!user.TryGetValue("_id", out var idValue) || !idValue.IsString ||
-                        !user.TryGetValue("TrialStartDate", out var startValue) || !startValue.IsBsonDateTime)
-                    {
-                        continue;
-                    }
+                        !user.TryGetValue("TrialStartDate", out var startValue) || !startValue.IsBsonDateTime) continue;
 
                     string phone = idValue.AsString;
-                    bool premium = user.TryGetValue("Premium", out var premiumValue) &&
-                                   premiumValue.IsBoolean && premiumValue.AsBoolean;
+                    bool premium = user.TryGetValue("Premium", out var premiumValue) && premiumValue.IsBoolean && premiumValue.AsBoolean;
                     if (premium) continue;
 
                     var trialStart = startValue.ToUniversalTime();
                     var elapsedDays = (utcNow - trialStart).TotalDays;
-                    if (elapsedDays < 0 || elapsedDays >= TrialDurationDays)
-                    {
-                        continue;
-                    }
+                    if (elapsedDays < 0 || elapsedDays >= TrialDurationDays) continue;
 
                     int trialDay = (int)Math.Floor(elapsedDays) + 1;
-                    if (!TrialReminderDays.Contains(trialDay))
-                    {
-                        skippedNotCampaignDay++;
-                        continue;
-                    }
+                    if (!TrialReminderDays.Contains(trialDay)) { skippedNotCampaignDay++; continue; }
 
                     DateTime lastInteractionDate = DateTime.MinValue;
                     if (user.TryGetValue("LastInteractionDate", out var interactionValue) && interactionValue.IsBsonDateTime)
-                    {
                         lastInteractionDate = interactionValue.ToUniversalTime().Date;
-                    }
 
-                    if (lastInteractionDate == todayBrazil.Date)
-                    {
-                        skippedAlreadyInteracted++;
-                        continue;
-                    }
+                    if (lastInteractionDate == todayBrazil.Date) { skippedAlreadyInteracted++; continue; }
 
                     var claimFilter = Builders<MongoDB.Bson.BsonDocument>.Filter.And(
                         Builders<MongoDB.Bson.BsonDocument>.Filter.Eq("_id", phone),
                         Builders<MongoDB.Bson.BsonDocument>.Filter.Ne("TrialReminderDaysSent", trialDay));
-                    var claimUpdate = Builders<MongoDB.Bson.BsonDocument>.Update
-                        .AddToSet("TrialReminderDaysSent", trialDay);
+                    var claimUpdate = Builders<MongoDB.Bson.BsonDocument>.Update.AddToSet("TrialReminderDaysSent", trialDay);
                     var claim = await trialCollection.UpdateOneAsync(claimFilter, claimUpdate);
-                    if (claim.ModifiedCount == 0)
-                    {
-                        skippedAlreadySent++;
-                        continue;
-                    }
+                    if (claim.ModifiedCount == 0) { skippedAlreadySent++; continue; }
 
                     try
                     {
-                        bool success = await _whatsAppSender.SendTemplateReminderAsync(
-                            phone, "Cliente", "trial_engajamento");
+                        // 🔥 AQUI: Ajustado para o novo método dinâmico
+                        bool success = await _whatsAppSender.SendTemplateMessageAsync(phone, "trial_engajamento", "Cliente");
 
-                        if (success)
-                        {
-                            sentCount++;
-                            _logger.LogInformation("Lembrete do trial enviado no dia {TrialDay}.", trialDay);
-                        }
+                        if (success) { sentCount++; _logger.LogInformation("Lembrete do trial enviado no dia {TrialDay}.", trialDay); }
                         else
                         {
-                            await trialCollection.UpdateOneAsync(
-                                Builders<MongoDB.Bson.BsonDocument>.Filter.Eq("_id", phone),
-                                Builders<MongoDB.Bson.BsonDocument>.Update.Pull("TrialReminderDaysSent", trialDay));
+                            await trialCollection.UpdateOneAsync(Builders<MongoDB.Bson.BsonDocument>.Filter.Eq("_id", phone), Builders<MongoDB.Bson.BsonDocument>.Update.Pull("TrialReminderDaysSent", trialDay));
                             errors++;
                         }
                     }
                     catch (Exception ex)
                     {
-                        await trialCollection.UpdateOneAsync(
-                            Builders<MongoDB.Bson.BsonDocument>.Filter.Eq("_id", phone),
-                            Builders<MongoDB.Bson.BsonDocument>.Update.Pull("TrialReminderDaysSent", trialDay));
+                        await trialCollection.UpdateOneAsync(Builders<MongoDB.Bson.BsonDocument>.Filter.Eq("_id", phone), Builders<MongoDB.Bson.BsonDocument>.Update.Pull("TrialReminderDaysSent", trialDay));
                         _logger.LogError(ex, "Erro ao enviar lembrete de trial no dia {TrialDay}.", trialDay);
                         errors++;
                     }
                 }
 
-                return Ok(new
-                {
-                    success = true,
-                    message = $"Campanha concluída. Enviados: {sentCount}; já interagiram hoje: {skippedAlreadyInteracted}; já enviados: {skippedAlreadySent}; fora dos dias da campanha: {skippedNotCampaignDay}; erros: {errors}"
-                });
+                return Ok(new { success = true, message = $"Campanha concluída. Enviados: {sentCount}; já interagiram hoje: {skippedAlreadyInteracted}; já enviados: {skippedAlreadySent}; fora dos dias da campanha: {skippedNotCampaignDay}; erros: {errors}" });
             }
             catch (Exception ex)
             {
@@ -1778,10 +1726,7 @@ Retorne APENAS o texto da mensagem pronto para envio.
         public async Task<IActionResult> DispararNovidade([FromHeader(Name = "X-Admin-Secret")] string secret)
         {
             var expectedSecret = _configuration["CronSecret"] ?? "senha_secreta_123";
-            if (string.IsNullOrEmpty(secret) || secret != expectedSecret)
-            {
-                return Unauthorized(new { success = false, message = "Acesso negado." });
-            }
+            if (string.IsNullOrEmpty(secret) || secret != expectedSecret) return Unauthorized(new { success = false, message = "Acesso negado." });
 
             try
             {
@@ -1798,9 +1743,11 @@ Retorne APENAS o texto da mensagem pronto para envio.
                         string phone = idValue.AsString;
                         try
                         {
-                            string nomeTemplate = "alerta_novidade_app";
+                            // 🔥 AQUI: Ajustado! (Estou passando "Cliente" assumindo que o seu template tenha 1 variável {{1}}. 
+                            // Se o seu template do painel não tiver NENHUMA variável, mude para:
+                            // bool sucesso = await _whatsAppSender.SendTemplateMessageAsync(phone, "alerta_novidade_app");
+                            bool sucesso = await _whatsAppSender.SendTemplateMessageAsync(phone, "alerta_novidade_app", "Cliente");
 
-                            bool sucesso = await _whatsAppSender.SendTemplateReminderAsync(phone, "Cliente", nomeTemplate);
                             if (sucesso) enviados++; else falhas++;
                         }
                         catch { falhas++; }
@@ -1815,52 +1762,52 @@ Retorne APENAS o texto da mensagem pronto para envio.
                 return StatusCode(500, new { success = false, message = "Erro ao processar o disparo." });
             }
         }
-    }
 
-    public class MetaWebhookPayload { public List<MetaEntry>? Entry { get; set; } }
-    public class MetaEntry { public List<MetaChange>? Changes { get; set; } }
-    public class MetaChange { public MetaValue? Value { get; set; } }
-    public class MetaValue { public List<MetaMessage>? Messages { get; set; } }
-    public class MetaMessage { public string? From { get; set; } public string? Type { get; set; } public MetaText? Text { get; set; } public MetaMedia? Image { get; set; } public MetaMedia? Audio { get; set; } }
-    public class MetaText { public string? Body { get; set; } }
+        public class MetaWebhookPayload { public List<MetaEntry>? Entry { get; set; } }
+        public class MetaEntry { public List<MetaChange>? Changes { get; set; } }
+        public class MetaChange { public MetaValue? Value { get; set; } }
+        public class MetaValue { public List<MetaMessage>? Messages { get; set; } }
+        public class MetaMessage { public string? From { get; set; } public string? Type { get; set; } public MetaText? Text { get; set; } public MetaMedia? Image { get; set; } public MetaMedia? Audio { get; set; } }
+        public class MetaText { public string? Body { get; set; } }
 
-    // Corrigido aqui (Mime_Typea para MimeType)
-    public class MetaMedia { public string? Id { get; set; } public string? MimeType { get; set; } }
+        // Corrigido aqui (Mime_Typea para MimeType)
+        public class MetaMedia { public string? Id { get; set; } public string? MimeType { get; set; } }
 
-    public class GetnetTokenResponse
-    {
-        public string access_token { get; set; }
-        public string token_type { get; set; }
-        public int expires_in { get; set; }
-    }
+        public class GetnetTokenResponse
+        {
+            public string access_token { get; set; }
+            public string token_type { get; set; }
+            public int expires_in { get; set; }
+        }
 
-    public class GetnetLinkResponse
-    {
-        public string payment_url { get; set; }
-    }
+        public class GetnetLinkResponse
+        {
+            public string payment_url { get; set; }
+        }
 
-    public class GlobalGetnetLinkRequest
-    {
-        public string seller_id { get; set; }
-        public string expiration { get; set; }
-        public int max_orders { get; set; }
-        public string currency { get; set; }
-        public string order_id { get; set; }
-        public GlobalGetnetCustomer customer { get; set; }
-        public GlobalGetnetProduct[] products { get; set; }
-    }
+        public class GlobalGetnetLinkRequest
+        {
+            public string seller_id { get; set; }
+            public string expiration { get; set; }
+            public int max_orders { get; set; }
+            public string currency { get; set; }
+            public string order_id { get; set; }
+            public GlobalGetnetCustomer customer { get; set; }
+            public GlobalGetnetProduct[] products { get; set; }
+        }
 
-    public class GlobalGetnetCustomer
-    {
-        public string name { get; set; }
-        public string phone_number { get; set; }
-    }
+        public class GlobalGetnetCustomer
+        {
+            public string name { get; set; }
+            public string phone_number { get; set; }
+        }
 
-    public class GlobalGetnetProduct
-    {
-        public string product_type { get; set; }
-        public string title { get; set; }
-        public int amount { get; set; }
-        public int quantity { get; set; }
+        public class GlobalGetnetProduct
+        {
+            public string product_type { get; set; }
+            public string title { get; set; }
+            public int amount { get; set; }
+            public int quantity { get; set; }
+        }
     }
 }

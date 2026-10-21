@@ -2,6 +2,7 @@
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
 using System;
+using System.Linq;
 using System.Net.Http;
 using System.Net.Http.Headers;
 using System.Text;
@@ -21,25 +22,34 @@ namespace LabelWise.Infrastructure.Services
         {
             _httpClient = httpClient;
             _logger = logger;
-
-            // Pega as chaves com segurança e remove espaços em branco
             _accessToken = (config["MetaWhatsApp:AccessToken"] ?? string.Empty).Trim();
             _phoneNumberId = (config["MetaWhatsApp:PhoneNumberId"] ?? string.Empty).Trim();
         }
 
-        public async Task<bool> SendTemplateReminderAsync(string toPhone, string userName, string mealTime)
+        // Método genérico que aceita o nome do template e qualquer quantidade de variáveis
+        public async Task<bool> SendTemplateMessageAsync(string toPhone, string templateName, params string[] templateArgs)
         {
             try
             {
                 if (string.IsNullOrWhiteSpace(_phoneNumberId) || string.IsNullOrWhiteSpace(_accessToken))
                 {
-                    _logger.LogError("[WhatsAppSenderService] ❌ PhoneNumberId ou AccessToken não configurado nas variáveis de ambiente.");
+                    _logger.LogError("[WhatsAppSenderService] ❌ PhoneNumberId ou AccessToken não configurado.");
                     return false;
                 }
 
                 var endpoint = $"https://graph.facebook.com/v20.0/{_phoneNumberId}/messages";
 
-                // Payload no formato esperado pela Meta para envio de templates
+                // Prepara os componentes dinamicamente (se houver argumentos)
+                object[] componentsArray = Array.Empty<object>();
+                if (templateArgs != null && templateArgs.Length > 0)
+                {
+                    var parameters = templateArgs.Select(arg => new { type = "text", text = arg }).ToArray();
+                    componentsArray = new object[]
+                    {
+                        new { type = "body", parameters = parameters }
+                    };
+                }
+
                 var payload = new
                 {
                     messaging_product = "whatsapp",
@@ -47,20 +57,9 @@ namespace LabelWise.Infrastructure.Services
                     type = "template",
                     template = new
                     {
-                        name = "lembrete_diario_nutri",
+                        name = templateName,
                         language = new { code = "pt_BR" },
-                        components = new[]
-                        {
-                            new
-                            {
-                                type = "body",
-                                parameters = new object[]
-                                {
-                                    new { type = "text", text = userName }, // Preenche o {{1}}
-                                    new { type = "text", text = mealTime }  // Preenche o {{2}}
-                                }
-                            }
-                        }
+                        components = componentsArray
                     }
                 };
 
@@ -68,22 +67,21 @@ namespace LabelWise.Infrastructure.Services
                 request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", _accessToken);
                 request.Content = new StringContent(JsonSerializer.Serialize(payload), Encoding.UTF8, "application/json");
 
-                // Dispara para a Graph API da Meta usando o HttpClient injetado
                 var response = await _httpClient.SendAsync(request);
                 var responseBody = await response.Content.ReadAsStringAsync();
+
                 if (response.IsSuccessStatusCode)
                 {
-                    _logger.LogInformation("[WhatsAppSenderService] 🚀 Template enviado com sucesso para {Phone}. Resposta Meta: {Body}", toPhone, responseBody);
+                    _logger.LogInformation("[WhatsAppSenderService] 🚀 Template '{Template}' enviado para {Phone}.", templateName, toPhone);
                     return true;
                 }
 
-                var errorContent = await response.Content.ReadAsStringAsync();
-                _logger.LogError("[WhatsAppSenderService] ❌ Falha ao enviar template Meta ({StatusCode}): {Error}", response.StatusCode, errorContent);
+                _logger.LogError("[WhatsAppSenderService] ❌ Falha ao enviar template Meta ({StatusCode}): {Error}", response.StatusCode, responseBody);
                 return false;
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "[WhatsAppSenderService] ❌ Exceção ao enviar template de lembrete para {Phone}", toPhone);
+                _logger.LogError(ex, "[WhatsAppSenderService] ❌ Exceção ao enviar template '{Template}' para {Phone}", templateName, toPhone);
                 return false;
             }
         }
@@ -109,11 +107,7 @@ namespace LabelWise.Infrastructure.Services
             if (!response.IsSuccessStatusCode)
             {
                 var errorBody = await response.Content.ReadAsStringAsync();
-                _logger.LogError("[MetaWhatsApp] ❌ Falha. Status: {Status}. Detalhes: {Error}", response.StatusCode, errorBody);
-            }
-            else
-            {
-                _logger.LogInformation("[MetaWhatsApp] ✅ Mensagem enviada com sucesso para {Phone}", phone);
+                _logger.LogError("[MetaWhatsApp] ❌ Falha texto. Status: {Status}. Detalhes: {Error}", response.StatusCode, errorBody);
             }
         }
     }

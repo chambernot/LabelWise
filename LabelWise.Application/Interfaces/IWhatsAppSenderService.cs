@@ -4,8 +4,8 @@ namespace LabelWise.Application.Interfaces
 {
     public interface IWhatsAppSenderService
     {
+        // Novo método flexível para qualquer template
+        Task<bool> SendTemplateMessageAsync(string toPhone, string templateName, params string[] templateArgs);
         Task SendTextMessageAsync(string phone, string message);
-
-        Task<bool> SendTemplateReminderAsync(string toPhone, string userName, string mealTime);
     }
 }

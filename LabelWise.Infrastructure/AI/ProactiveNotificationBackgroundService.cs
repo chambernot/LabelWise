@@ -76,7 +76,8 @@ namespace LabelWise.Infrastructure.BackgroundServices
                 {
                     try
                     {
-                        await whatsAppSender.SendTemplateReminderAsync(telefone, "Paciente", mealTimeTrigger);
+                        // 👉 CORREÇÃO APLICADA AQUI: Ordem dos parâmetros e nome do método
+                        await whatsAppSender.SendTemplateMessageAsync(telefone, "lembrete_diario_nutri", "Paciente", mealTimeTrigger);
                     }
                     catch (Exception ex)
                     {
@@ -98,6 +99,8 @@ namespace LabelWise.Infrastructure.BackgroundServices
 
                         int targetCalories = goal?.TargetCalories ?? 2000;
                         int consumedCal = logs.Sum(x => x.Calories);
+
+                        // 👉 CORREÇÃO APLICADA AQUI: A linha estava quebrada incorretamente
                         int diff = targetCalories - consumedCal;
 
                         string statusMsg = diff switch
