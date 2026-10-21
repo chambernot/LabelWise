@@ -129,6 +129,27 @@ namespace LabelWise.Api.Controllers
 
                 string textoLimpoCmd = Regex.Replace(textoBruto, "[^a-zA-Z0-9áéíóúâêîôûãõçÁÉÍÓÚÂÊÎÔÛÃÕÇ ]", "").Trim().ToLowerInvariant();
 
+                // 🚀 INTERCETOR DE NOVIDADES (ESTRATÉGIA 2 PASSOS)
+                if (textoLimpoCmd == "quero ver a novidade")
+                {
+                    string novidadeTexto = "🔥 *A Mágica das Calorias!* \n\n" +
+                                           "A partir de agora já pode relatar os seus exercícios físicos!\n\n" +
+                                           "Basta enviar algo como *'Corri 5km'* ou *'Fiz 40 min de musculação'*, " +
+                                           "e eu vou calcular as calorias gastas e dar um bónus no seu saldo diário de calorias!\n\n" +
+                                           "Vá em frente, mande uma mensagem a relatar um treino para testar! 💪";
+
+                    await _whatsAppSender.SendTextMessageAsync(senderPhone, novidadeTexto);
+                    await _nutritionRepository.SalvarMensagemHistoricoAsync(senderPhone, "assistant", novidadeTexto);
+                    return Ok();
+                }
+
+                if (textoLimpoCmd == "agora não" || textoLimpoCmd == "agora nao")
+                {
+                    string msgOk = "Sem problemas! Estarei por aqui quando precisar registar as suas refeições ou treinos. 🥗💪";
+                    await _whatsAppSender.SendTextMessageAsync(senderPhone, msgOk);
+                    return Ok();
+                }
+
                 if (textoLimpoCmd == "assinar" || textoLimpoCmd == "pagar" || textoLimpoCmd == "plano" || textoLimpoCmd == "assinatura")
                 {
                     await _whatsAppSender.SendTextMessageAsync(senderPhone, "⏳ A gerar o seu link seguro de pagamento na Getnet...");
@@ -648,7 +669,7 @@ namespace LabelWise.Api.Controllers
                 // 🛠️ ATIVIDADE 2: REGISTO DE EXERCÍCIO / GASTO CALÓRICO
                 var palavrasTreino = new[] { "treino", "treinei", "correr", "corri ", "caminhada", "caminhei", "pedalar", "pedalei", "bike", "bicicleta", "natação", "natacao", "crossfit", "musculação", "musculacao", "pilates", "academia", "exercício", "exercicio", "esteira", "malhar", "malhei", "yoga", "futebol" };
                 var palavrasComida = new[] { "comi", "bebi", "almoço", "almoco", "jantar", "café", "cafe", "lanche", "prato", "fome", "comida", "refeição", "refeicao" };
-               
+
                 // Só assume que é treino se tiver uma palavra de exercício E NÃO tiver palavras de comida no meio
                 bool pareceTreino = palavrasTreino.Any(p => textoLimpoCmd.Contains(p)) && !palavrasComida.Any(p => textoLimpoCmd.Contains(p));
 
@@ -1409,6 +1430,52 @@ Retorne APENAS o texto da mensagem pronto para envio.
                 }
             }
             return msg;
+        }
+
+        [HttpPost("broadcast-novidade")]
+        public async Task<IActionResult> DispararNovidade([FromHeader(Name = "X-Admin-Secret")] string secret)
+        {
+            // Proteção simples para não ser disparado por engano
+            var expectedSecret = _configuration["CronSecret"] ?? "senha_secreta_123";
+            if (string.IsNullOrEmpty(secret) || secret != expectedSecret)
+            {
+                return Unauthorized(new { success = false, message = "Acesso negado." });
+            }
+
+            try
+            {
+                // Vai buscar todos os telemóveis ativos na coleção Trial
+                var trialCollection = _database.GetCollection<MongoDB.Bson.BsonDocument>("B2C_Trial_Users");
+                var users = await trialCollection.Find(Builders<MongoDB.Bson.BsonDocument>.Filter.Empty).ToListAsync();
+
+                int enviados = 0;
+                int falhas = 0;
+
+                foreach (var user in users)
+                {
+                    if (user.TryGetValue("_id", out var idValue) && idValue.IsString)
+                    {
+                        string phone = idValue.AsString;
+                        try
+                        {
+                            // O nome do template que criou no painel do Meta
+                            string nomeTemplate = "alerta_novidade_app";
+
+                            // Tenta enviar o template. Se o seu SendTemplateReminderAsync aceitar o nome do template, use-o assim.
+                            bool sucesso = await _whatsAppSender.SendTemplateReminderAsync(phone, "Cliente", nomeTemplate);
+                            if (sucesso) enviados++; else falhas++;
+                        }
+                        catch { falhas++; }
+                    }
+                }
+
+                return Ok(new { success = true, message = $"Disparo concluído. Enviados: {enviados}, Falhas: {falhas}" });
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Erro no disparo da novidade.");
+                return StatusCode(500, new { success = false, message = "Erro ao processar o disparo." });
+            }
         }
     }
 
