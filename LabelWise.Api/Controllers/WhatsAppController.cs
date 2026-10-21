@@ -1000,27 +1000,27 @@ namespace LabelWise.Api.Controllers
                         string phone = idValue.AsString;
                         try
                         {
-                            string? paymentUrl = await GerarLinkPagamentoGetnetAsync(phone, "Cliente Nutrição Fácil", 29.90m);
+                            // 🚀 Dispara via Template aprovado na Meta para furar a janela de 24h
+                            string nomeTemplate = "oferta_fim_trial"; // Nome do template cadastrado no Meta Business
 
-                            if (!string.IsNullOrEmpty(paymentUrl))
+                            bool sucesso = await _whatsAppSender.SendTemplateReminderAsync(phone, "Cliente", nomeTemplate);
+
+                            if (sucesso)
                             {
-                                string msgRecuperacao = "😢 *Notei que o seu período de teste chegou ao fim.*\n\n" +
-                                                        "Adorei acompanhar as suas refeições nestes últimos dias! Para não perder o foco e continuar a ter a minha ajuda diária com os seus registos e macros, pode assinar o plano mensal (R$ 29,90) através do link seguro abaixo:\n\n" +
-                                                        $"👉 {paymentUrl}\n\n" +
-                                                        "Assim que o pagamento for confirmed, o seu acesso é libertado automaticamente! Vamos continuar juntos? 💪";
-
-                                await _whatsAppSender.SendTextMessageAsync(phone, msgRecuperacao);
                                 enviados++;
-
                                 var update = Builders<MongoDB.Bson.BsonDocument>.Update.Set("ExpiredOfferSent", true);
                                 await trialCollection.UpdateOneAsync(Builders<MongoDB.Bson.BsonDocument>.Filter.Eq("_id", phone), update);
+                            }
+                            else
+                            {
+                                falhas++;
                             }
                         }
                         catch { falhas++; }
                     }
                 }
 
-                return Ok(new { success = true, message = $"Ofertas de recuperação enviadas: {enviados}, Falhas: {falhas}" });
+                return Ok(new { success = true, message = $"Ofertas de recuperação enviadas via template: {enviados}, Falhas: {falhas}" });
             }
             catch (Exception ex)
             {
