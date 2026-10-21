@@ -1,4 +1,5 @@
 ﻿using System;
+using MongoDB.Bson;
 using MongoDB.Bson.Serialization.Attributes;
 
 namespace LabelWise.Domain.Entities.Nutrition;
@@ -6,13 +7,21 @@ namespace LabelWise.Domain.Entities.Nutrition;
 [BsonIgnoreExtraElements] // Proteção crucial contra crashes de novos campos no MongoDB
 public class DailyNutritionGoal
 {
+    [BsonId]
     public string Id { get; private set; }
+
     public string UserId { get; private set; }
     public string? NutritionistId { get; private set; } // Identifica o profissional responsável pela prescrição
     public DateTime TargetDate { get; private set; }
     public int TargetCalories { get; private set; }
+
+    [BsonRepresentation(BsonType.Double)]
     public decimal TargetProteinG { get; private set; }
+
+    [BsonRepresentation(BsonType.Double)]
     public decimal TargetCarbsG { get; private set; }
+
+    [BsonRepresentation(BsonType.Double)]
     public decimal TargetFatG { get; private set; }
 
     // NOVO: Meta de ingestão de água em ml
@@ -24,13 +33,9 @@ public class DailyNutritionGoal
     // O cardápio detalhado prescrito pela nutricionista ou gerado autonomamente
     public string? PrescribedMealPlan { get; private set; } // Ex: "Café: Ovos e Pão\nAlmoço: Frango e Arroz..."
 
-    // Método para atualizar o cardápio junto com as metas
-    public void UpdatePrescribedPlan(string? prescribedPlan)
-    {
-        PrescribedMealPlan = prescribedPlan;
-    }
-
-    protected DailyNutritionGoal() { }
+    // 🔒 Construtor sem parâmetros exigido pelo MongoDB C# Driver para deserialização
+    [BsonConstructor]
+    public DailyNutritionGoal() { }
 
     public DailyNutritionGoal(
         string userId,
@@ -59,6 +64,12 @@ public class DailyNutritionGoal
         DietaryRestrictions = dietaryRestrictions;
         FavoriteFoods = favoriteFoods;
         PrescribedMealPlan = prescribedMealPlan;
+    }
+
+    // Método para atualizar o cardápio junto com as metas
+    public void UpdatePrescribedPlan(string? prescribedPlan)
+    {
+        PrescribedMealPlan = prescribedPlan;
     }
 
     // Comportamento de domínio para atualizar as metas caso o nutricionista mude o plano
