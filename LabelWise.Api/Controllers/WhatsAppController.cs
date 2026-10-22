@@ -191,8 +191,8 @@ namespace LabelWise.Api.Controllers
 
                 if (textoLimpoCmd == "assinar" || textoLimpoCmd == "pagar" || textoLimpoCmd == "plano" || textoLimpoCmd == "assinatura")
                 {
-                    await _whatsAppSender.SendTextMessageAsync(senderPhone, "⏳ A gerar o seu link seguro de pagamento na Getnet...");
-                    string? paymentUrl = await GerarLinkPagamentoGetnetAsync(senderPhone, "Cliente Nutrição Fácil", 29.90m);
+                    await _whatsAppSender.SendTextMessageAsync(senderPhone, "⏳ A gerar o seu link seguro de pagamento na InfinitePay...");
+                    string? paymentUrl = await GerarLinkPagamentoInfinitePayAsync(senderPhone, "Cliente Nutrição Fácil", 29.90m);
 
                     if (!string.IsNullOrEmpty(paymentUrl))
                     {
@@ -272,7 +272,7 @@ namespace LabelWise.Api.Controllers
                         {
                             _logger.LogInformation("[WhatsApp B2C] Trial expirado após {TrialDays} dias.", TrialDurationDays);
 
-                            string? paymentUrl = await GerarLinkPagamentoGetnetAsync(senderPhone, "Cliente Trial", 29.90m);
+                            string? paymentUrl = await GerarLinkPagamentoInfinitePayAsync(senderPhone, "Cliente Trial", 29.90m);
                             string msgExpirado = "⏳ *Seu período de teste de 15 dias terminou.*\n\n" +
                                                  "Se quiser continuar, veja os detalhes da assinatura mensal abaixo:\n\n" +
                                                  (!string.IsNullOrEmpty(paymentUrl) ? $"👉 {paymentUrl}\n\n" : "") +
@@ -1213,7 +1213,7 @@ namespace LabelWise.Api.Controllers
                         string phone = idValue.AsString;
                         try
                         {
-                            bool sucesso = await _whatsAppSender.SendTemplateMessageAsync(phone, "oferta_fim_trial", "Cliente");
+                            bool sucesso = await _whatsAppSender.SendTemplateMessageAsync(phone, "oferta_fim_trial");
 
                             if (sucesso)
                             {
@@ -1330,7 +1330,7 @@ namespace LabelWise.Api.Controllers
             if (reserved) return true;
 
             _logger.LogInformation("[WhatsApp B2C] Limite diário do trial atingido para interação de IA.");
-            string? paymentUrl = await GerarLinkPagamentoGetnetAsync(phone, "Cliente Limite", 29.90m);
+            string? paymentUrl = await GerarLinkPagamentoInfinitePayAsync(phone, "Cliente Limite", 29.90m);
             string message = "⚠️ *Você chegou ao limite de 4 análises de IA do teste de hoje.*\n\n" +
                              "Mensagens simples e registros básicos não contam para esse limite. Amanhã você poderá continuar.\n\n" +
                              (!string.IsNullOrEmpty(paymentUrl)
@@ -1393,114 +1393,59 @@ namespace LabelWise.Api.Controllers
             return false;
         }
 
-        private async Task<string?> GerarTokenGetnetAsync()
+        private async Task<string?> GerarLinkPagamentoInfinitePayAsync(string phone, string name, decimal valorOriginal)
         {
             try
             {
-                var clientId = _configuration["Getnet:ClientId"]?.Trim();
-                var clientSecret = _configuration["Getnet:ClientSecret"]?.Trim();
-                var isProd = _configuration.GetValue<bool>("Getnet:IsProduction");
-
-                var baseUrl = isProd ? "https://api.globalgetnet.com" : "https://api-sbx.globalgetnet.com";
-                var authUrl = $"{baseUrl}/authentication/oauth2/access_token";
-
-                var client = _httpClientFactory.CreateClient();
-                var request = new HttpRequestMessage(HttpMethod.Post, authUrl);
-
-                var credentials = Convert.ToBase64String(Encoding.ASCII.GetBytes($"{clientId}:{clientSecret}"));
-                request.Headers.Authorization = new AuthenticationHeaderValue("Basic", credentials);
-
-                request.Content = new FormUrlEncodedContent(new[]
+                var apiKey = _configuration["InfinitePay:ApiKey"]?.Trim();
+                if (string.IsNullOrEmpty(apiKey))
                 {
-                    new KeyValuePair<string, string>("grant_type", "client_credentials")
-                });
-
-                var response = await client.SendAsync(request);
-
-                if (!response.IsSuccessStatusCode)
-                {
-                    var errorContent = await response.Content.ReadAsStringAsync();
-                    _logger.LogError("[GETNET TOKEN ERROR] Status: {StatusCode} | Body: {Error}", response.StatusCode, errorContent);
+                    _logger.LogError("[INFINITEPAY] Chave da API não está configurada no appsettings.json.");
                     return null;
                 }
 
-                var tokenData = await response.Content.ReadFromJsonAsync<GetnetTokenResponse>();
-                return tokenData?.access_token;
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex, "Exceção ao autenticar na Getnet.");
-                return null;
-            }
-        }
+                var isProd = _configuration.GetValue<bool>("InfinitePay:IsProduction");
+                var baseUrl = isProd ? "https://api.infinitepay.io" : "https://api-sandbox.infinitepay.io";
+                var requestUrl = $"{baseUrl}/v2/payment-links";
 
-        private async Task<string?> GerarLinkPagamentoGetnetAsync(string phone, string name, decimal valorOriginal)
-        {
-            try
-            {
-                var token = await GerarTokenGetnetAsync();
-                if (string.IsNullOrEmpty(token)) return null;
+                // A InfinitePay trabalha com centavos, por isso multiplicamos por 100
+                int amountInCents = (int)(valorOriginal * 100);
 
-                var sellerId = _configuration["Getnet:SellerId"]?.Trim();
-                var isProd = _configuration.GetValue<bool>("Getnet:IsProduction");
-
-                var baseUrl = isProd
-                    ? "https://api.globalgetnet.com/dpy/payment-link/v1"
-                    : "https://api-sbx.pre.globalgetnet.com/dpy/payment-link/v1";
-
-                var requestUrl = $"{baseUrl}/payment-links";
-
-                var linkRequest = new GlobalGetnetLinkRequest
+                var linkRequest = new
                 {
-                    seller_id = sellerId,
-                    expiration = DateTime.UtcNow.AddDays(7).ToString("yyyy-MM-ddTHH:mm:ss"),
-                    max_orders = 1,
-                    currency = "BRL",
-                    order_id = $"sub_{phone}_{DateTime.UtcNow.Ticks}",
-                    customer = new GlobalGetnetCustomer
+                    amount = amountInCents,
+                    description = "Nutrição Fácil - Assinatura Mensal",
+                    payment_methods = new[] { "pix", "credit" },
+                    expires_at = DateTime.UtcNow.AddDays(7).ToString("yyyy-MM-ddTHH:mm:ssZ"),
+                    metadata = new
                     {
-                        name = string.IsNullOrWhiteSpace(name) ? "Cliente Nutrição Fácil" : name,
-                        phone_number = phone
-                    },
-                    products = new[]
-                    {
-                        new GlobalGetnetProduct
-                        {
-                            product_type = "digital_goods",
-                            title = "Nutrição Fácil - Assinatura Mensal",
-                            amount = (int)(valorOriginal * 100),
-                            quantity = 1
-                        }
+                        phone_number = phone,
+                        customer_name = name
                     }
                 };
 
                 var client = _httpClientFactory.CreateClient();
                 var request = new HttpRequestMessage(HttpMethod.Post, requestUrl);
 
-                request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
+                // A chave única atua diretamente como o Bearer token
+                request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", apiKey);
                 request.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue("application/json"));
-
-                if (!string.IsNullOrEmpty(sellerId))
-                {
-                    request.Headers.Add("x-seller-id", sellerId);
-                }
-
                 request.Content = JsonContent.Create(linkRequest);
 
                 var response = await client.SendAsync(request);
                 if (!response.IsSuccessStatusCode)
                 {
                     var errorContent = await response.Content.ReadAsStringAsync();
-                    _logger.LogError("[GETNET LINK ERROR] Status: {StatusCode} | Body: {Error}", response.StatusCode, errorContent);
+                    _logger.LogError("[INFINITEPAY LINK ERROR] Status: {StatusCode} | Body: {Error}", response.StatusCode, errorContent);
                     return null;
                 }
 
-                var linkResult = await response.Content.ReadFromJsonAsync<GetnetLinkResponse>();
-                return linkResult?.payment_url;
+                var linkResult = await response.Content.ReadFromJsonAsync<InfinitePayLinkResponse>();
+                return linkResult?.url;
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "Exceção ao gerar link de pagamento.");
+                _logger.LogError(ex, "Exceção ao gerar link de pagamento na InfinitePay.");
                 return null;
             }
         }
@@ -1795,41 +1740,10 @@ Retorne APENAS o texto da mensagem pronto para envio.
         }
         public class MetaInteractiveReply { public string? Id { get; set; } public string? Title { get; set; } }
 
-        public class GetnetTokenResponse
+        public class InfinitePayLinkResponse
         {
-            public string access_token { get; set; }
-            public string token_type { get; set; }
-            public int expires_in { get; set; }
-        }
-
-        public class GetnetLinkResponse
-        {
-            public string payment_url { get; set; }
-        }
-
-        public class GlobalGetnetLinkRequest
-        {
-            public string seller_id { get; set; }
-            public string expiration { get; set; }
-            public int max_orders { get; set; }
-            public string currency { get; set; }
-            public string order_id { get; set; }
-            public GlobalGetnetCustomer customer { get; set; }
-            public GlobalGetnetProduct[] products { get; set; }
-        }
-
-        public class GlobalGetnetCustomer
-        {
-            public string name { get; set; }
-            public string phone_number { get; set; }
-        }
-
-        public class GlobalGetnetProduct
-        {
-            public string product_type { get; set; }
-            public string title { get; set; }
-            public int amount { get; set; }
-            public int quantity { get; set; }
+            public string id { get; set; }
+            public string url { get; set; }
         }
     }
 }
