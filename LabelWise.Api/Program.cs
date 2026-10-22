@@ -154,7 +154,7 @@ try
     builder.Services.AddScoped<INutritionAgentService, NutritionAgentService>();
     // Registo do Background Service proativo
 
-    builder.Services.AddHostedService<PatientAdherenceBackgroundService>();
+    //builder.Services.AddHostedService<PatientAdherenceBackgroundService>();
     builder.Services.AddHostedService<ProactiveNotificationBackgroundService>();
     // Regras de Negócio (Application)
     builder.Services.AddScoped<INutritionService, NutritionService>();
