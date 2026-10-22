@@ -18,6 +18,7 @@ using System.Net.Http.Headers;
 using System.Net.Http.Json;
 using System.Text;
 using System.Text.Json;
+using System.Text.Json.Serialization; // <-- ADICIONADO PARA MAPEAMENTO DOS BOTÕES
 using System.Text.RegularExpressions;
 using System.Threading.Tasks;
 
@@ -101,10 +102,30 @@ namespace LabelWise.Api.Controllers
                 string? textoBruto = null;
                 string? imagemBase64 = null;
 
+                // 👇 INÍCIO DO AJUSTE: LEITURA INTELIGENTE DE TEXTOS E BOTÕES
                 if (messageType == "text")
                 {
                     textoBruto = messagingEvent?.Text?.Body?.Trim();
                 }
+                else if (messageType == "button")
+                {
+                    // Captura de botões simples vindos de templates
+                    textoBruto = messagingEvent?.Button?.Text?.Trim();
+                }
+                else if (messageType == "interactive")
+                {
+                    // Captura de botões interativos e respostas de listas
+                    var interactiveType = messagingEvent?.Interactive?.Type;
+                    if (interactiveType == "button_reply")
+                    {
+                        textoBruto = messagingEvent?.Interactive?.ButtonReply?.Title?.Trim();
+                    }
+                    else if (interactiveType == "list_reply")
+                    {
+                        textoBruto = messagingEvent?.Interactive?.ListReply?.Title?.Trim();
+                    }
+                }
+                // 👆 FIM DO AJUSTE
                 else if (messageType == "audio" && messagingEvent?.Audio?.Id != null)
                 {
                     await _whatsAppSender.SendTextMessageAsync(senderPhone, "🎙 A ouvir o seu áudio e a transcrever...");
@@ -273,7 +294,7 @@ namespace LabelWise.Api.Controllers
                                                "*1️⃣* Emagrecimento\n" +
                                                "*2️⃣* Hipertrofia\n" +
                                                "*3️⃣* Manutenção\n\n" +
-                                               "_(Responda com o número, ou digite *cancelar* para sair)_"; // <-- MENSAGEM ATUALIZADA
+                                               "_(Responda com o número, ou digite *cancelar* para sair)_";
                         await _whatsAppSender.SendTextMessageAsync(senderPhone, mensagemReset);
                         return Ok();
                     }
@@ -284,7 +305,6 @@ namespace LabelWise.Api.Controllers
                     {
                         string step = userDoc.Contains("OnboardingStep") ? userDoc["OnboardingStep"].AsString : "WaitingForGoal";
 
-                        // 🚀 NOVIDADE: ROTA DE FUGA APLICADA AQUI
                         if (textoLimpoCmd == "cancelar" || textoLimpoCmd == "sair" || textoLimpoCmd == "voltar")
                         {
                             var goalsCollectionCheck = _database.GetCollection<MongoDB.Bson.BsonDocument>("DailyGoals");
@@ -329,7 +349,6 @@ namespace LabelWise.Api.Controllers
                                 }
                                 else
                                 {
-                                    // <-- MENSAGEM DE ERRO ATUALIZADA
                                     await _whatsAppSender.SendTextMessageAsync(senderPhone, "❌ Opção inválida.\n\n🎯 **Passo 1 de 4:** Escolha o número correspondente ao seu principal objetivo:\n*1️⃣* Emagrecimento\n*2️⃣* Hipertrofia\n*3️⃣* Manutenção\n\n_(Ou digite *cancelar* para sair)_");
                                 }
                                 return Ok();
@@ -916,10 +935,8 @@ namespace LabelWise.Api.Controllers
             var hojeBr = DateTime.UtcNow.AddHours(-3);
             var inicioMes = new DateTime(hojeBr.Year, hojeBr.Month, 1);
 
-            // 1. Status Diário Atualizado via Serviço
             var statusHoje = await _nutritionService.GetDailyStatusAndSuggestionAsync(phone, hojeBr);
 
-            // 2. Consulta de Água do Dia
             int totalAguaHoje = 0;
             try
             {
@@ -933,7 +950,6 @@ namespace LabelWise.Api.Controllers
             }
             catch { }
 
-            // 3. Consulta de Dados Acumulados do Mês no MongoDB (MealLogs)
             int diasComRegistro = 0;
             int totalCaloriasMes = 0;
             int mediaCaloriasDiaria = 0;
@@ -972,12 +988,9 @@ namespace LabelWise.Api.Controllers
                 _logger.LogError(ex, "Erro ao consultar dados mensais de nutrição para o telefone {Phone}", phone);
             }
 
-            // 4. Montagem da Mensagem do Painel
             var sb = new StringBuilder();
 
             sb.AppendLine("📊 *PAINEL DE DESEMPENHO NUTRICIONAL* 📊\n");
-
-            // SEÇÃO HOJE
             sb.AppendLine($"🗓️ *RESUMO DE HOJE ({hojeBr:dd/MM})*");
             sb.AppendLine($"🔥 *Calorias:* {statusHoje.Consumed.Calories} / {statusHoje.Target.Calories} kcal");
             sb.AppendLine(GerarBarraProgresso(statusHoje.Consumed.Calories, statusHoje.Target.Calories));
@@ -1001,8 +1014,6 @@ namespace LabelWise.Api.Controllers
             }
 
             sb.AppendLine("\n----------------------------------");
-
-            // SEÇÃO MÊS
             sb.AppendLine($"📅 *ACUMULADO DO MÊS ({hojeBr:MMMM/yyyy})*");
             sb.AppendLine($"✅ *Dias Ativos:* {diasComRegistro} dia(s) registrados");
             sb.AppendLine($"🔥 *Média Diária:* {mediaCaloriasDiaria} kcal/dia");
@@ -1040,7 +1051,6 @@ namespace LabelWise.Api.Controllers
         [HttpPost("send-daily-reminders")]
         public async Task<IActionResult> SendDailyReminders([FromHeader(Name = "X-Cron-Secret")] string secret)
         {
-            // ... (validação do secret continua igual) ...
             var expectedSecret = _configuration["CronSecret"];
             if (string.IsNullOrEmpty(secret) || secret != expectedSecret) return Unauthorized(new { success = false, message = "Acesso negado." });
 
@@ -1079,7 +1089,6 @@ namespace LabelWise.Api.Controllers
                             }
                         }
 
-                        // 🔥 AQUI: Ajustado para o novo método dinâmico
                         bool sucesso = await _whatsAppSender.SendTemplateMessageAsync(telefone, "lembrete_diario_nutri", "Paciente", mealTime);
                         if (sucesso) enviados++; else falhas++;
                     }
@@ -1204,7 +1213,6 @@ namespace LabelWise.Api.Controllers
                         string phone = idValue.AsString;
                         try
                         {
-                            // 🔥 AQUI: Ajustado para o novo método
                             bool sucesso = await _whatsAppSender.SendTemplateMessageAsync(phone, "oferta_fim_trial", "Cliente");
 
                             if (sucesso)
@@ -1231,7 +1239,6 @@ namespace LabelWise.Api.Controllers
         public async Task<IActionResult> SendReminder([FromQuery] string phone, [FromQuery] string userName = "Anderson", [FromQuery] string mealTime = "café da manhã")
         {
             if (string.IsNullOrWhiteSpace(phone)) return BadRequest(new { success = false, message = "Telefone obrigatório." });
-            // 🔥 AQUI
             bool enviado = await _whatsAppSender.SendTemplateMessageAsync(phone, "lembrete_diario_nutri", userName, mealTime);
             if (enviado) return Ok(new { success = true, message = $"Lembrete enviado para {phone}!" });
             return StatusCode(500, new { success = false, message = "Falha ao enviar lembrete." });
@@ -1240,7 +1247,6 @@ namespace LabelWise.Api.Controllers
         [HttpPost("send-trial-reminders")]
         public async Task<IActionResult> SendTrialReminders([FromHeader(Name = "X-Cron-Secret")] string secret)
         {
-            // ... (validação e lógica de datas continua igual) ...
             var expectedSecret = _configuration["CronSecret"];
             if (string.IsNullOrEmpty(secret) || string.IsNullOrEmpty(expectedSecret) || secret != expectedSecret)
                 return Unauthorized(new { success = false, message = "Acesso negado." });
@@ -1260,7 +1266,6 @@ namespace LabelWise.Api.Controllers
 
                 foreach (var user in trialUsers)
                 {
-                    // Lógica de skip mantida...
                     if (!user.TryGetValue("_id", out var idValue) || !idValue.IsString ||
                         !user.TryGetValue("TrialStartDate", out var startValue) || !startValue.IsBsonDateTime) continue;
 
@@ -1290,7 +1295,6 @@ namespace LabelWise.Api.Controllers
 
                     try
                     {
-                        // 🔥 AQUI: Ajustado para o novo método dinâmico
                         bool success = await _whatsAppSender.SendTemplateMessageAsync(phone, "trial_engajamento", "Cliente");
 
                         if (success) { sentCount++; _logger.LogInformation("Lembrete do trial enviado no dia {TrialDay}.", trialDay); }
@@ -1743,11 +1747,7 @@ Retorne APENAS o texto da mensagem pronto para envio.
                         string phone = idValue.AsString;
                         try
                         {
-                            // 🔥 AQUI: Ajustado! (Estou passando "Cliente" assumindo que o seu template tenha 1 variável {{1}}. 
-                            // Se o seu template do painel não tiver NENHUMA variável, mude para:
-                            // bool sucesso = await _whatsAppSender.SendTemplateMessageAsync(phone, "alerta_novidade_app");
                             bool sucesso = await _whatsAppSender.SendTemplateMessageAsync(phone, "alerta_novidade_app");
-
                             if (sucesso) enviados++; else falhas++;
                         }
                         catch { falhas++; }
@@ -1767,11 +1767,33 @@ Retorne APENAS o texto da mensagem pronto para envio.
         public class MetaEntry { public List<MetaChange>? Changes { get; set; } }
         public class MetaChange { public MetaValue? Value { get; set; } }
         public class MetaValue { public List<MetaMessage>? Messages { get; set; } }
-        public class MetaMessage { public string? From { get; set; } public string? Type { get; set; } public MetaText? Text { get; set; } public MetaMedia? Image { get; set; } public MetaMedia? Audio { get; set; } }
-        public class MetaText { public string? Body { get; set; } }
 
-        // Corrigido aqui (Mime_Typea para MimeType)
+        public class MetaMessage
+        {
+            public string? From { get; set; }
+            public string? Type { get; set; }
+            public MetaText? Text { get; set; }
+            public MetaMedia? Image { get; set; }
+            public MetaMedia? Audio { get; set; }
+
+            // 👇 NOVAS CLASSES ADICIONADAS PARA SUPORTAR BOTÕES
+            public MetaButton? Button { get; set; }
+            public MetaInteractive? Interactive { get; set; }
+        }
+        public class MetaText { public string? Body { get; set; } }
         public class MetaMedia { public string? Id { get; set; } public string? MimeType { get; set; } }
+
+        // 👇 NOVAS CLASSES ADICIONADAS PARA MAPEAMENTO
+        public class MetaButton { public string? Text { get; set; } }
+        public class MetaInteractive
+        {
+            public string? Type { get; set; }
+            [JsonPropertyName("button_reply")]
+            public MetaInteractiveReply? ButtonReply { get; set; }
+            [JsonPropertyName("list_reply")]
+            public MetaInteractiveReply? ListReply { get; set; }
+        }
+        public class MetaInteractiveReply { public string? Id { get; set; } public string? Title { get; set; } }
 
         public class GetnetTokenResponse
         {
