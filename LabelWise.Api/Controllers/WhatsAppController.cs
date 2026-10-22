@@ -18,7 +18,7 @@ using System.Net.Http.Headers;
 using System.Net.Http.Json;
 using System.Text;
 using System.Text.Json;
-using System.Text.Json.Serialization; // <-- ADICIONADO PARA MAPEAMENTO DOS BOTÕES
+using System.Text.Json.Serialization;
 using System.Text.RegularExpressions;
 using System.Threading.Tasks;
 
@@ -102,19 +102,16 @@ namespace LabelWise.Api.Controllers
                 string? textoBruto = null;
                 string? imagemBase64 = null;
 
-                // 👇 INÍCIO DO AJUSTE: LEITURA INTELIGENTE DE TEXTOS E BOTÕES
                 if (messageType == "text")
                 {
                     textoBruto = messagingEvent?.Text?.Body?.Trim();
                 }
                 else if (messageType == "button")
                 {
-                    // Captura de botões simples vindos de templates
                     textoBruto = messagingEvent?.Button?.Text?.Trim();
                 }
                 else if (messageType == "interactive")
                 {
-                    // Captura de botões interativos e respostas de listas
                     var interactiveType = messagingEvent?.Interactive?.Type;
                     if (interactiveType == "button_reply")
                     {
@@ -125,7 +122,6 @@ namespace LabelWise.Api.Controllers
                         textoBruto = messagingEvent?.Interactive?.ListReply?.Title?.Trim();
                     }
                 }
-                // 👆 FIM DO AJUSTE
                 else if (messageType == "audio" && messagingEvent?.Audio?.Id != null)
                 {
                     await _whatsAppSender.SendTextMessageAsync(senderPhone, "🎙 A ouvir o seu áudio e a transcrever...");
@@ -206,6 +202,22 @@ namespace LabelWise.Api.Controllers
                     {
                         await _whatsAppSender.SendTextMessageAsync(senderPhone, "⚠️ Ocorreu um erro ao gerar o link de pagamento. Tente novamente em instantes.");
                     }
+                    return Ok();
+                }
+
+                // 🛡️ INTERCETOR DE MENSAGEM "JÁ PAGUEI" (Para tranquilizar o utilizador ansioso)
+                if (textoLimpoCmd == "ja paguei" || textoLimpoCmd == "já paguei" ||
+                    textoLimpoCmd == "paguei" || textoLimpoCmd == "fiz o pix" ||
+                    textoLimpoCmd == "ja fiz o pix" || textoLimpoCmd == "fiz o pagamento" ||
+                    textoLimpoCmd == "pago")
+                {
+                    string msgAguarde = "⏳ *A aguardar confirmação do sistema...*\n\n" +
+                                        "Se já efetuou o pagamento, não se preocupe! O processamento do sistema da InfinitePay pode demorar até 5 minutos (ou um pouco mais se for por cartão de crédito).\n\n" +
+                                        "Assim que o banco nos enviar a confirmação automática, o seu acesso Premium será libertado instantaneamente e eu aviso-lhe por aqui! 🎉\n\n" +
+                                        "_(Se já passou muito tempo, por favor aguarde que um humano da nossa equipa de suporte irá analisar esta conversa)_";
+
+                    await _whatsAppSender.SendTextMessageAsync(senderPhone, msgAguarde);
+                    await _nutritionRepository.SalvarMensagemHistoricoAsync(senderPhone, "assistant", msgAguarde);
                     return Ok();
                 }
 
@@ -766,7 +778,7 @@ namespace LabelWise.Api.Controllers
                             { "UserId", senderPhone },
                             { "MealType", "Treino" },
                             { "DishName", $"🔥 {textoBruto}" },
-                            { "Calories", -caloriasGastas }, // Calorias Negativas
+                            { "Calories", -caloriasGastas },
                             { "ProteinG", 0.0 },
                             { "CarbsG", 0.0 },
                             { "FatG", 0.0 },
@@ -1471,6 +1483,70 @@ namespace LabelWise.Api.Controllers
             }
         }
 
+        [HttpPost("infinitepay-webhook")]
+        public async Task<IActionResult> InfinitePayWebhook([FromBody] JsonElement payload)
+        {
+            try
+            {
+                string jsonString = payload.GetRawText();
+                _logger.LogInformation("[INFINITEPAY WEBHOOK] Recebido: {Payload}", jsonString);
+
+                // Variáveis para extrair os dados do JSON da InfinitePay
+                string? status = null;
+                string? phone = null;
+
+                // Lê a estrutura do Webhook dinamicamente
+                using var doc = JsonDocument.Parse(jsonString);
+                var root = doc.RootElement;
+
+                // A InfinitePay geralmente envia o status da transação e os dados do cliente
+                // NOTA: A estrutura exata depende da versão do Webhook da InfinitePay.
+                // Esta lógica procura os campos mais comuns (ex: 'status' = 'approved' ou 'paid')
+                if (root.TryGetProperty("status", out var statusProp))
+                {
+                    status = statusProp.GetString()?.ToLower();
+                }
+
+                // Tenta extrair o telefone (pode vir dentro de 'customer' ou 'metadata')
+                if (root.TryGetProperty("customer", out var customerProp) && customerProp.TryGetProperty("phone_number", out var phoneProp))
+                {
+                    phone = phoneProp.GetString();
+                }
+
+                // Se o pagamento for aprovado e tivermos o telefone
+                if ((status == "approved" || status == "paid") && !string.IsNullOrEmpty(phone))
+                {
+                    // 1. Limpar formatação do telefone (remover +, espaços, parênteses) se a InfinitePay adicionar
+                    string cleanPhone = Regex.Replace(phone, "[^0-9]", "");
+
+                    // 2. Atualizar a base de dados para Premium
+                    var trialCollection = _database.GetCollection<MongoDB.Bson.BsonDocument>("B2C_Trial_Users");
+                    var filter = Builders<MongoDB.Bson.BsonDocument>.Filter.Eq("_id", cleanPhone);
+                    var update = Builders<MongoDB.Bson.BsonDocument>.Update.Set("Premium", true);
+
+                    var result = await trialCollection.UpdateOneAsync(filter, update);
+
+                    if (result.ModifiedCount > 0)
+                    {
+                        _logger.LogInformation("✅ Utilizador {Phone} ativado como Premium com sucesso!", cleanPhone);
+
+                        // 3. Enviar mensagem de boas-vindas ao Premium
+                        string msgSucesso = "🎉 *Pagamento Confirmado!* \n\nA sua assinatura Premium do Nutrição Fácil está ativa. Já pode continuar a registar as suas refeições sem quaisquer limites! 🥗🚀";
+                        await _whatsAppSender.SendTextMessageAsync(cleanPhone, msgSucesso);
+                    }
+                }
+
+                // Responde sempre 200 OK para a InfinitePay saber que recebemos a mensagem
+                return Ok();
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Erro crítico ao processar o webhook da InfinitePay.");
+                // Retorna Ok mesmo com erro para a InfinitePay não ficar a tentar reenviar infinitamente
+                return Ok();
+            }
+        }
+
         private async Task<string> GerarFeedbackDiarioComGeminiAsync(
             string patientGoal,
             int targetCalories,
@@ -1742,14 +1818,12 @@ Retorne APENAS o texto da mensagem pronto para envio.
             public MetaMedia? Image { get; set; }
             public MetaMedia? Audio { get; set; }
 
-            // 👇 NOVAS CLASSES ADICIONADAS PARA SUPORTAR BOTÕES
             public MetaButton? Button { get; set; }
             public MetaInteractive? Interactive { get; set; }
         }
         public class MetaText { public string? Body { get; set; } }
         public class MetaMedia { public string? Id { get; set; } public string? MimeType { get; set; } }
 
-        // 👇 NOVAS CLASSES ADICIONADAS PARA MAPEAMENTO
         public class MetaButton { public string? Text { get; set; } }
         public class MetaInteractive
         {
