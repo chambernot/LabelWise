@@ -1746,7 +1746,7 @@ Retorne APENAS o texto da mensagem pronto para envio.
                             // 🔥 AQUI: Ajustado! (Estou passando "Cliente" assumindo que o seu template tenha 1 variável {{1}}. 
                             // Se o seu template do painel não tiver NENHUMA variável, mude para:
                             // bool sucesso = await _whatsAppSender.SendTemplateMessageAsync(phone, "alerta_novidade_app");
-                            bool sucesso = await _whatsAppSender.SendTemplateMessageAsync(phone, "alerta_novidade_app", "Cliente");
+                            bool sucesso = await _whatsAppSender.SendTemplateMessageAsync(phone, "alerta_novidade_app");
 
                             if (sucesso) enviados++; else falhas++;
                         }
