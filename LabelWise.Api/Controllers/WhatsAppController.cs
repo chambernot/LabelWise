@@ -1398,50 +1398,71 @@ namespace LabelWise.Api.Controllers
             try
             {
                 var apiKey = _configuration["InfinitePay:ApiKey"]?.Trim();
-                if (string.IsNullOrEmpty(apiKey))
+                var handle = _configuration["InfinitePay:Handle"]?.Trim();
+
+                if (string.IsNullOrEmpty(apiKey) || string.IsNullOrEmpty(handle))
                 {
-                    _logger.LogError("[INFINITEPAY] Chave da API não está configurada no appsettings.json.");
+                    _logger.LogError("[INFINITEPAY] Chave da API ou Handle não estão configurados no appsettings.json.");
                     return null;
                 }
 
-                var isProd = _configuration.GetValue<bool>("InfinitePay:IsProduction");
-                var baseUrl = isProd ? "https://api.infinitepay.io" : "https://api-sandbox.infinitepay.io";
-                var requestUrl = $"{baseUrl}/v2/payment-links";
+                // Novo endpoint oficial do Checkout Integrado da InfinitePay
+                var requestUrl = "https://api.checkout.infinitepay.io/links";
 
-                // A InfinitePay trabalha com centavos, por isso multiplicamos por 100
                 int amountInCents = (int)(valorOriginal * 100);
 
+                // Nova estrutura de payload exigida pela documentação
                 var linkRequest = new
                 {
-                    amount = amountInCents,
-                    description = "Nutrição Fácil - Assinatura Mensal",
-                    payment_methods = new[] { "pix", "credit" },
-                    expires_at = DateTime.UtcNow.AddDays(7).ToString("yyyy-MM-ddTHH:mm:ssZ"),
-                    metadata = new
+                    handle = handle,
+                    order_nsu = Guid.NewGuid().ToString(), // Identificador único do pedido
+                    items = new[]
                     {
-                        phone_number = phone,
-                        customer_name = name
+                        new
+                        {
+                            quantity = 1,
+                            price = amountInCents,
+                            description = "Nutrição Fácil - Assinatura Mensal"
+                        }
+                    },
+                    customer = new
+                    {
+                        name = name,
+                        phone_number = phone
                     }
                 };
 
                 var client = _httpClientFactory.CreateClient();
                 var request = new HttpRequestMessage(HttpMethod.Post, requestUrl);
 
-                // A chave única atua diretamente como o Bearer token
                 request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", apiKey);
                 request.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue("application/json"));
                 request.Content = JsonContent.Create(linkRequest);
 
                 var response = await client.SendAsync(request);
+                var responseContent = await response.Content.ReadAsStringAsync();
+
                 if (!response.IsSuccessStatusCode)
                 {
-                    var errorContent = await response.Content.ReadAsStringAsync();
-                    _logger.LogError("[INFINITEPAY LINK ERROR] Status: {StatusCode} | Body: {Error}", response.StatusCode, errorContent);
+                    _logger.LogError("[INFINITEPAY LINK ERROR] Status: {StatusCode} | Body: {Error}", response.StatusCode, responseContent);
                     return null;
                 }
 
-                var linkResult = await response.Content.ReadFromJsonAsync<InfinitePayLinkResponse>();
-                return linkResult?.url;
+                // Leitura dinâmica da resposta para extrair a URL gerada
+                using var doc = JsonDocument.Parse(responseContent);
+
+                if (doc.RootElement.TryGetProperty("url", out var urlProp) && urlProp.ValueKind == JsonValueKind.String)
+                {
+                    return urlProp.GetString();
+                }
+
+                if (doc.RootElement.TryGetProperty("data", out var dataProp) && dataProp.TryGetProperty("url", out var dataUrlProp))
+                {
+                    return dataUrlProp.GetString();
+                }
+
+                _logger.LogError("[INFINITEPAY PARSE ERROR] Link gerado, mas 'url' não encontrada no Body: {Body}", responseContent);
+                return null;
             }
             catch (Exception ex)
             {
