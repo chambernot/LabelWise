@@ -1037,7 +1037,7 @@ namespace LabelWise.Api.Controllers
                     Builders<MongoDB.Bson.BsonDocument>.Filter.Gte("LoggedAt", hojeBr.Date)
                 );
                 var registrosAgua = await waterCol.Find(filterWater).ToListAsync();
-                totalAguaHoje = registrosAgua.Sum(w => w.Contains("AmountMl") && w["AmountMl"].IsInt32 ? w["AmountMl"].AsInt32 : 0);
+                totalAguaHoje = registrosAgua.Sum(w => w.Contains("AmountMl") && w["AmountMl"].IsNumeric ? w["AmountMl"].ToInt32() : 0);
             }
             catch { }
 
@@ -1066,16 +1066,15 @@ namespace LabelWise.Api.Controllers
 
                     foreach (var log in logsDoMes)
                     {
-                        if (log.Contains("Calories"))
+                        // Correção: Usar IsNumeric e ToInt32() para abranger Int32, Int64 ou Double do MongoDB
+                        if (log.Contains("Calories") && log["Calories"].IsNumeric)
                         {
-                            int cal = 0;
-                            if (log["Calories"].IsInt32) cal = log["Calories"].AsInt32;
-                            else if (log["Calories"].IsDouble) cal = (int)log["Calories"].AsDouble;
+                            int cal = log["Calories"].ToInt32();
 
                             if (cal > 0)
-                                totalCaloriasIngeridasMes += cal; // Soma apenas as refeições
+                                totalCaloriasIngeridasMes += cal;
                             else if (cal < 0)
-                                totalCaloriasGastasTreinoMes += Math.Abs(cal); // Soma os treinos (convertendo para positivo)
+                                totalCaloriasGastasTreinoMes += Math.Abs(cal);
                         }
                     }
 
@@ -1113,10 +1112,30 @@ namespace LabelWise.Api.Controllers
             }
 
             sb.AppendLine("\n----------------------------------");
-            sb.AppendLine($"📅 *ACUMULADO DO MÊS ({hojeBr:MMMM/yyyy})*");
+
+            // Força o mês em português
+            var culturaBr = new System.Globalization.CultureInfo("pt-BR");
+            string nomeMes = hojeBr.ToString("MMMM/yyyy", culturaBr);
+            nomeMes = char.ToUpper(nomeMes[0]) + nomeMes.Substring(1);
+
+            sb.AppendLine($"📅 *ACUMULADO DO MÊS ({nomeMes})*");
             sb.AppendLine($"✅ *Dias Ativos:* {diasComRegistro} dia(s) registados");
-            sb.AppendLine($"🔥 *Média Diária Ingerida:* {mediaCaloriasDiaria} kcal/dia");
+            sb.AppendLine($"🔥 *Média Diária Ingerida:* {mediaCaloriasDiaria:N0} kcal/dia");
             sb.AppendLine($"🍽️ *Total Ingerido:* {totalCaloriasIngeridasMes:N0} kcal");
+
+            // Lógica para mostrar quanto consumiu a mais ou a menos da meta acumulada
+            if (diasComRegistro > 0)
+            {
+                int metaAcumulada = diasComRegistro * statusHoje.Target.Calories;
+                int diferenca = totalCaloriasIngeridasMes - metaAcumulada;
+
+                if (diferenca > 0)
+                    sb.AppendLine($"📈 *Balanço:* Passou {diferenca:N0} kcal da meta");
+                else if (diferenca < 0)
+                    sb.AppendLine($"📉 *Balanço:* Poupou {Math.Abs(diferenca):N0} kcal (Déficit)");
+                else
+                    sb.AppendLine($"🎯 *Balanço:* Exatamente na meta!");
+            }
 
             if (totalCaloriasGastasTreinoMes > 0)
             {
