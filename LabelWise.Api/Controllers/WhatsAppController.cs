@@ -1423,7 +1423,7 @@ namespace LabelWise.Api.Controllers
 
                 int amountInCents = (int)(valorOriginal * 100);
 
-                // Nova estrutura de payload exigida pela documentação
+                // Nova estrutura de payload exigida pela documentação com Webhook dinâmico
                 var linkRequest = new
                 {
                     handle = handle,
@@ -1441,6 +1441,11 @@ namespace LabelWise.Api.Controllers
                     {
                         name = name,
                         phone_number = phone
+                    },
+                    webhook = new
+                    {
+                        url = "https://labelwise-1.onrender.com/api/whatsapp/infinitepay-webhook",
+                        events = new[] { "paid" }
                     }
                 };
 
