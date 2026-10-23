@@ -164,14 +164,16 @@ namespace LabelWise.Api.Controllers
                     return Ok();
                 }
 
-                // 🚀 INTERCETOR DE NOVIDADES
+                // 🚀 INTERCETOR DE NOVIDADES ATUALIZADO
                 if (textoLimpoCmd == "quero ver a novidade")
                 {
-                    string novidadeTexto = "🔥 *A Mágica das Calorias!* \n\n" +
-                                           "A partir de agora já pode relatar os seus exercícios físicos!\n\n" +
-                                           "Basta enviar algo como *'Corri 5km'* ou *'Fiz 40 min de musculação'*, " +
-                                           "e eu vou calcular as calorias gastas e dar um bónus no seu saldo diário de calorias!\n\n" +
-                                           "Vá em frente, mande uma mensagem a relatar um treino para testar! 💪";
+                    string novidadeTexto = "🔥 *Novidades Incríveis no Nutrição Fácil!* 🚀\n\n" +
+                                           "Implementámos várias funcionalidades de ponta para facilitar a sua rotina:\n\n" +
+                                           "1️⃣ **Substituição e Troca Inteligente:** Quer trocar algum alimento? Basta enviar ex: *'Substituir frango por patinho'* e eu encontro a melhor alternativa respeitando o seu plano!\n\n" +
+                                           "2️⃣ **Modo Correção de Refeições:** Esqueceu-se de algo no prato? Diga ex: *'Esqueci de registar o azeite'* e eu ajusto a sua última refeição na hora!\n\n" +
+                                           "3️⃣ **Painel Visual com Barras (🟩⬜):** Digite *'resumo'* a qualquer momento para ver o seu painel diário e o acumulado mensal com gráficos visuais de macros e água!\n\n" +
+                                           "4️⃣ **Feedbacks de Fim de Dia:** Agora conta com uma rotina inteligente que lhe envia um resumo motivacional personalizado ao final do dia para celebrar o seu progresso! 🥗💪\n\n" +
+                                           "Vá em frente, teste enviar um destes comandos agora mesmo!";
 
                     await _whatsAppSender.SendTextMessageAsync(senderPhone, novidadeTexto);
                     await _nutritionRepository.SalvarMensagemHistoricoAsync(senderPhone, "assistant", novidadeTexto);
