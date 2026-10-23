@@ -1042,7 +1042,8 @@ namespace LabelWise.Api.Controllers
             catch { }
 
             int diasComRegistro = 0;
-            int totalCaloriasMes = 0;
+            int totalCaloriasIngeridasMes = 0;
+            int totalCaloriasGastasTreinoMes = 0;
             int mediaCaloriasDiaria = 0;
 
             try
@@ -1063,15 +1064,22 @@ namespace LabelWise.Api.Controllers
                         .Distinct()
                         .Count();
 
-                    totalCaloriasMes = logsDoMes.Sum(x =>
+                    foreach (var log in logsDoMes)
                     {
-                        if (!x.Contains("Calories")) return 0;
-                        if (x["Calories"].IsInt32) return x["Calories"].AsInt32;
-                        if (x["Calories"].IsDouble) return (int)x["Calories"].AsDouble;
-                        return 0;
-                    });
+                        if (log.Contains("Calories"))
+                        {
+                            int cal = 0;
+                            if (log["Calories"].IsInt32) cal = log["Calories"].AsInt32;
+                            else if (log["Calories"].IsDouble) cal = (int)log["Calories"].AsDouble;
 
-                    mediaCaloriasDiaria = diasComRegistro > 0 ? totalCaloriasMes / diasComRegistro : 0;
+                            if (cal > 0)
+                                totalCaloriasIngeridasMes += cal; // Soma apenas as refeições
+                            else if (cal < 0)
+                                totalCaloriasGastasTreinoMes += Math.Abs(cal); // Soma os treinos (convertendo para positivo)
+                        }
+                    }
+
+                    mediaCaloriasDiaria = diasComRegistro > 0 ? totalCaloriasIngeridasMes / diasComRegistro : 0;
                 }
             }
             catch (Exception ex)
@@ -1106,9 +1114,14 @@ namespace LabelWise.Api.Controllers
 
             sb.AppendLine("\n----------------------------------");
             sb.AppendLine($"📅 *ACUMULADO DO MÊS ({hojeBr:MMMM/yyyy})*");
-            sb.AppendLine($"✅ *Dias Ativos:* {diasComRegistro} dia(s) registrados");
-            sb.AppendLine($"🔥 *Média Diária:* {mediaCaloriasDiaria} kcal/dia");
-            sb.AppendLine($"📦 *Total Consumido:* {totalCaloriasMes:N0} kcal");
+            sb.AppendLine($"✅ *Dias Ativos:* {diasComRegistro} dia(s) registados");
+            sb.AppendLine($"🔥 *Média Diária Ingerida:* {mediaCaloriasDiaria} kcal/dia");
+            sb.AppendLine($"🍽️ *Total Ingerido:* {totalCaloriasIngeridasMes:N0} kcal");
+
+            if (totalCaloriasGastasTreinoMes > 0)
+            {
+                sb.AppendLine($"🏃‍♂️ *Total Gasto em Treinos:* {totalCaloriasGastasTreinoMes:N0} kcal");
+            }
 
             sb.AppendLine("\n💡 *Dica:* Digite *minha dieta* para ver o plano em página externa ou *remover* para ajustar uma refeição de hoje.");
 
@@ -1284,6 +1297,23 @@ namespace LabelWise.Api.Controllers
 
             try
             {
+                // --- 1. INÍCIO DO CONTROLE DE LOG DE EXECUÇÃO ---
+                var dataHojeBrDt = DateTime.UtcNow.AddHours(-3).Date;
+                var dataHojeBrStr = dataHojeBrDt.ToString("yyyy-MM-dd");
+
+                var logCollection = _database.GetCollection<MongoDB.Bson.BsonDocument>("CronExecutionLogs");
+                string logId = $"expired_offers_{dataHojeBrStr}";
+
+                var existingLog = await logCollection.Find(Builders<MongoDB.Bson.BsonDocument>.Filter.Eq("_id", logId)).FirstOrDefaultAsync();
+                if (existingLog != null)
+                {
+                    return Ok(new { success = true, message = "As ofertas de expiração já foram enviadas hoje. Ignorando." });
+                }
+
+                // Insere o log confirmando que o job rodou hoje
+                await logCollection.InsertOneAsync(new MongoDB.Bson.BsonDocument { { "_id", logId }, { "ExecutedAt", DateTime.UtcNow } });
+                // --- FIM DO CONTROLE DE LOG DE EXECUÇÃO ---
+
                 var trialCollection = _database.GetCollection<MongoDB.Bson.BsonDocument>("B2C_Trial_Users");
                 var utcNow = DateTime.UtcNow;
                 var limitDate = utcNow.AddDays(-TrialDurationDays);
@@ -1295,6 +1325,10 @@ namespace LabelWise.Api.Controllers
                 );
 
                 var expiredUsers = await trialCollection.Find(filter).ToListAsync();
+
+                // Log para ver se o filtro encontrou alguém na base
+                _logger.LogInformation("[SendExpiredOffers] Encontrados {Count} utilizadores elegíveis para oferta de expiração hoje.", expiredUsers.Count);
+
                 int enviados = 0, falhas = 0;
 
                 foreach (var user in expiredUsers)
@@ -1312,16 +1346,24 @@ namespace LabelWise.Api.Controllers
                                 var update = Builders<MongoDB.Bson.BsonDocument>.Update.Set("ExpiredOfferSent", true);
                                 await trialCollection.UpdateOneAsync(Builders<MongoDB.Bson.BsonDocument>.Filter.Eq("_id", phone), update);
                             }
-                            else falhas++;
+                            else
+                            {
+                                falhas++;
+                                _logger.LogWarning("[SendExpiredOffers] A API do WhatsApp retornou falha ao enviar para o número {Phone}. Verifique as variáveis do template.", phone);
+                            }
                         }
-                        catch { falhas++; }
+                        catch (Exception exInner)
+                        {
+                            falhas++;
+                            _logger.LogError(exInner, "[SendExpiredOffers] Exceção ao tentar enviar template para {Phone}", phone);
+                        }
                     }
                 }
                 return Ok(new { success = true, message = $"Ofertas de recuperação enviadas via template: {enviados}, Falhas: {falhas}" });
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "Erro no envio de ofertas de expiração.");
+                _logger.LogError(ex, "Erro crítico no envio de ofertas de expiração.");
                 return StatusCode(500, new { success = false, message = "Erro ao processar envios." });
             }
         }
@@ -1678,7 +1720,7 @@ DADOS DO DIA DO PACIENTE:
 
 INSTRUÇÕES:
 1. Escreva uma mensagem curta (máximo 3 a 4 frases) para o WhatsApp com emojis.
-2. Seja encorajador se ele esteve perto da meta, ou acolhedor se ele ultrapassou/esqueceu de registrar.
+​2. Seja encorajador se ele esteve perto da meta, ou acolhedor se ele ultrapassou/esqueceu de registrar.
 3. Não use termos técnicos complexos. Termine com uma palavra de incentivo para o dia seguinte.
 Retorne APENAS o texto da mensagem pronto para envio.
 ";
