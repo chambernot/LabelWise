@@ -80,6 +80,46 @@ namespace LabelWise.Api.Controllers
             return Forbid();
         }
 
+        // 🔗 ENDPOINT DE RASTREIO DE CLIQUE NO LINK DE PAGAMENTO
+        [HttpGet("ir-para-pagamento")]
+        public async Task<IActionResult> IrParaPagamento([FromQuery] string phone)
+        {
+            if (string.IsNullOrWhiteSpace(phone))
+            {
+                return BadRequest("Telefone não especificado.");
+            }
+
+            try
+            {
+                var trackingCol = _database.GetCollection<MongoDB.Bson.BsonDocument>("PaymentTracking");
+                var filter = Builders<MongoDB.Bson.BsonDocument>.Filter.Eq("_id", phone);
+
+                // 1. Regista o clique na collection
+                var update = Builders<MongoDB.Bson.BsonDocument>.Update
+                    .Set("ClickedAt", DateTime.UtcNow)
+                    .Set("Status", "Clicked");
+
+                await trackingCol.UpdateOneAsync(filter, update, new UpdateOptions { IsUpsert = true });
+
+                // 2. Busca o link real da InfinitePay guardado para este utilizador
+                var doc = await trackingCol.Find(filter).FirstOrDefaultAsync();
+                string? infinitePayUrl = doc != null && doc.Contains("InfinitePayUrl") ? doc["InfinitePayUrl"].AsString : null;
+
+                if (!string.IsNullOrEmpty(infinitePayUrl))
+                {
+                    // 3. Redireciona o utilizador para o checkout oficial
+                    return Redirect(infinitePayUrl);
+                }
+
+                return Content("Link de pagamento não encontrado ou expirado. Por favor, solicite um novo link no WhatsApp.", "text/html; charset=utf-8");
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Erro ao processar clique de pagamento para {Phone}", phone);
+                return StatusCode(500, "Erro interno ao redirecionar.");
+            }
+        }
+
         [HttpPost("webhook")]
         public async Task<IActionResult> ReceiveMessage([FromBody] MetaWebhookPayload payload)
         {
@@ -190,13 +230,32 @@ namespace LabelWise.Api.Controllers
                 if (textoLimpoCmd == "assinar" || textoLimpoCmd == "pagar" || textoLimpoCmd == "plano" || textoLimpoCmd == "assinatura")
                 {
                     await _whatsAppSender.SendTextMessageAsync(senderPhone, "⏳ A gerar o seu link seguro de pagamento na InfinitePay...");
-                    string? paymentUrl = await GerarLinkPagamentoInfinitePayAsync(senderPhone, "Cliente Nutrição Fácil", 29.90m);
+                    string? paymentUrlOriginal = await GerarLinkPagamentoInfinitePayAsync(senderPhone, "Cliente Nutrição Fácil", 29.90m);
 
-                    if (!string.IsNullOrEmpty(paymentUrl))
+                    if (!string.IsNullOrEmpty(paymentUrlOriginal))
                     {
+                        var trackingCol = _database.GetCollection<MongoDB.Bson.BsonDocument>("PaymentTracking");
+                        var trackingDoc = new MongoDB.Bson.BsonDocument
+                        {
+                            { "_id", senderPhone },
+                            { "InfinitePayUrl", paymentUrlOriginal },
+                            { "SentAt", DateTime.UtcNow },
+                            { "ClickedAt", MongoDB.Bson.BsonNull.Value },
+                            { "Status", "Sent" }
+                        };
+
+                        await trackingCol.ReplaceOneAsync(
+                            Builders<MongoDB.Bson.BsonDocument>.Filter.Eq("_id", senderPhone),
+                            trackingDoc,
+                            new ReplaceOptions { IsUpsert = true }
+                        );
+
+                        var baseUrl = $"{Request.Scheme}://{Request.Host}";
+                        var trackingLink = $"{baseUrl}/api/whatsapp/ir-para-pagamento?phone={senderPhone}";
+
                         string msgAssinatura = "💳 *Assinatura Mensal - Nutrição Fácil*\n\n" +
                                                "Para continuar a usar o assistente de nutrição sem limites, clique no link seguro abaixo (R$ 29,90):\n\n" +
-                                               $"👉 {paymentUrl}\n\n" +
+                                               $"👉 {trackingLink}\n\n" +
                                                "A liberação do acesso depende da confirmação e ativação da assinatura no sistema.";
                         await _whatsAppSender.SendTextMessageAsync(senderPhone, msgAssinatura);
                     }
@@ -207,7 +266,7 @@ namespace LabelWise.Api.Controllers
                     return Ok();
                 }
 
-                // 🛡️ INTERCETOR DE MENSAGEM "JÁ PAGUEI" (Para tranquilizar o utilizador ansioso)
+                // 🛡️ INTERCETOR DE MENSAGEM "JÁ PAGUEI"
                 if (textoLimpoCmd == "ja paguei" || textoLimpoCmd == "já paguei" ||
                     textoLimpoCmd == "paguei" || textoLimpoCmd == "fiz o pix" ||
                     textoLimpoCmd == "ja fiz o pix" || textoLimpoCmd == "fiz o pagamento" ||
@@ -234,8 +293,8 @@ namespace LabelWise.Api.Controllers
                 var filterTrial = Builders<MongoDB.Bson.BsonDocument>.Filter.Eq("_id", senderPhone);
                 var userDoc = await trialCollection.Find(filterTrial).FirstOrDefaultAsync();
                 bool isPremium = userDoc != null &&
-                                 userDoc.TryGetValue("Premium", out var premiumValue) &&
-                                 premiumValue.IsBoolean && premiumValue.AsBoolean;
+                               userDoc.TryGetValue("Premium", out var premiumValue) &&
+                               premiumValue.IsBoolean && premiumValue.AsBoolean;
                 bool isTrialLimitedUser = !isB2bPatient && !isPremium;
 
                 string? protocoloClinico = null;
@@ -286,10 +345,29 @@ namespace LabelWise.Api.Controllers
                         {
                             _logger.LogInformation("[WhatsApp B2C] Trial expirado após {TrialDays} dias.", TrialDurationDays);
 
-                            string? paymentUrl = await GerarLinkPagamentoInfinitePayAsync(senderPhone, "Cliente Trial", 29.90m);
+                            string? paymentUrlOriginal = await GerarLinkPagamentoInfinitePayAsync(senderPhone, "Cliente Trial", 29.90m);
+                            string? trackingLink = null;
+
+                            if (!string.IsNullOrEmpty(paymentUrlOriginal))
+                            {
+                                var trackingCol = _database.GetCollection<MongoDB.Bson.BsonDocument>("PaymentTracking");
+                                var trackingDoc = new MongoDB.Bson.BsonDocument
+                                {
+                                    { "_id", senderPhone },
+                                    { "InfinitePayUrl", paymentUrlOriginal },
+                                    { "SentAt", DateTime.UtcNow },
+                                    { "ClickedAt", MongoDB.Bson.BsonNull.Value },
+                                    { "Status", "Sent" }
+                                };
+                                await trackingCol.ReplaceOneAsync(Builders<MongoDB.Bson.BsonDocument>.Filter.Eq("_id", senderPhone), trackingDoc, new ReplaceOptions { IsUpsert = true });
+
+                                var baseUrl = $"{Request.Scheme}://{Request.Host}";
+                                trackingLink = $"{baseUrl}/api/whatsapp/ir-para-pagamento?phone={senderPhone}";
+                            }
+
                             string msgExpirado = "⏳ *Seu período de teste de 15 dias terminou.*\n\n" +
                                                  "Se quiser continuar, veja os detalhes da assinatura mensal abaixo:\n\n" +
-                                                 (!string.IsNullOrEmpty(paymentUrl) ? $"👉 {paymentUrl}\n\n" : "") +
+                                                 (!string.IsNullOrEmpty(trackingLink) ? $"👉 {trackingLink}\n\n" : "") +
                                                  "A liberação do acesso depende da confirmação e ativação da assinatura no sistema.";
                             await _whatsAppSender.SendTextMessageAsync(senderPhone, msgExpirado);
                             return Ok();
@@ -864,7 +942,6 @@ namespace LabelWise.Api.Controllers
                     return Ok();
                 }
 
-                // RESERVA DE IA PARA PROCESSAMENTO DE REFEIÇÃO
                 if (isTrialLimitedUser && !await ReserveTrialInteractionOrNotifyAsync(senderPhone, trialCollection))
                 {
                     return Ok();
@@ -1344,11 +1421,30 @@ namespace LabelWise.Api.Controllers
             if (reserved) return true;
 
             _logger.LogInformation("[WhatsApp B2C] Limite diário do trial atingido para interação de IA.");
-            string? paymentUrl = await GerarLinkPagamentoInfinitePayAsync(phone, "Cliente Limite", 29.90m);
+            string? paymentUrlOriginal = await GerarLinkPagamentoInfinitePayAsync(phone, "Cliente Limite", 29.90m);
+            string? trackingLink = null;
+
+            if (!string.IsNullOrEmpty(paymentUrlOriginal))
+            {
+                var trackingCol = _database.GetCollection<MongoDB.Bson.BsonDocument>("PaymentTracking");
+                var trackingDoc = new MongoDB.Bson.BsonDocument
+                {
+                    { "_id", phone },
+                    { "InfinitePayUrl", paymentUrlOriginal },
+                    { "SentAt", DateTime.UtcNow },
+                    { "ClickedAt", MongoDB.Bson.BsonNull.Value },
+                    { "Status", "Sent" }
+                };
+                await trackingCol.ReplaceOneAsync(Builders<MongoDB.Bson.BsonDocument>.Filter.Eq("_id", phone), trackingDoc, new ReplaceOptions { IsUpsert = true });
+
+                var baseUrl = $"{Request.Scheme}://{Request.Host}";
+                trackingLink = $"{baseUrl}/api/whatsapp/ir-para-pagamento?phone={phone}";
+            }
+
             string message = "⚠️ *Você chegou ao limite de 4 análises de IA do teste de hoje.*\n\n" +
                              "Mensagens simples e registros básicos não contam para esse limite. Amanhã você poderá continuar.\n\n" +
-                             (!string.IsNullOrEmpty(paymentUrl)
-                                 ? $"Se quiser conhecer a assinatura mensal: 👉 {paymentUrl}"
+                             (!string.IsNullOrEmpty(trackingLink)
+                                 ? $"Se quiser conhecer a assinatura mensal: 👉 {trackingLink}"
                                  : "Se quiser saber sobre a assinatura mensal, responda *assinar*.");
             await _whatsAppSender.SendTextMessageAsync(phone, message);
             return false;
@@ -1420,16 +1516,13 @@ namespace LabelWise.Api.Controllers
                     return null;
                 }
 
-                // Novo endpoint oficial do Checkout Integrado da InfinitePay
                 var requestUrl = "https://api.checkout.infinitepay.io/links";
-
                 int amountInCents = (int)(valorOriginal * 100);
 
-                // Nova estrutura de payload exigida pela documentação com Webhook dinâmico
                 var linkRequest = new
                 {
                     handle = handle,
-                    order_nsu = Guid.NewGuid().ToString(), // Identificador único do pedido
+                    order_nsu = Guid.NewGuid().ToString(),
                     items = new[]
                     {
                         new
@@ -1467,7 +1560,6 @@ namespace LabelWise.Api.Controllers
                     return null;
                 }
 
-                // Leitura dinâmica da resposta para extrair a URL gerada
                 using var doc = JsonDocument.Parse(responseContent);
 
                 if (doc.RootElement.TryGetProperty("url", out var urlProp) && urlProp.ValueKind == JsonValueKind.String)
@@ -1498,58 +1590,54 @@ namespace LabelWise.Api.Controllers
                 string jsonString = payload.GetRawText();
                 _logger.LogInformation("[INFINITEPAY WEBHOOK] Recebido: {Payload}", jsonString);
 
-                // Variáveis para extrair os dados do JSON da InfinitePay
                 string? status = null;
                 string? phone = null;
 
-                // Lê a estrutura do Webhook dinamicamente
                 using var doc = JsonDocument.Parse(jsonString);
                 var root = doc.RootElement;
 
-                // A InfinitePay geralmente envia o status da transação e os dados do cliente
-                // NOTA: A estrutura exata depende da versão do Webhook da InfinitePay.
-                // Esta lógica procura os campos mais comuns (ex: 'status' = 'approved' ou 'paid')
                 if (root.TryGetProperty("status", out var statusProp))
                 {
                     status = statusProp.GetString()?.ToLower();
                 }
 
-                // Tenta extrair o telefone (pode vir dentro de 'customer' ou 'metadata')
                 if (root.TryGetProperty("customer", out var customerProp) && customerProp.TryGetProperty("phone_number", out var phoneProp))
                 {
                     phone = phoneProp.GetString();
                 }
 
-                // Se o pagamento for aprovado e tivermos o telefone
                 if ((status == "approved" || status == "paid") && !string.IsNullOrEmpty(phone))
                 {
-                    // 1. Limpar formatação do telefone (remover +, espaços, parênteses) se a InfinitePay adicionar
                     string cleanPhone = Regex.Replace(phone, "[^0-9]", "");
 
-                    // 2. Atualizar a base de dados para Premium
+                    // 1. Atualizar a base de dados de Trial para Premium
                     var trialCollection = _database.GetCollection<MongoDB.Bson.BsonDocument>("B2C_Trial_Users");
                     var filter = Builders<MongoDB.Bson.BsonDocument>.Filter.Eq("_id", cleanPhone);
                     var update = Builders<MongoDB.Bson.BsonDocument>.Update.Set("Premium", true);
 
-                    var result = await trialCollection.UpdateOneAsync(filter, update);
+                    await trialCollection.UpdateOneAsync(filter, update);
 
-                    if (result.ModifiedCount > 0)
-                    {
-                        _logger.LogInformation("✅ Utilizador {Phone} ativado como Premium com sucesso!", cleanPhone);
+                    // 2. Atualizar também a collection de rastreio de pagamentos para "Paid"
+                    var trackingCol = _database.GetCollection<MongoDB.Bson.BsonDocument>("PaymentTracking");
+                    var trackingFilter = Builders<MongoDB.Bson.BsonDocument>.Filter.Eq("_id", cleanPhone);
+                    var trackingUpdate = Builders<MongoDB.Bson.BsonDocument>.Update
+                        .Set("Status", "Paid")
+                        .Set("PaidAt", DateTime.UtcNow);
 
-                        // 3. Enviar mensagem de boas-vindas ao Premium
-                        string msgSucesso = "🎉 *Pagamento Confirmado!* \n\nA sua assinatura Premium do Nutrição Fácil está ativa. Já pode continuar a registar as suas refeições sem quaisquer limites! 🥗🚀";
-                        await _whatsAppSender.SendTextMessageAsync(cleanPhone, msgSucesso);
-                    }
+                    await trackingCol.UpdateOneAsync(trackingFilter, trackingUpdate, new UpdateOptions { IsUpsert = true });
+
+                    _logger.LogInformation("✅ Utilizador {Phone} ativado como Premium e registado como pago com sucesso!", cleanPhone);
+
+                    // 3. Enviar mensagem de boas-vindas ao Premium
+                    string msgSucesso = "🎉 *Pagamento Confirmado!* \n\nA sua assinatura Premium do Nutrição Fácil está ativa. Já pode continuar a registar as suas refeições sem quaisquer limites! 🥗🚀";
+                    await _whatsAppSender.SendTextMessageAsync(cleanPhone, msgSucesso);
                 }
 
-                // Responde sempre 200 OK para a InfinitePay saber que recebemos a mensagem
                 return Ok();
             }
             catch (Exception ex)
             {
                 _logger.LogError(ex, "Erro crítico ao processar o webhook da InfinitePay.");
-                // Retorna Ok mesmo com erro para a InfinitePay não ficar a tentar reenviar infinitamente
                 return Ok();
             }
         }
