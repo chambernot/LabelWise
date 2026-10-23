@@ -1942,6 +1942,104 @@ Retorne APENAS o texto da mensagem pronto para envio.
             }
         }
 
+        [HttpPost("send-water-reminders")]
+        public async Task<IActionResult> SendWaterReminders([FromHeader(Name = "X-Cron-Secret")] string secret)
+        {
+            var expectedSecret = _configuration["CronSecret"];
+            if (string.IsNullOrEmpty(secret) || secret != expectedSecret) return Unauthorized(new { success = false, message = "Acesso negado." });
+
+            try
+            {
+                var nowBr = DateTime.UtcNow.AddHours(-3);
+                var horaBrasilia = nowBr.Hour;
+
+                // 🛑 Trava de segurança: Não enviar de madrugada/noite (só envia entre as 09:00 e as 20:59)
+                if (horaBrasilia < 9 || horaBrasilia >= 21)
+                {
+                    return Ok(new { success = true, message = "Fora do horário permitido para envio de lembretes de água." });
+                }
+
+                // ⏱️ Regista a execução pela HORA para permitir múltiplos envios diários, mas sem duplicar na mesma hora
+                var logCollection = _database.GetCollection<MongoDB.Bson.BsonDocument>("CronExecutionLogs");
+                string logId = $"water_reminder_{nowBr:yyyy-MM-dd}_{horaBrasilia}";
+
+                var existingLog = await logCollection.Find(Builders<MongoDB.Bson.BsonDocument>.Filter.Eq("_id", logId)).FirstOrDefaultAsync();
+                if (existingLog != null) return Ok(new { success = true, message = $"O lembrete de água das {horaBrasilia}h já foi enviado hoje. Ignorando." });
+
+                await logCollection.InsertOneAsync(new MongoDB.Bson.BsonDocument { { "_id", logId }, { "ExecutedAt", DateTime.UtcNow } });
+
+                var telefones = await _nutritionRepository.ObterTelefonesAtivosAsync();
+                var trialCollection = _database.GetCollection<MongoDB.Bson.BsonDocument>("B2C_Trial_Users");
+                var waterCol = _database.GetCollection<MongoDB.Bson.BsonDocument>("WaterLogs");
+                var goalsCollection = _database.GetCollection<MongoDB.Bson.BsonDocument>("DailyGoals");
+
+                int enviados = 0, falhas = 0, ignoradosMetaBatida = 0;
+
+                foreach (var telefone in telefones)
+                {
+                    try
+                    {
+                        // Validação do ciclo de vida do utilizador (Trial / Premium)
+                        var trialDoc = await trialCollection.Find(Builders<MongoDB.Bson.BsonDocument>.Filter.Eq("_id", telefone)).FirstOrDefaultAsync();
+                        if (trialDoc != null)
+                        {
+                            bool isPremium = trialDoc.TryGetValue("Premium", out var pVal) && pVal.IsBoolean && pVal.AsBoolean;
+                            if (!isPremium && trialDoc.TryGetValue("TrialStartDate", out var startVal) && startVal.IsBsonDateTime)
+                            {
+                                var trialStart = startVal.ToUniversalTime();
+                                if (DateTime.UtcNow >= trialStart.AddDays(TrialDurationDays)) continue;
+                            }
+                        }
+
+                        // 1. Busca a Meta de Água (Padrão 2500ml se não existir)
+                        int metaAgua = 2500;
+                        var goalFilter = Builders<MongoDB.Bson.BsonDocument>.Filter.And(
+                            Builders<MongoDB.Bson.BsonDocument>.Filter.Eq("UserId", telefone),
+                            Builders<MongoDB.Bson.BsonDocument>.Filter.Eq("TargetDate", nowBr.Date)
+                        );
+                        var goalDoc = await goalsCollection.Find(goalFilter).FirstOrDefaultAsync();
+                        if (goalDoc != null && goalDoc.Contains("TargetWaterMl"))
+                        {
+                            metaAgua = goalDoc["TargetWaterMl"].AsInt32;
+                        }
+
+                        // 2. Calcula Água Consumida Hoje
+                        var waterFilter = Builders<MongoDB.Bson.BsonDocument>.Filter.And(
+                            Builders<MongoDB.Bson.BsonDocument>.Filter.Eq("UserId", telefone),
+                            Builders<MongoDB.Bson.BsonDocument>.Filter.Gte("LoggedAt", nowBr.Date)
+                        );
+                        var registrosAgua = await waterCol.Find(waterFilter).ToListAsync();
+                        int totalAguaHoje = registrosAgua.Sum(w => w.Contains("AmountMl") && w["AmountMl"].IsInt32 ? w["AmountMl"].AsInt32 : 0);
+
+                        // 3. Inteligência do alerta: Só envia se ainda NÃO bateu a meta
+                        if (totalAguaHoje >= metaAgua)
+                        {
+                            ignoradosMetaBatida++;
+                            continue;
+                        }
+
+                        int faltaMl = metaAgua - totalAguaHoje;
+
+                        // 4. Envia a notificação (Template do WhatsApp)
+                        bool sucesso = await _whatsAppSender.SendTemplateMessageAsync(telefone, "lembrete_agua", faltaMl.ToString());
+
+                        if (sucesso) enviados++; else falhas++;
+                    }
+                    catch
+                    {
+                        falhas++;
+                    }
+                }
+
+                return Ok(new { success = true, message = $"Lembrete das {horaBrasilia}h concluído. Enviados: {enviados}, Meta já batida: {ignoradosMetaBatida}, Falhas: {falhas}" });
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Erro interno ao processar os lembretes de água.");
+                return StatusCode(500, new { success = false, message = "Erro interno ao processar." });
+            }
+        }
+
         public class MetaWebhookPayload { public List<MetaEntry>? Entry { get; set; } }
         public class MetaEntry { public List<MetaChange>? Changes { get; set; } }
         public class MetaChange { public MetaValue? Value { get; set; } }
