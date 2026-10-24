@@ -845,7 +845,9 @@ namespace LabelWise.Api.Controllers
                     }
 
                     await _whatsAppSender.SendTextMessageAsync(senderPhone, "💪 A estimar as calorias gastas no seu treino...");
-                    int caloriasGastas = await EstimarGastoCaloricoComGeminiAsync(textoBruto ?? "");
+
+                    // Passamos o telefone para buscar o peso
+                    int caloriasGastas = await EstimarGastoCaloricoComGeminiAsync(textoBruto ?? "", senderPhone);
 
                     if (caloriasGastas > 0)
                     {
@@ -858,7 +860,7 @@ namespace LabelWise.Api.Controllers
                             { "UserId", senderPhone },
                             { "MealType", "Treino" },
                             { "DishName", $"🔥 {textoBruto}" },
-                            { "Calories", -caloriasGastas },
+                            { "Calories", -caloriasGastas }, // Continua a guardar negativo
                             { "ProteinG", 0.0 },
                             { "CarbsG", 0.0 },
                             { "FatG", 0.0 },
@@ -868,14 +870,25 @@ namespace LabelWise.Api.Controllers
 
                         await mealCol.InsertOneAsync(mealDoc);
 
-                        var statusAtualizado = await _nutritionService.GetDailyStatusAndSuggestionAsync(senderPhone, dataHojeBrTreino);
+                        // --- CÁLCULO MANUAL DO SALDO PARA EVITAR ZERAR ---
+                        var logs = await _nutritionRepository.ObterRefeicoesDoDiaAsync(senderPhone, dataHojeBrTreino.Date);
+                        var goal = await _nutritionRepository.ObterMetaDiariaAsync(senderPhone, dataHojeBrTreino.Date);
+
+                        int metaCalorias = goal?.TargetCalories ?? 2000;
+                        int ingerido = logs.Where(l => l.Calories > 0).Sum(l => l.Calories);
+                        int gasto = logs.Where(l => l.Calories < 0).Sum(l => Math.Abs(l.Calories));
+                        int saldoLiquido = ingerido - gasto;
+                        int restante = metaCalorias - saldoLiquido;
 
                         string respostaTreino = $"🔥 *Treino registado com sucesso!*\n\n" +
                                                 $"Gastou aproximadamente *{caloriasGastas} kcal* com essa atividade.\n" +
                                                 $"Isso gerou um bónus calórico no seu saldo de hoje! 🏃‍♂️💨\n\n" +
                                                 $"📊 *O SEU NOVO SALDO*\n" +
-                                                $"• *Calorias Consumidas (Líquidas):* {statusAtualizado.Consumed.Calories} / {statusAtualizado.Target.Calories} kcal\n" +
-                                                $"_Pode consumir mais {statusAtualizado.Remaining.Calories} kcal hoje._";
+                                                $"• *Meta Diária:* {metaCalorias} kcal\n" +
+                                                $"• *Calorias Ingeridas:* {ingerido} kcal\n" +
+                                                $"• *Gasto em Treinos:* {gasto} kcal\n" +
+                                                $"• *Saldo Líquido Atual:* {saldoLiquido} kcal\n\n" +
+                                                $"_Pode consumir mais {restante} kcal hoje._";
 
                         await _whatsAppSender.SendTextMessageAsync(senderPhone, respostaTreino);
                         await _nutritionRepository.SalvarMensagemHistoricoAsync(senderPhone, "assistant", respostaTreino);
@@ -1825,18 +1838,34 @@ Retorne APENAS o texto da mensagem pronto para envio.
             }
         }
 
-        private async Task<int> EstimarGastoCaloricoComGeminiAsync(string textoAtividade)
+        private async Task<int> EstimarGastoCaloricoComGeminiAsync(string textoAtividade, string phone)
         {
             try
             {
+                // Busca o último peso registado do utilizador para usar no cálculo
+                var weightCol = _database.GetCollection<MongoDB.Bson.BsonDocument>("WeightLogs");
+                var lastWeightDoc = await weightCol.Find(Builders<MongoDB.Bson.BsonDocument>.Filter.Eq("UserId", phone))
+                                                   .SortByDescending(w => w["LoggedAt"])
+                                                   .FirstOrDefaultAsync();
+
+                double pesoUsuario = 70.0; // Peso padrão caso não tenha registado
+                if (lastWeightDoc != null && lastWeightDoc.Contains("WeightKg") && lastWeightDoc["WeightKg"].IsNumeric)
+                {
+                    pesoUsuario = lastWeightDoc["WeightKg"].ToDouble();
+                }
+
                 var apiKey = _configuration["GeminiApiKey"] ?? _configuration["Gemini:ApiKey"];
                 var endpoint = _configuration["Gemini:Endpoint"] ?? "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions";
                 var model = _configuration["Model"] ?? "gemini-1.5-flash";
 
-                var prompt = $"O utilizador relatou a seguinte atividade física: '{textoAtividade}'. " +
-                             $"Estime o gasto calórico médio dessa atividade em kcal para um adulto médio. " +
-                             $"Responda APENAS com o número inteiro correspondente às calorias gastas. " +
-                             $"Se não for uma atividade física reconhecível, responda 0.";
+                // Prompt detalhado exigindo cálculo preciso baseado no peso
+                var prompt = $"O utilizador relatou a seguinte atividade física: '{textoAtividade}'.\n" +
+                             $"O peso atual deste utilizador é de {pesoUsuario:F1} kg.\n\n" +
+                             $"Instruções:\n" +
+                             $"1. Estime o gasto calórico com precisão matemática baseando-se no tipo de exercício, duração (se mencionada) e no peso de {pesoUsuario:F1} kg do utilizador.\n" +
+                             $"2. Se o utilizador disser 'musculação pesada', utilize o valor MET adequado e não superestime. \n" +
+                             $"3. Se o texto incluir várias atividades (ex: musculação + esteira), calcule a soma das duas separadamente e devolva apenas o valor total.\n" +
+                             $"4. Responda APENAS com o número inteiro (sem texto, sem 'kcal', apenas o número). Se não for atividade física reconhecível, responda 0.";
 
                 var client = _httpClientFactory.CreateClient();
                 var requestBody = new
