@@ -61,7 +61,10 @@ namespace LabelWise.Infrastructure.BackgroundServices
             {
                 var phone = patient["_id"].AsString;
 
-                var logs = await logsCol.Find(x => x.UserId == phone && x.LoggedAt >= dataLimite).ToListAsync();
+                // A adesão é medida pelas refeições; treinos (calorias negativas) ficam de fora
+                var logs = (await logsCol.Find(x => x.UserId == phone && x.LoggedAt >= dataLimite).ToListAsync())
+                    .Where(x => !x.IsTreino)
+                    .ToList();
                 var goal = await goalsCol.Find(x => x.UserId == phone).SortByDescending(x => x.TargetDate).FirstOrDefaultAsync();
                 int targetCalories = goal?.TargetCalories ?? 2000;
 

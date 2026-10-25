@@ -1,5 +1,6 @@
 ﻿using LabelWise.Application.Interfaces.AI;
 using LabelWise.Application.Interfaces.Persistence;
+using LabelWise.Domain.Entities.Nutrition;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using MongoDB.Driver;
@@ -57,14 +58,17 @@ namespace LabelWise.Api.Controllers
                 var goal = await _nutritionRepository.ObterMetaDiariaAsync(userId, now.Date);
                 int targetCalories = goal?.TargetCalories ?? 2000;
 
-                var mealLogsCol = _database.GetCollection<MongoDB.Bson.BsonDocument>("MealLogs");
-                var mealFilter = Builders<MongoDB.Bson.BsonDocument>.Filter.And(
-                    Builders<MongoDB.Bson.BsonDocument>.Filter.Eq("UserId", userId),
-                    Builders<MongoDB.Bson.BsonDocument>.Filter.Gte("LoggedAt", sevenDaysAgo)
-                );
-                var mealLogs = await mealLogsCol.Find(mealFilter).ToListAsync();
+                // Refeições ficam em Nutrition_MealLogs (a coleção "MealLogs" só tinha treinos antigos)
+                var sevenDaysAgoUtc = DateTime.UtcNow.AddDays(-7);
+                var mealLogsCol = _database.GetCollection<MealLog>("Nutrition_MealLogs");
+                var mealLogs = (await mealLogsCol.Find(x => x.UserId == userId && x.LoggedAt >= sevenDaysAgoUtc).ToListAsync())
+                    .Where(x => !x.IsTreino && x.Calories > 0)
+                    .ToList();
 
-                double avgCalories = mealLogs.Any() ? mealLogs.Average(m => m.Contains("Calories") ? m["Calories"].AsInt32 : 0) : targetCalories;
+                // Média diária ingerida nos dias com refeição registrada
+                double avgCalories = mealLogs.Any()
+                    ? mealLogs.GroupBy(x => x.LoggedAt.AddHours(-3).Date).Average(dia => dia.Sum(x => x.Calories))
+                    : targetCalories;
 
                 // 4. Obter água da semana
                 var waterCol = _database.GetCollection<MongoDB.Bson.BsonDocument>("WaterLogs");

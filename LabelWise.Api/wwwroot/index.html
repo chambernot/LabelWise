@@ -835,7 +835,8 @@
                         },
 
                         calculateDayTotal(logs) {
-                            return logs.reduce((sum, item) => sum + (item.calories || 0), 0);
+                            // Total consumido no dia: treinos (calorias negativas) não descontam da ingestão exibida
+                            return logs.reduce((sum, item) => item.mealType === 'Treino' ? sum : sum + (item.calories || 0), 0);
                         },
 
                         formatDateTitle(dateStr) {

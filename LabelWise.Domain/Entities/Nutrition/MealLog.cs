@@ -6,6 +6,9 @@ namespace LabelWise.Domain.Entities.Nutrition;
 
 public class MealLog
 {
+    // Treinos são gravados como MealLog com calorias negativas (bônus no saldo do dia)
+    public const string TipoTreino = "Treino";
+
     [BsonId]
     public string Id { get; set; } = Guid.NewGuid().ToString(); // ◄ Removido o BsonRepresentation(BsonType.ObjectId)
 
@@ -19,6 +22,9 @@ public class MealLog
 
     [BsonDateTimeOptions(Kind = DateTimeKind.Utc)]
     public DateTime LoggedAt { get; set; }
+
+    [BsonIgnore]
+    public bool IsTreino => MealType == TipoTreino;
 
     // Construtor vazio obrigatório para o MongoDB desserializar
     public MealLog() { }

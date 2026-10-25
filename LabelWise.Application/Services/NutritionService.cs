@@ -48,7 +48,17 @@ namespace LabelWise.Application.Services.Nutrition
             await _repository.SalvarMetaDiariaAsync(goal);
         }
 
-        public async Task<DailyStatusResponseDto> GetDailyStatusAndSuggestionAsync(string userId, DateTime date)
+        public Task<DailyStatusResponseDto> GetDailyStatusAndSuggestionAsync(string userId, DateTime date)
+        {
+            return CalcularStatusDoDiaAsync(userId, date, gerarSugestoes: true);
+        }
+
+        public Task<DailyStatusResponseDto> GetDailyStatusAsync(string userId, DateTime date)
+        {
+            return CalcularStatusDoDiaAsync(userId, date, gerarSugestoes: false);
+        }
+
+        private async Task<DailyStatusResponseDto> CalcularStatusDoDiaAsync(string userId, DateTime date, bool gerarSugestoes)
         {
             var targetDate = date.Date;
 
@@ -76,11 +86,14 @@ namespace LabelWise.Application.Services.Nutrition
             string nextMealType = date.Hour < 11 ? "Almoço" : (date.Hour < 17 ? "Lanche da Tarde" : "Jantar / Ceia");
 
             var pratosJaConsumidos = logs
+                .Where(x => !x.IsTreino)
                 .Select(x => x.DishName)
                 .Where(dish => !string.IsNullOrWhiteSpace(dish))
                 .ToList();
 
-            var suggestions = await _aiAgent.GenerateProactiveSuggestionsAsync(remaining, nextMealType, pratosJaConsumidos);
+            var suggestions = gerarSugestoes
+                ? await _aiAgent.GenerateProactiveSuggestionsAsync(remaining, nextMealType, pratosJaConsumidos)
+                : new List<string>();
 
             int streakDays = await _repository.CalcularOfensivaStreakAsync(userId);
 
@@ -134,7 +147,7 @@ namespace LabelWise.Application.Services.Nutrition
                                       $"- Metas de Macros: Proteína {targetProt}g (Consumido: {consumedProt:F0}g), " +
                                       $"Carboidratos {targetCarb}g (Consumido: {consumedCarb:F0}g), " +
                                       $"Gorduras {targetFat}g (Consumido: {consumedFat:F0}g).\n" +
-                                      $"- Refeições já registradas hoje: {logs.Count} refeições.";
+                                      $"- Refeições já registradas hoje: {logs.Count(x => !x.IsTreino)} refeições.";
 
             var textoOriginal = request.TextInput ?? string.Empty;
             var textoEnriquecido = textoOriginal + contextoPaciente;

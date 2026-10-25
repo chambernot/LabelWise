@@ -489,8 +489,10 @@ Retorne APENAS o texto do cardápio pronto para ser colado na prescrição.
                 .SortByDescending(x => x.LoggedAt)
                 .ToListAsync();
 
-            int totalRefeicoes = logs.Count;
-            int mediaCalorias = totalRefeicoes > 0 ? (int)logs.Average(x => x.Calories) : 0;
+            // Treinos aparecem na tabela, mas não entram na contagem nem na média de refeições
+            var refeicoes = logs.Where(x => !x.IsTreino).ToList();
+            int totalRefeicoes = refeicoes.Count;
+            int mediaCalorias = totalRefeicoes > 0 ? (int)refeicoes.Average(x => x.Calories) : 0;
 
             var htmlReport = $@"
         <!DOCTYPE html>

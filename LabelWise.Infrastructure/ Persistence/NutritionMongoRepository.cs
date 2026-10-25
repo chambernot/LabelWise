@@ -134,37 +134,50 @@ namespace LabelWise.Infrastructure.Repositories
             }
         }
 
+        // Um dia conta como "no foco" quando tem refeição registrada e o saldo líquido
+        // (ingerido - gasto em treinos) fica entre 70% e 110% da meta calórica do dia.
+        // O piso de 70% é o mesmo usado pelo PatientAdherenceBackgroundService.
+        private const double FaixaMinimaDoPlano = 0.70;
+        private const double FaixaMaximaDoPlano = 1.10;
+        private const int JanelaOfensivaDias = 60;
+
         public async Task<int> CalcularOfensivaStreakAsync(string userId)
         {
             try
             {
-                var thirtyDaysAgoUtc = DateTime.UtcNow.AddDays(-30);
+                var inicioJanelaUtc = DateTime.UtcNow.AddDays(-JanelaOfensivaDias);
                 var logs = await _mealLogs
-                    .Find(x => x.UserId == userId && x.LoggedAt >= thirtyDaysAgoUtc)
+                    .Find(x => x.UserId == userId && x.LoggedAt >= inicioJanelaUtc)
                     .ToListAsync();
 
                 if (!logs.Any()) return 0;
 
-                var loggedDays = logs
-                    .Select(x => x.LoggedAt.AddHours(-3).Date)
-                    .Distinct()
-                    .OrderByDescending(d => d)
-                    .ToList();
+                var metas = await _dailyGoals
+                    .Find(x => x.UserId == userId)
+                    .SortByDescending(x => x.TargetDate)
+                    .ToListAsync();
+
+                var diasNoPlano = logs
+                    .GroupBy(x => x.LoggedAt.AddHours(-3).Date)
+                    .Where(dia => DiaDentroDoPlano(dia, ObterMetaCaloricaDoDia(metas, dia.Key)))
+                    .Select(dia => dia.Key)
+                    .ToHashSet();
 
                 var todayBrazil = DateTime.UtcNow.AddHours(-3).Date;
                 int streak = 0;
                 var checkDate = todayBrazil;
 
-                if (!loggedDays.Contains(checkDate))
+                // O dia de hoje ainda está em andamento: se ainda não fechou no plano, a sequência conta a partir de ontem
+                if (!diasNoPlano.Contains(checkDate))
                 {
                     checkDate = todayBrazil.AddDays(-1);
-                    if (!loggedDays.Contains(checkDate))
+                    if (!diasNoPlano.Contains(checkDate))
                     {
                         return 0;
                     }
                 }
 
-                while (loggedDays.Contains(checkDate))
+                while (diasNoPlano.Contains(checkDate))
                 {
                     streak++;
                     checkDate = checkDate.AddDays(-1);
@@ -176,6 +189,27 @@ namespace LabelWise.Infrastructure.Repositories
             {
                 return 0;
             }
+        }
+
+        private static bool DiaDentroDoPlano(IEnumerable<MealLog> logsDoDia, int metaCalorica)
+        {
+            var refeicoes = logsDoDia.Where(x => !x.IsTreino && x.Calories > 0).ToList();
+            if (!refeicoes.Any() || metaCalorica <= 0) return false;
+
+            int ingerido = refeicoes.Sum(x => x.Calories);
+            int gastoTreinos = logsDoDia.Where(x => x.Calories < 0).Sum(x => Math.Abs(x.Calories));
+            int saldoLiquido = ingerido - gastoTreinos;
+
+            return saldoLiquido >= metaCalorica * FaixaMinimaDoPlano &&
+                   saldoLiquido <= metaCalorica * FaixaMaximaDoPlano;
+        }
+
+        // Mesma regra do ObterMetaDiariaAsync: meta exata do dia, senão a mais recente
+        private static int ObterMetaCaloricaDoDia(List<DailyNutritionGoal> metasOrdenadasDesc, DateTime dia)
+        {
+            var meta = metasOrdenadasDesc.FirstOrDefault(x => x.TargetDate.Date == dia.Date)
+                       ?? metasOrdenadasDesc.FirstOrDefault();
+            return meta?.TargetCalories ?? 2000;
         }
 
         public async Task InserirMealLogAsync(MealLog mealLog)

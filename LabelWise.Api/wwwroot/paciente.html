@@ -149,24 +149,24 @@
                 },
                 async init() {
                     const urlParams = new URLSearchParams(window.location.search);
-                    const phone = urlParams.get('phone');
+                    const token = urlParams.get('token');
 
-                    if (!phone) {
+                    if (!token) {
                         this.loading = false;
                         this.error = true;
-                        this.errorMessage = 'Link inválido. Informe o número de telefone correto.';
+                        this.errorMessage = 'Este link expirou ou não é mais válido. Envie "minha dieta" no WhatsApp para receber um novo link seguro.';
                         return;
                     }
 
                     try {
-                        const response = await fetch(`/api/patient/dashboard/${phone}`);
+                        const response = await fetch(`/api/patient/dashboard?token=${encodeURIComponent(token)}`);
                         const result = await response.json();
 
                         if (response.ok && result.success) {
                             this.data = result.data;
                         } else {
                             this.error = true;
-                            this.errorMessage = result.message || 'Erro ao carregar os dados.';
+                            this.errorMessage = (result.message || 'Erro ao carregar os dados.').replace(/\*/g, '"');
                         }
                     } catch (err) {
                         this.error = true;

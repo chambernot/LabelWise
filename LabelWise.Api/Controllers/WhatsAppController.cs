@@ -16,6 +16,7 @@ using System.Linq;
 using System.Net.Http;
 using System.Net.Http.Headers;
 using System.Net.Http.Json;
+using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
@@ -139,8 +140,42 @@ namespace LabelWise.Api.Controllers
                     return Ok();
                 }
 
+                // Classificação do usuário antes de processar mídia, para não gastar IA com quem já está bloqueado
+                var patientsCollectionCheck = _database.GetCollection<MongoDB.Bson.BsonDocument>("Nutrition_Patients");
+                var patientDocCheck = await patientsCollectionCheck.Find(Builders<MongoDB.Bson.BsonDocument>.Filter.Eq("_id", senderPhone)).FirstOrDefaultAsync();
+
+                bool isB2bPatient = patientDocCheck != null &&
+                                    patientDocCheck.Contains("ProfessionalId") &&
+                                    patientDocCheck["ProfessionalId"].AsString != "b2c_autonomous_user";
+
+                var trialCollection = _database.GetCollection<MongoDB.Bson.BsonDocument>("B2C_Trial_Users");
+                var filterTrial = Builders<MongoDB.Bson.BsonDocument>.Filter.Eq("_id", senderPhone);
+                var userDoc = await trialCollection.Find(filterTrial).FirstOrDefaultAsync();
+                bool isPremium = userDoc != null &&
+                               userDoc.TryGetValue("Premium", out var premiumValue) &&
+                               premiumValue.IsBoolean && premiumValue.AsBoolean;
+                bool isTrialLimitedUser = !isB2bPatient && !isPremium;
+
                 string? textoBruto = null;
                 string? imagemBase64 = null;
+
+                bool eMidia = (messageType == "audio" && messagingEvent?.Audio?.Id != null) ||
+                              (messageType == "image" && messagingEvent?.Image?.Id != null);
+
+                if (eMidia && isTrialLimitedUser && userDoc != null)
+                {
+                    if (TrialExpirado(userDoc, DateTime.UtcNow))
+                    {
+                        await EnviarMensagemTrialExpiradoAsync(senderPhone);
+                        return Ok();
+                    }
+
+                    if (LimiteDiarioTrialAtingido(userDoc, DateTime.UtcNow))
+                    {
+                        await EnviarMensagemLimiteDiarioAsync(senderPhone);
+                        return Ok();
+                    }
+                }
 
                 if (messageType == "text")
                 {
@@ -230,29 +265,10 @@ namespace LabelWise.Api.Controllers
                 if (textoLimpoCmd == "assinar" || textoLimpoCmd == "pagar" || textoLimpoCmd == "plano" || textoLimpoCmd == "assinatura")
                 {
                     await _whatsAppSender.SendTextMessageAsync(senderPhone, "⏳ Gerando seu link seguro de pagamento na InfinitePay...");
-                    string? paymentUrlOriginal = await GerarLinkPagamentoInfinitePayAsync(senderPhone, "Cliente Nutrição Fácil", 29.90m);
+                    string? trackingLink = await CriarLinkPagamentoRastreadoAsync(senderPhone, "Cliente Nutrição Fácil");
 
-                    if (!string.IsNullOrEmpty(paymentUrlOriginal))
+                    if (!string.IsNullOrEmpty(trackingLink))
                     {
-                        var trackingCol = _database.GetCollection<MongoDB.Bson.BsonDocument>("PaymentTracking");
-                        var trackingDoc = new MongoDB.Bson.BsonDocument
-                        {
-                            { "_id", senderPhone },
-                            { "InfinitePayUrl", paymentUrlOriginal },
-                            { "SentAt", DateTime.UtcNow },
-                            { "ClickedAt", MongoDB.Bson.BsonNull.Value },
-                            { "Status", "Sent" }
-                        };
-
-                        await trackingCol.ReplaceOneAsync(
-                            Builders<MongoDB.Bson.BsonDocument>.Filter.Eq("_id", senderPhone),
-                            trackingDoc,
-                            new ReplaceOptions { IsUpsert = true }
-                        );
-
-                        var baseUrl = $"{Request.Scheme}://{Request.Host}";
-                        var trackingLink = $"{baseUrl}/api/whatsapp/ir-para-pagamento?phone={senderPhone}";
-
                         string msgAssinatura = "💳 *Assinatura Mensal - Nutrição Fácil*\n\n" +
                                                "Para continuar usando o assistente de nutrição sem limites, clique no link seguro abaixo (R$ 29,90):\n\n" +
                                                $"👉 {trackingLink}\n\n" +
@@ -281,21 +297,6 @@ namespace LabelWise.Api.Controllers
                     await _nutritionRepository.SalvarMensagemHistoricoAsync(senderPhone, "assistant", msgAguarde);
                     return Ok();
                 }
-
-                var patientsCollectionCheck = _database.GetCollection<MongoDB.Bson.BsonDocument>("Nutrition_Patients");
-                var patientDocCheck = await patientsCollectionCheck.Find(Builders<MongoDB.Bson.BsonDocument>.Filter.Eq("_id", senderPhone)).FirstOrDefaultAsync();
-
-                bool isB2bPatient = patientDocCheck != null &&
-                                    patientDocCheck.Contains("ProfessionalId") &&
-                                    patientDocCheck["ProfessionalId"].AsString != "b2c_autonomous_user";
-
-                var trialCollection = _database.GetCollection<MongoDB.Bson.BsonDocument>("B2C_Trial_Users");
-                var filterTrial = Builders<MongoDB.Bson.BsonDocument>.Filter.Eq("_id", senderPhone);
-                var userDoc = await trialCollection.Find(filterTrial).FirstOrDefaultAsync();
-                bool isPremium = userDoc != null &&
-                               userDoc.TryGetValue("Premium", out var premiumValue) &&
-                               premiumValue.IsBoolean && premiumValue.AsBoolean;
-                bool isTrialLimitedUser = !isB2bPatient && !isPremium;
 
                 string? protocoloClinico = null;
                 if (patientDocCheck != null && patientDocCheck.Contains("ClinicalProtocol"))
@@ -338,40 +339,10 @@ namespace LabelWise.Api.Controllers
                         return Ok();
                     }
 
-                    if (userDoc.TryGetValue("TrialStartDate", out var trialStartValue) && trialStartValue.IsBsonDateTime)
+                    if (TrialExpirado(userDoc, now))
                     {
-                        var trialStartDate = trialStartValue.ToUniversalTime();
-                        if (now >= trialStartDate.AddDays(TrialDurationDays))
-                        {
-                            _logger.LogInformation("[WhatsApp B2C] Trial expirado após {TrialDays} dias.", TrialDurationDays);
-
-                            string? paymentUrlOriginal = await GerarLinkPagamentoInfinitePayAsync(senderPhone, "Cliente Trial", 29.90m);
-                            string? trackingLink = null;
-
-                            if (!string.IsNullOrEmpty(paymentUrlOriginal))
-                            {
-                                var trackingCol = _database.GetCollection<MongoDB.Bson.BsonDocument>("PaymentTracking");
-                                var trackingDoc = new MongoDB.Bson.BsonDocument
-                                {
-                                    { "_id", senderPhone },
-                                    { "InfinitePayUrl", paymentUrlOriginal },
-                                    { "SentAt", DateTime.UtcNow },
-                                    { "ClickedAt", MongoDB.Bson.BsonNull.Value },
-                                    { "Status", "Sent" }
-                                };
-                                await trackingCol.ReplaceOneAsync(Builders<MongoDB.Bson.BsonDocument>.Filter.Eq("_id", senderPhone), trackingDoc, new ReplaceOptions { IsUpsert = true });
-
-                                var baseUrl = $"{Request.Scheme}://{Request.Host}";
-                                trackingLink = $"{baseUrl}/api/whatsapp/ir-para-pagamento?phone={senderPhone}";
-                            }
-
-                            string msgExpirado = "⏳ *Seu período de teste de 15 dias terminou.*\n\n" +
-                                                 "Se quiser continuar, veja os detalhes da assinatura mensal abaixo:\n\n" +
-                                                 (!string.IsNullOrEmpty(trackingLink) ? $"👉 {trackingLink}\n\n" : "") +
-                                                 "A liberação do acesso depende da confirmação e ativação da assinatura no sistema.";
-                            await _whatsAppSender.SendTextMessageAsync(senderPhone, msgExpirado);
-                            return Ok();
-                        }
+                        await EnviarMensagemTrialExpiradoAsync(senderPhone);
+                        return Ok();
                     }
 
                     if (textoLimpoCmd == "meta" || textoLimpoCmd == "perfil" || textoLimpoCmd == "configurar" || textoLimpoCmd == "ajustar")
@@ -687,7 +658,7 @@ namespace LabelWise.Api.Controllers
                     if (refeicaoParaExcluir != null)
                     {
                         await _nutritionRepository.ExcluirMealLogAsync(refeicaoParaExcluir.Id);
-                        var statusAtualizado = await _nutritionService.GetDailyStatusAndSuggestionAsync(senderPhone, dataHojeBr);
+                        var statusAtualizado = await _nutritionService.GetDailyStatusAsync(senderPhone, dataHojeBr);
 
                         string respostaRemocao = $"✅ *Refeição removida com sucesso!* \n" +
                                                  $"🗑️ _{refeicaoParaExcluir.DishName ?? refeicaoParaExcluir.MealType}_\n\n" +
@@ -708,12 +679,13 @@ namespace LabelWise.Api.Controllers
                 if (textoLimpoCmd == "minha dieta" || textoLimpoCmd == "cardapio" || textoLimpoCmd == "menu" || textoLimpoCmd == "dieta")
                 {
                     var baseUrl = $"{Request.Scheme}://{Request.Host}";
-                    var magicLink = $"{baseUrl}/paciente.html?phone={senderPhone}";
+                    var tokenAcesso = await PatientAccessTokens.CriarAsync(_database, senderPhone);
+                    var magicLink = $"{baseUrl}/paciente.html?token={tokenAcesso}";
 
                     var respostaLink = "🥗 *Seu Plano Alimentar Interativo está pronto!*\n\n" +
                                        "Toque no link abaixo para ver seu progresso de calorias de hoje, os macronutrientes e seu cardápio completo:\n\n" +
                                        $"👉 {magicLink}\n\n" +
-                                       "_Dica: Salve esta página nos favoritos do seu celular para consultar sempre que precisar!_ ✨";
+                                       $"_🔒 Este link é pessoal e vale por {PatientAccessTokens.ValidadeDias} dias. Não compartilhe. Quando expirar, é só digitar *minha dieta* de novo._ ✨";
 
                     await _whatsAppSender.SendTextMessageAsync(senderPhone, respostaLink);
                     return Ok();
@@ -762,7 +734,6 @@ namespace LabelWise.Api.Controllers
                         }
                     }
 
-                    var dataHojeBrAgua = DateTime.UtcNow.AddHours(-3).Date;
                     var waterCol = _database.GetCollection<MongoDB.Bson.BsonDocument>("WaterLogs");
 
                     var waterDoc = new MongoDB.Bson.BsonDocument
@@ -774,24 +745,8 @@ namespace LabelWise.Api.Controllers
                     };
                     await waterCol.InsertOneAsync(waterDoc);
 
-                    var filterWater = Builders<MongoDB.Bson.BsonDocument>.Filter.And(
-                        Builders<MongoDB.Bson.BsonDocument>.Filter.Eq("UserId", senderPhone),
-                        Builders<MongoDB.Bson.BsonDocument>.Filter.Gte("LoggedAt", dataHojeBrAgua)
-                    );
-                    var registrosAgua = await waterCol.Find(filterWater).ToListAsync();
-                    int totalAguaHoje = registrosAgua.Sum(w => w["AmountMl"].AsInt32);
-
-                    int metaAguaDiaria = 2500;
-                    var goalsCollection = _database.GetCollection<MongoDB.Bson.BsonDocument>("DailyGoals");
-                    var goalFilterWater = Builders<MongoDB.Bson.BsonDocument>.Filter.And(
-                        Builders<MongoDB.Bson.BsonDocument>.Filter.Eq("UserId", senderPhone),
-                        Builders<MongoDB.Bson.BsonDocument>.Filter.Eq("TargetDate", dataHojeBrAgua)
-                    );
-                    var goalDocWater = await goalsCollection.Find(goalFilterWater).FirstOrDefaultAsync();
-                    if (goalDocWater != null && goalDocWater.Contains("TargetWaterMl"))
-                    {
-                        metaAguaDiaria = goalDocWater["TargetWaterMl"].AsInt32;
-                    }
+                    int totalAguaHoje = await ObterAguaDoDiaAsync(senderPhone, DateTime.UtcNow);
+                    int metaAguaDiaria = await ObterMetaAguaAsync(senderPhone, DateTime.UtcNow);
 
                     string respostaAgua = $"💧 {totalAguaHoje} / {metaAguaDiaria} ml de água registrados com sucesso! 🚰";
                     await _whatsAppSender.SendTextMessageAsync(senderPhone, respostaAgua);
@@ -852,23 +807,20 @@ namespace LabelWise.Api.Controllers
                     if (caloriasGastas > 0)
                     {
                         var dataHojeBrTreino = DateTime.UtcNow.AddHours(-3);
-                        var mealCol = _database.GetCollection<MongoDB.Bson.BsonDocument>("MealLogs");
 
-                        var mealDoc = new MongoDB.Bson.BsonDocument
-                        {
-                            { "_id", Guid.NewGuid().ToString() },
-                            { "UserId", senderPhone },
-                            { "MealType", "Treino" },
-                            { "DishName", $"🔥 {textoBruto}" },
-                            { "Calories", -caloriasGastas }, // Continua a guardar negativo
-                            { "ProteinG", 0.0 },
-                            { "CarbsG", 0.0 },
-                            { "FatG", 0.0 },
-                            { "LoggedAt", DateTime.UtcNow },
-                            { "Items", new MongoDB.Bson.BsonArray() }
-                        };
+                        // Gravado na mesma coleção das refeições (Nutrition_MealLogs), com calorias negativas,
+                        // para entrar no saldo do dia, no "remover", no painel e no portal
+                        var treinoLog = new MealLog(
+                            userId: senderPhone,
+                            mealType: MealLog.TipoTreino,
+                            dishName: $"🔥 {textoBruto}",
+                            calories: -caloriasGastas,
+                            proteinG: 0m,
+                            carbsG: 0m,
+                            fatG: 0m,
+                            loggedAt: DateTime.UtcNow);
 
-                        await mealCol.InsertOneAsync(mealDoc);
+                        await _nutritionRepository.InserirMealLogAsync(treinoLog);
 
                         // --- CÁLCULO MANUAL DO SALDO PARA EVITAR ZERAR ---
                         var logs = await _nutritionRepository.ObterRefeicoesDoDiaAsync(senderPhone, dataHojeBrTreino.Date);
@@ -906,6 +858,7 @@ namespace LabelWise.Api.Controllers
                 var contextoPendente = await _nutritionRepository.ObterClarificacaoPendenteAsync(senderPhone);
                 string textoFinalParaIa = textoBruto ?? "";
                 string? imagemFinalParaIa = imagemBase64;
+                MealLog? refeicaoParaCorrigir = null;
 
                 if (contextoPendente != null)
                 {
@@ -915,7 +868,6 @@ namespace LabelWise.Api.Controllers
                                        $"Instrução: Processe e registre definitivamente esta refeição considerando a resposta do usuário.";
 
                     imagemFinalParaIa ??= contextoPendente.OriginalBase64Image;
-                    await _nutritionRepository.RemoverClarificacaoPendenteAsync(senderPhone);
                 }
                 else
                 {
@@ -927,24 +879,22 @@ namespace LabelWise.Api.Controllers
                         var dataHojeBrCorrecao = DateTime.UtcNow.AddHours(-3);
                         var logsHoje = await _nutritionRepository.ObterRefeicoesDoDiaAsync(senderPhone, dataHojeBrCorrecao);
 
-                        var ultimaRefeicao = logsHoje?.OrderByDescending(x => x.LoggedAt).FirstOrDefault();
+                        var ultimaRefeicao = logsHoje?.Where(x => !x.IsTreino).OrderByDescending(x => x.LoggedAt).FirstOrDefault();
 
                         if (ultimaRefeicao != null)
                         {
-                            await _whatsAppSender.SendTextMessageAsync(senderPhone, "🛠️ Corrigindo sua última refeição...");
+                            refeicaoParaCorrigir = ultimaRefeicao;
 
                             textoFinalParaIa = $"[MODO CORREÇÃO] O usuário quer ajustar sua última refeição. " +
                                                $"Refeição original salva: '{ultimaRefeicao.DishName ?? ultimaRefeicao.MealType}' com {ultimaRefeicao.Calories} kcal. " +
                                                $"Novo comando do usuário: '{textoBruto}'. " +
                                                $"Instrução: Refaça os cálculos adicionando ou removendo o que o usuário pediu e registre como uma refeição completa corrigida.";
-
-                            await _nutritionRepository.ExcluirMealLogAsync(ultimaRefeicao.Id);
                         }
                     }
                 }
 
                 // 🛡️ GUARDRAIL: FILTRO ANTI-GASTOS DE IA E MENSAGENS GENÉRICAS
-                bool eIntencaoRefeicao = EhIntencaoRefeicaoOuComida(textoLimpoCmd, textoBruto ?? "", !string.IsNullOrWhiteSpace(imagemBase64), contextoPendente != null);
+                bool eIntencaoRefeicao = EhIntencaoRefeicaoOuComida(textoLimpoCmd, textoBruto ?? "", !string.IsNullOrWhiteSpace(imagemBase64), contextoPendente != null || refeicaoParaCorrigir != null);
 
                 if (!eIntencaoRefeicao)
                 {
@@ -958,6 +908,18 @@ namespace LabelWise.Api.Controllers
                 if (isTrialLimitedUser && !await ReserveTrialInteractionOrNotifyAsync(senderPhone, trialCollection))
                 {
                     return Ok();
+                }
+
+                // Só altera dados depois de garantir que a IA vai rodar (antes, o limite do trial podia apagar a refeição sem refazê-la)
+                if (contextoPendente != null)
+                {
+                    await _nutritionRepository.RemoverClarificacaoPendenteAsync(senderPhone);
+                }
+
+                if (refeicaoParaCorrigir != null)
+                {
+                    await _whatsAppSender.SendTextMessageAsync(senderPhone, "🛠️ Corrigindo sua última refeição...");
+                    await _nutritionRepository.ExcluirMealLogAsync(refeicaoParaCorrigir.Id);
                 }
 
                 await _nutritionRepository.SalvarMensagemHistoricoAsync(senderPhone, "user", textoFinalParaIa);
@@ -1036,23 +998,22 @@ namespace LabelWise.Api.Controllers
 
         private async Task<string> ObterResumoFormatadoWhatsappAsync(string phone)
         {
-            var hojeBr = DateTime.UtcNow.AddHours(-3);
-            var inicioMes = new DateTime(hojeBr.Year, hojeBr.Month, 1);
+            var agoraUtc = DateTime.UtcNow;
+            var hojeBr = agoraUtc.AddHours(-3);
+            // 1º dia do mês às 00:00 de Brasília, expresso em UTC
+            var inicioMesUtc = DateTime.SpecifyKind(new DateTime(hojeBr.Year, hojeBr.Month, 1).AddHours(3), DateTimeKind.Utc);
 
-            var statusHoje = await _nutritionService.GetDailyStatusAndSuggestionAsync(phone, hojeBr);
+            // Painel não usa as sugestões da IA: status calculado sem chamada de IA
+            var statusHoje = await _nutritionService.GetDailyStatusAsync(phone, hojeBr);
 
             int totalAguaHoje = 0;
             try
             {
-                var waterCol = _database.GetCollection<MongoDB.Bson.BsonDocument>("WaterLogs");
-                var filterWater = Builders<MongoDB.Bson.BsonDocument>.Filter.And(
-                    Builders<MongoDB.Bson.BsonDocument>.Filter.Eq("UserId", phone),
-                    Builders<MongoDB.Bson.BsonDocument>.Filter.Gte("LoggedAt", hojeBr.Date)
-                );
-                var registrosAgua = await waterCol.Find(filterWater).ToListAsync();
-                totalAguaHoje = registrosAgua.Sum(w => w.Contains("AmountMl") && w["AmountMl"].IsNumeric ? w["AmountMl"].ToInt32() : 0);
+                totalAguaHoje = await ObterAguaDoDiaAsync(phone, agoraUtc);
             }
             catch { }
+
+            int metaAgua = await ObterMetaAguaAsync(phone, agoraUtc);
 
             int diasComRegistro = 0;
             int totalCaloriasIngeridasMes = 0;
@@ -1061,38 +1022,44 @@ namespace LabelWise.Api.Controllers
 
             try
             {
-                var mealCol = _database.GetCollection<MongoDB.Bson.BsonDocument>("MealLogs");
                 var filterMes = Builders<MongoDB.Bson.BsonDocument>.Filter.And(
                     Builders<MongoDB.Bson.BsonDocument>.Filter.Eq("UserId", phone),
-                    Builders<MongoDB.Bson.BsonDocument>.Filter.Gte("LoggedAt", inicioMes)
+                    Builders<MongoDB.Bson.BsonDocument>.Filter.Gte("LoggedAt", inicioMesUtc)
                 );
 
-                var logsDoMes = await mealCol.Find(filterMes).ToListAsync();
+                // Refeições e treinos ficam em Nutrition_MealLogs. A coleção antiga "MealLogs" só tem treinos
+                // gravados antes da correção; continua sendo lida para não perder o histórico do mês.
+                var logsDoMes = await _database.GetCollection<MongoDB.Bson.BsonDocument>("Nutrition_MealLogs").Find(filterMes).ToListAsync();
+                var treinosLegados = await _database.GetCollection<MongoDB.Bson.BsonDocument>("MealLogs").Find(filterMes).ToListAsync();
+                logsDoMes.AddRange(treinosLegados);
 
-                if (logsDoMes != null && logsDoMes.Any())
+                var diasComRefeicao = new HashSet<DateTime>();
+
+                foreach (var log in logsDoMes)
                 {
-                    diasComRegistro = logsDoMes
-                        .Where(x => x.Contains("LoggedAt") && x["LoggedAt"].IsBsonDateTime)
-                        .Select(x => x["LoggedAt"].ToUniversalTime().AddHours(-3).Date)
-                        .Distinct()
-                        .Count();
+                    // IsNumeric + ToInt32() abrange Int32, Int64 ou Double do MongoDB
+                    if (!log.Contains("Calories") || !log["Calories"].IsNumeric) continue;
 
-                    foreach (var log in logsDoMes)
+                    int cal = log["Calories"].ToInt32();
+                    bool eTreino = cal < 0 || (log.Contains("MealType") && log["MealType"].IsString && log["MealType"].AsString == MealLog.TipoTreino);
+
+                    if (eTreino)
                     {
-                        // Correção: Usar IsNumeric e ToInt32() para abranger Int32, Int64 ou Double do MongoDB
-                        if (log.Contains("Calories") && log["Calories"].IsNumeric)
+                        totalCaloriasGastasTreinoMes += Math.Abs(cal);
+                    }
+                    else if (cal > 0)
+                    {
+                        totalCaloriasIngeridasMes += cal;
+                        if (log.Contains("LoggedAt") && log["LoggedAt"].IsBsonDateTime)
                         {
-                            int cal = log["Calories"].ToInt32();
-
-                            if (cal > 0)
-                                totalCaloriasIngeridasMes += cal;
-                            else if (cal < 0)
-                                totalCaloriasGastasTreinoMes += Math.Abs(cal);
+                            diasComRefeicao.Add(log["LoggedAt"].ToUniversalTime().AddHours(-3).Date);
                         }
                     }
-
-                    mediaCaloriasDiaria = diasComRegistro > 0 ? totalCaloriasIngeridasMes / diasComRegistro : 0;
                 }
+
+                // Dia ativo = dia com pelo menos uma refeição registrada (treino sozinho não conta)
+                diasComRegistro = diasComRefeicao.Count;
+                mediaCaloriasDiaria = diasComRegistro > 0 ? totalCaloriasIngeridasMes / diasComRegistro : 0;
             }
             catch (Exception ex)
             {
@@ -1115,7 +1082,6 @@ namespace LabelWise.Api.Controllers
             sb.AppendLine($"🥑 *Gorduras:* {statusHoje.Consumed.FatG:F0}g / {statusHoje.Target.FatG:F0}g");
             sb.AppendLine(GerarBarraProgresso(statusHoje.Consumed.FatG, statusHoje.Target.FatG));
 
-            int metaAgua = 2500;
             sb.AppendLine($"💧 *Água:* {totalAguaHoje} / {metaAgua} ml");
             sb.AppendLine(GerarBarraProgresso(totalAguaHoje, metaAgua));
 
@@ -1136,11 +1102,11 @@ namespace LabelWise.Api.Controllers
             sb.AppendLine($"🔥 *Média Diária Ingerida:* {mediaCaloriasDiaria:N0} kcal/dia");
             sb.AppendLine($"🍽️ *Total Ingerido:* {totalCaloriasIngeridasMes:N0} kcal");
 
-            // Lógica para mostrar quanto consumiu a mais ou a menos da meta acumulada
+            // Balanço do mês: saldo líquido (ingerido - gasto em treinos) contra a meta acumulada dos dias ativos
             if (diasComRegistro > 0)
             {
                 int metaAcumulada = diasComRegistro * statusHoje.Target.Calories;
-                int diferenca = totalCaloriasIngeridasMes - metaAcumulada;
+                int diferenca = (totalCaloriasIngeridasMes - totalCaloriasGastasTreinoMes) - metaAcumulada;
 
                 if (diferenca > 0)
                     sb.AppendLine($"📈 *Balanço:* Ultrapassou a meta em {diferenca:N0} kcal");
@@ -1294,7 +1260,7 @@ namespace LabelWise.Api.Controllers
                         int consumedCal = logs.Sum(x => x.Calories);
                         decimal consumedProt = logs.Sum(x => x.ProteinG);
 
-                        var pratos = logs.Select(x => x.DishName).Where(d => !string.IsNullOrWhiteSpace(d)).ToList();
+                        var pratos = logs.Where(x => !x.IsTreino).Select(x => x.DishName).Where(d => !string.IsNullOrWhiteSpace(d)).ToList();
 
                         string feedbackMsg = await GerarFeedbackDiarioComGeminiAsync(
                             goal?.PrescribedMealPlan ?? "Manter a saúde",
@@ -1494,26 +1460,14 @@ namespace LabelWise.Api.Controllers
                 trialCollection, phone, DateTime.UtcNow);
             if (reserved) return true;
 
+            await EnviarMensagemLimiteDiarioAsync(phone);
+            return false;
+        }
+
+        private async Task EnviarMensagemLimiteDiarioAsync(string phone)
+        {
             _logger.LogInformation("[WhatsApp B2C] Limite diário do trial atingido para interação de IA.");
-            string? paymentUrlOriginal = await GerarLinkPagamentoInfinitePayAsync(phone, "Cliente Limite", 29.90m);
-            string? trackingLink = null;
-
-            if (!string.IsNullOrEmpty(paymentUrlOriginal))
-            {
-                var trackingCol = _database.GetCollection<MongoDB.Bson.BsonDocument>("PaymentTracking");
-                var trackingDoc = new MongoDB.Bson.BsonDocument
-                {
-                    { "_id", phone },
-                    { "InfinitePayUrl", paymentUrlOriginal },
-                    { "SentAt", DateTime.UtcNow },
-                    { "ClickedAt", MongoDB.Bson.BsonNull.Value },
-                    { "Status", "Sent" }
-                };
-                await trackingCol.ReplaceOneAsync(Builders<MongoDB.Bson.BsonDocument>.Filter.Eq("_id", phone), trackingDoc, new ReplaceOptions { IsUpsert = true });
-
-                var baseUrl = $"{Request.Scheme}://{Request.Host}";
-                trackingLink = $"{baseUrl}/api/whatsapp/ir-para-pagamento?phone={phone}";
-            }
+            string? trackingLink = await CriarLinkPagamentoRastreadoAsync(phone, "Cliente Limite");
 
             string message = "⚠️ *Você chegou ao limite de 4 análises de IA do teste de hoje.*\n\n" +
                              "Mensagens simples e registros básicos não contam para esse limite. Amanhã você poderá continuar.\n\n" +
@@ -1521,12 +1475,81 @@ namespace LabelWise.Api.Controllers
                                  ? $"Se quiser conhecer a assinatura mensal: 👉 {trackingLink}"
                                  : "Se quiser saber sobre a assinatura mensal, responda *assinar*.");
             await _whatsAppSender.SendTextMessageAsync(phone, message);
-            return false;
+        }
+
+        private async Task EnviarMensagemTrialExpiradoAsync(string phone)
+        {
+            _logger.LogInformation("[WhatsApp B2C] Trial expirado após {TrialDays} dias.", TrialDurationDays);
+            string? trackingLink = await CriarLinkPagamentoRastreadoAsync(phone, "Cliente Trial");
+
+            string msgExpirado = "⏳ *Seu período de teste de 15 dias terminou.*\n\n" +
+                                 "Se quiser continuar, veja os detalhes da assinatura mensal abaixo:\n\n" +
+                                 (!string.IsNullOrEmpty(trackingLink) ? $"👉 {trackingLink}\n\n" : "") +
+                                 "A liberação do acesso depende da confirmação e ativação da assinatura no sistema.";
+            await _whatsAppSender.SendTextMessageAsync(phone, msgExpirado);
+        }
+
+        private static bool TrialExpirado(MongoDB.Bson.BsonDocument userDoc, DateTime utcNow)
+        {
+            return userDoc.TryGetValue("TrialStartDate", out var trialStartValue) &&
+                   trialStartValue.IsBsonDateTime &&
+                   utcNow >= trialStartValue.ToUniversalTime().AddDays(TrialDurationDays);
+        }
+
+        // Leitura sem reservar: mesma regra do TryReserveDailyTrialInteractionAsync
+        private static bool LimiteDiarioTrialAtingido(MongoDB.Bson.BsonDocument userDoc, DateTime utcNow)
+        {
+            var today = GetBrazilDate(utcNow);
+
+            bool isSameDay = userDoc.TryGetValue("LastInteractionDate", out var dateValue) &&
+                             dateValue.IsBsonDateTime &&
+                             dateValue.ToUniversalTime().Date == today.Date;
+            if (!isSameDay) return false;
+
+            int count = userDoc.TryGetValue("DailyMessageCount", out var countValue) && countValue.IsNumeric
+                ? countValue.ToInt32()
+                : 0;
+            return count >= DailyTrialInteractionLimit;
         }
 
         private static DateTime GetBrazilDate(DateTime utcNow)
         {
             return DateTime.SpecifyKind(utcNow.AddHours(-3).Date, DateTimeKind.Utc);
+        }
+
+        // 00:00 de Brasília do dia corrente, expresso em UTC (03:00Z)
+        private static DateTime InicioDoDiaBrasilEmUtc(DateTime utcNow)
+        {
+            return DateTime.SpecifyKind(utcNow.AddHours(-3).Date.AddHours(3), DateTimeKind.Utc);
+        }
+
+        private async Task<int> ObterAguaDoDiaAsync(string phone, DateTime utcNow)
+        {
+            var inicioDiaUtc = InicioDoDiaBrasilEmUtc(utcNow);
+            var waterCol = _database.GetCollection<MongoDB.Bson.BsonDocument>("WaterLogs");
+            var filterWater = Builders<MongoDB.Bson.BsonDocument>.Filter.And(
+                Builders<MongoDB.Bson.BsonDocument>.Filter.Eq("UserId", phone),
+                Builders<MongoDB.Bson.BsonDocument>.Filter.Gte("LoggedAt", inicioDiaUtc),
+                Builders<MongoDB.Bson.BsonDocument>.Filter.Lt("LoggedAt", inicioDiaUtc.AddDays(1))
+            );
+            var registrosAgua = await waterCol.Find(filterWater).ToListAsync();
+            return registrosAgua.Sum(w => w.Contains("AmountMl") && w["AmountMl"].IsNumeric ? w["AmountMl"].ToInt32() : 0);
+        }
+
+        // Meta de água do usuário (exata do dia, senão a mais recente); 2500 ml quando não houver meta definida
+        private async Task<int> ObterMetaAguaAsync(string phone, DateTime utcNow)
+        {
+            const int metaAguaPadrao = 2500;
+            try
+            {
+                var goal = await _nutritionRepository.ObterMetaDiariaAsync(phone, utcNow.AddHours(-3).Date);
+                return goal != null && goal.TargetWaterMl > 0 ? goal.TargetWaterMl : metaAguaPadrao;
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "Não foi possível ler a meta de água de {Phone}; usando o padrão.", phone);
+                return metaAguaPadrao;
+            }
         }
 
         private static async Task<bool> TryReserveDailyTrialInteractionAsync(
@@ -1577,7 +1600,37 @@ namespace LabelWise.Api.Controllers
             return false;
         }
 
-        private async Task<string?> GerarLinkPagamentoInfinitePayAsync(string phone, string name, decimal valorOriginal)
+        // Gera o link na InfinitePay, grava o rastreio (PaymentTracking) e devolve o link de rastreio de clique
+        private async Task<string?> CriarLinkPagamentoRastreadoAsync(string phone, string nomeCliente)
+        {
+            var orderNsu = Guid.NewGuid().ToString();
+            string? paymentUrlOriginal = await GerarLinkPagamentoInfinitePayAsync(phone, nomeCliente, 29.90m, orderNsu);
+            if (string.IsNullOrEmpty(paymentUrlOriginal)) return null;
+
+            var trackingCol = _database.GetCollection<MongoDB.Bson.BsonDocument>("PaymentTracking");
+            var trackingDoc = new MongoDB.Bson.BsonDocument
+            {
+                { "_id", phone },
+                { "InfinitePayUrl", paymentUrlOriginal },
+                { "OrderNsu", orderNsu },
+                { "WebhookProtegido", !string.IsNullOrEmpty(ObterSegredoWebhookInfinitePay()) },
+                { "SentAt", DateTime.UtcNow },
+                { "ClickedAt", MongoDB.Bson.BsonNull.Value },
+                { "Status", "Sent" }
+            };
+            await trackingCol.ReplaceOneAsync(Builders<MongoDB.Bson.BsonDocument>.Filter.Eq("_id", phone), trackingDoc, new ReplaceOptions { IsUpsert = true });
+
+            var baseUrl = $"{Request.Scheme}://{Request.Host}";
+            return $"{baseUrl}/api/whatsapp/ir-para-pagamento?phone={phone}";
+        }
+
+        private string? ObterSegredoWebhookInfinitePay()
+        {
+            var secret = _configuration["InfinitePay:WebhookSecret"]?.Trim();
+            return string.IsNullOrEmpty(secret) ? null : secret;
+        }
+
+        private async Task<string?> GerarLinkPagamentoInfinitePayAsync(string phone, string name, decimal valorOriginal, string orderNsu)
         {
             try
             {
@@ -1593,10 +1646,18 @@ namespace LabelWise.Api.Controllers
                 var requestUrl = "https://api.checkout.infinitepay.io/links";
                 int amountInCents = (int)(valorOriginal * 100);
 
+                // Com segredo configurado, ele vai no caminho da URL do webhook; só a InfinitePay conhece essa URL
+                var webhookUrl = "https://labelwise-1.onrender.com/api/whatsapp/infinitepay-webhook";
+                var webhookSecret = ObterSegredoWebhookInfinitePay();
+                if (webhookSecret != null)
+                {
+                    webhookUrl += "/" + Uri.EscapeDataString(webhookSecret);
+                }
+
                 var linkRequest = new
                 {
                     handle = handle,
-                    order_nsu = Guid.NewGuid().ToString(),
+                    order_nsu = orderNsu,
                     items = new[]
                     {
                         new
@@ -1613,7 +1674,7 @@ namespace LabelWise.Api.Controllers
                     },
                     webhook = new
                     {
-                        url = "https://labelwise-1.onrender.com/api/whatsapp/infinitepay-webhook",
+                        url = webhookUrl,
                         events = new[] { "paid" }
                     }
                 };
@@ -1657,7 +1718,8 @@ namespace LabelWise.Api.Controllers
         }
 
         [HttpPost("infinitepay-webhook")]
-        public async Task<IActionResult> InfinitePayWebhook([FromBody] JsonElement payload)
+        [HttpPost("infinitepay-webhook/{token}")]
+        public async Task<IActionResult> InfinitePayWebhook([FromBody] JsonElement payload, string? token = null)
         {
             try
             {
@@ -1666,23 +1728,45 @@ namespace LabelWise.Api.Controllers
 
                 string? status = null;
                 string? phone = null;
+                string? orderNsu = null;
 
                 using var doc = JsonDocument.Parse(jsonString);
                 var root = doc.RootElement;
 
-                if (root.TryGetProperty("status", out var statusProp))
+                if (root.TryGetProperty("status", out var statusProp) && statusProp.ValueKind == JsonValueKind.String)
                 {
                     status = statusProp.GetString()?.ToLower();
                 }
 
-                if (root.TryGetProperty("customer", out var customerProp) && customerProp.TryGetProperty("phone_number", out var phoneProp))
+                if (root.TryGetProperty("customer", out var customerProp) && customerProp.ValueKind == JsonValueKind.Object &&
+                    customerProp.TryGetProperty("phone_number", out var phoneProp) && phoneProp.ValueKind == JsonValueKind.String)
                 {
                     phone = phoneProp.GetString();
+                }
+
+                if (root.TryGetProperty("order_nsu", out var orderNsuProp) && orderNsuProp.ValueKind == JsonValueKind.String)
+                {
+                    orderNsu = orderNsuProp.GetString();
                 }
 
                 if ((status == "approved" || status == "paid") && !string.IsNullOrEmpty(phone))
                 {
                     string cleanPhone = Regex.Replace(phone, "[^0-9]", "");
+
+                    var trackingCol = _database.GetCollection<MongoDB.Bson.BsonDocument>("PaymentTracking");
+                    var pagamentoRastreado = await LocalizarPagamentoRastreadoAsync(trackingCol, orderNsu, cleanPhone);
+
+                    if (!WebhookInfinitePayAutorizado(token, orderNsu, pagamentoRastreado))
+                    {
+                        _logger.LogWarning("[INFINITEPAY WEBHOOK] Chamada recusada: segredo inválido e nenhum link de pagamento pendente correspondente.");
+                        return Unauthorized();
+                    }
+
+                    // O telefone gravado no rastreio é o mesmo formato do WhatsApp (_id do trial); o do payload pode vir sem o 55
+                    if (pagamentoRastreado != null && pagamentoRastreado["_id"].IsString)
+                    {
+                        cleanPhone = pagamentoRastreado["_id"].AsString;
+                    }
 
                     // 1. Atualizar a base de dados de Trial para Premium
                     var trialCollection = _database.GetCollection<MongoDB.Bson.BsonDocument>("B2C_Trial_Users");
@@ -1692,7 +1776,6 @@ namespace LabelWise.Api.Controllers
                     await trialCollection.UpdateOneAsync(filter, update);
 
                     // 2. Atualizar também a collection de rastreio de pagamentos para "Paid"
-                    var trackingCol = _database.GetCollection<MongoDB.Bson.BsonDocument>("PaymentTracking");
                     var trackingFilter = Builders<MongoDB.Bson.BsonDocument>.Filter.Eq("_id", cleanPhone);
                     var trackingUpdate = Builders<MongoDB.Bson.BsonDocument>.Update
                         .Set("Status", "Paid")
@@ -1714,6 +1797,57 @@ namespace LabelWise.Api.Controllers
                 _logger.LogError(ex, "Erro crítico ao processar o webhook da InfinitePay.");
                 return Ok();
             }
+        }
+
+        // Aceita a confirmação de pagamento quando:
+        // - o segredo do webhook não está configurado (comportamento anterior, com aviso no log); ou
+        // - o segredo veio correto na URL; ou
+        // - o order_nsu do payload é o mesmo de um link que nós geramos; ou
+        // - existe um link pendente gerado antes da proteção (WebhookProtegido ausente/false), para não perder pagamentos em andamento.
+        private bool WebhookInfinitePayAutorizado(string? token, string? orderNsu, MongoDB.Bson.BsonDocument? pagamentoRastreado)
+        {
+            var secret = ObterSegredoWebhookInfinitePay();
+            if (secret == null)
+            {
+                _logger.LogWarning("[INFINITEPAY WEBHOOK] InfinitePay:WebhookSecret não configurado; webhook aceito sem validação.");
+                return true;
+            }
+
+            if (!string.IsNullOrEmpty(token) &&
+                CryptographicOperations.FixedTimeEquals(Encoding.UTF8.GetBytes(token), Encoding.UTF8.GetBytes(secret)))
+            {
+                return true;
+            }
+
+            if (pagamentoRastreado == null) return false;
+
+            if (!string.IsNullOrEmpty(orderNsu) &&
+                pagamentoRastreado.TryGetValue("OrderNsu", out var orderNsuSalvo) && orderNsuSalvo.IsString &&
+                orderNsuSalvo.AsString == orderNsu)
+            {
+                return true;
+            }
+
+            bool linkProtegido = pagamentoRastreado.TryGetValue("WebhookProtegido", out var protegido) && protegido.IsBoolean && protegido.AsBoolean;
+            bool jaPago = pagamentoRastreado.TryGetValue("Status", out var statusSalvo) && statusSalvo.IsString && statusSalvo.AsString == "Paid";
+            return !linkProtegido && !jaPago;
+        }
+
+        private static async Task<MongoDB.Bson.BsonDocument?> LocalizarPagamentoRastreadoAsync(
+            IMongoCollection<MongoDB.Bson.BsonDocument> trackingCol, string? orderNsu, string cleanPhone)
+        {
+            if (!string.IsNullOrEmpty(orderNsu))
+            {
+                var porOrderNsu = await trackingCol.Find(Builders<MongoDB.Bson.BsonDocument>.Filter.Eq("OrderNsu", orderNsu)).FirstOrDefaultAsync();
+                if (porOrderNsu != null) return porOrderNsu;
+            }
+
+            if (string.IsNullOrEmpty(cleanPhone)) return null;
+
+            var porTelefone = await trackingCol.Find(Builders<MongoDB.Bson.BsonDocument>.Filter.Eq("_id", cleanPhone)).FirstOrDefaultAsync();
+            if (porTelefone != null || cleanPhone.StartsWith("55")) return porTelefone;
+
+            return await trackingCol.Find(Builders<MongoDB.Bson.BsonDocument>.Filter.Eq("_id", "55" + cleanPhone)).FirstOrDefaultAsync();
         }
 
         private async Task<string> GerarFeedbackDiarioComGeminiAsync(
@@ -2018,8 +2152,6 @@ Retorne APENAS o texto da mensagem pronto para envio.
 
                 var telefones = await _nutritionRepository.ObterTelefonesAtivosAsync();
                 var trialCollection = _database.GetCollection<MongoDB.Bson.BsonDocument>("B2C_Trial_Users");
-                var waterCol = _database.GetCollection<MongoDB.Bson.BsonDocument>("WaterLogs");
-                var goalsCollection = _database.GetCollection<MongoDB.Bson.BsonDocument>("DailyGoals");
 
                 int enviados = 0, falhas = 0, ignoradosMetaBatida = 0;
 
@@ -2040,24 +2172,10 @@ Retorne APENAS o texto da mensagem pronto para envio.
                         }
 
                         // 1. Busca a Meta de Água (Padrão 2500ml se não existir)
-                        int metaAgua = 2500;
-                        var goalFilter = Builders<MongoDB.Bson.BsonDocument>.Filter.And(
-                            Builders<MongoDB.Bson.BsonDocument>.Filter.Eq("UserId", telefone),
-                            Builders<MongoDB.Bson.BsonDocument>.Filter.Eq("TargetDate", nowBr.Date)
-                        );
-                        var goalDoc = await goalsCollection.Find(goalFilter).FirstOrDefaultAsync();
-                        if (goalDoc != null && goalDoc.Contains("TargetWaterMl"))
-                        {
-                            metaAgua = goalDoc["TargetWaterMl"].AsInt32;
-                        }
+                        int metaAgua = await ObterMetaAguaAsync(telefone, DateTime.UtcNow);
 
                         // 2. Calcula Água Consumida Hoje
-                        var waterFilter = Builders<MongoDB.Bson.BsonDocument>.Filter.And(
-                            Builders<MongoDB.Bson.BsonDocument>.Filter.Eq("UserId", telefone),
-                            Builders<MongoDB.Bson.BsonDocument>.Filter.Gte("LoggedAt", nowBr.Date)
-                        );
-                        var registrosAgua = await waterCol.Find(waterFilter).ToListAsync();
-                        int totalAguaHoje = registrosAgua.Sum(w => w.Contains("AmountMl") && w["AmountMl"].IsInt32 ? w["AmountMl"].AsInt32 : 0);
+                        int totalAguaHoje = await ObterAguaDoDiaAsync(telefone, DateTime.UtcNow);
 
                         // 3. Inteligência do alerta: Só envia se ainda NÃO bateu a meta
                         if (totalAguaHoje >= metaAgua)
