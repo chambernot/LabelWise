@@ -396,13 +396,13 @@
                 {
                     value: 'nunca_usou', icon: '🌱', label: 'Começou e nunca usou',
                     description: 'Entrou no teste (com ou sem onboarding concluído) e nunca registrou uma refeição.',
-                    template: 'trial_engajamento', parameters: ['{nome}'],
+                    template: 'trial_engajamento', parameters: [],
                     suggestion: 'Ex.: "reengajar_onboarding" — "Oi {{1}}! Seu teste grátis do Nutrição Fácil já está liberado. Que tal registrar sua primeira refeição? É só mandar uma foto do prato aqui. 📸🥗"'
                 },
                 {
                     value: 'usou_e_parou', icon: '😴', label: 'Usou e parou',
                     description: 'Já registrou refeições, mas está há 3 dias ou mais sem interagir.',
-                    template: 'trial_engajamento', parameters: ['{nome}'],
+                    template: 'trial_engajamento', parameters: [],
                     suggestion: 'Ex.: "reengajar_inativo" — "Oi {{1}}, sentimos sua falta! Faz {{2}} dias que você não registra nada. Bora retomar hoje? Mande o que comeu no almoço. 💪"  (variáveis: {nome}, {dias_sem_uso})'
                 },
                 {
@@ -440,7 +440,7 @@
                 // Envio
                 segmentList: SEGMENTS,
                 knownTemplates: [
-                    { name: 'trial_engajamento', params: 1, description: '1 variável: nome' },
+                    { name: 'trial_engajamento', params: 0, description: 'sem variáveis' },
                     { name: 'oferta_fim_trial', params: 0, description: 'sem variáveis' },
                     { name: 'alerta_novidade_app', params: 0, description: 'sem variáveis' },
                     { name: 'lembrete_diario_nutri', params: 2, description: '2 variáveis: nome, refeição' },

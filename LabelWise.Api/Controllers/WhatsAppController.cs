@@ -1475,7 +1475,8 @@ namespace LabelWise.Api.Controllers
 
                     try
                     {
-                        bool success = await _whatsAppSender.SendTemplateMessageAsync(phone, "trial_engajamento", "Cliente");
+                        // O template trial_engajamento não tem variáveis na Meta; enviar parâmetro faz a Meta recusar (erro 132000)
+                        bool success = await _whatsAppSender.SendTemplateMessageAsync(phone, "trial_engajamento");
 
                         if (success) { sentCount++; _logger.LogInformation("Lembrete do trial enviado no dia {TrialDay}.", trialDay); }
                         else
