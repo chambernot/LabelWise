@@ -85,6 +85,7 @@ namespace LabelWise.Api.Controllers
                     trialAtivo = usuarios.Count(x => x.Plano == "Trial"),
                     trialExpirado = usuarios.Count(x => x.Plano == "Trial expirado"),
                     premium = usuarios.Count(x => x.Plano == "Premium"),
+                    parceiros = usuarios.Count(x => x.Plano == "Parceiro"),
                     b2b = usuarios.Count(x => x.Plano == "B2B")
                 };
 
@@ -249,6 +250,151 @@ namespace LabelWise.Api.Controllers
             }
         }
 
+        // Libera o usuário como parceiro: acesso Premium sem pagamento e sem expiração de teste.
+        // Usa o mesmo flag Premium do pagamento, para que todas as regras atuais (limite de IA, crons, ofertas) já o tratem como liberado.
+        [HttpPost("{phone}/partner")]
+        public async Task<IActionResult> AtivarParceiro(
+            [FromHeader(Name = "X-Admin-Secret")] string? secret,
+            string phone,
+            [FromBody] AdminPartnerRequest? request)
+        {
+            var negado = ValidarAcesso(secret);
+            if (negado != null) return negado;
+
+            var telefone = NormalizarTelefone(phone);
+            if (telefone == null)
+            {
+                return BadRequest(new { success = false, message = "Telefone inválido. Use DDI + DDD + número, ex.: 5511987654321." });
+            }
+
+            try
+            {
+                var trials = _database.GetCollection<BsonDocument>("B2C_Trial_Users");
+                var filtro = Builders<BsonDocument>.Filter.Eq("_id", telefone);
+                var existente = await trials.Find(filtro).FirstOrDefaultAsync();
+
+                if (existente != null && existente.TryGetValue("Partner", out var jaParceiro) && jaParceiro.IsBoolean && jaParceiro.AsBoolean)
+                {
+                    return BadRequest(new { success = false, message = "Este usuário já é parceiro." });
+                }
+
+                var agora = DateTime.UtcNow;
+                var nome = string.IsNullOrWhiteSpace(request?.Name) ? null : request!.Name!.Trim();
+                var observacao = string.IsNullOrWhiteSpace(request?.Note) ? null : request!.Note!.Trim();
+
+                if (existente == null)
+                {
+                    // Ainda não falou com o bot: o cadastro já nasce liberado e recebe boas-vindas de parceiro na primeira mensagem
+                    await trials.InsertOneAsync(new BsonDocument
+                    {
+                        { "_id", telefone },
+                        { "TrialStartDate", agora },
+                        { "LastInteractionDate", DateTime.SpecifyKind(agora.AddHours(-3).Date, DateTimeKind.Utc) },
+                        { "DailyMessageCount", 0 },
+                        { "ProfileConfigured", false },
+                        { "OnboardingStep", "WaitingForGoal" },
+                        { "Premium", true },
+                        { "Partner", true },
+                        { "PartnerSince", agora },
+                        { "PartnerName", nome != null ? new BsonString(nome) : BsonNull.Value },
+                        { "PartnerNote", observacao != null ? new BsonString(observacao) : BsonNull.Value },
+                        { "PremiumBeforePartner", false },
+                        { "PartnerPendingWelcome", true }
+                    });
+                }
+                else
+                {
+                    bool premiumAntes = existente.TryGetValue("Premium", out var p) && p.IsBoolean && p.AsBoolean;
+                    await trials.UpdateOneAsync(filtro, Builders<BsonDocument>.Update
+                        .Set("Premium", true)
+                        .Set("Partner", true)
+                        .Set("PartnerSince", agora)
+                        .Set<BsonDocument, BsonValue>("PartnerName", nome != null ? new BsonString(nome) : BsonNull.Value)
+                        .Set<BsonDocument, BsonValue>("PartnerNote", observacao != null ? new BsonString(observacao) : BsonNull.Value)
+                        .Set("PremiumBeforePartner", premiumAntes)
+                        .Unset("PartnerRemovedAt"));
+                }
+
+                _logger.LogInformation("[Painel Gerencial] Usuário {Phone} liberado como parceiro.", telefone);
+                return Ok(new
+                {
+                    success = true,
+                    message = existente == null
+                        ? "Parceiro cadastrado. Na primeira mensagem ao bot, ele recebe as boas-vindas e configura o perfil, já com acesso liberado."
+                        : "Parceiro liberado. O acesso completo vale a partir da próxima mensagem dele."
+                });
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Erro ao liberar parceiro {Phone}.", telefone);
+                return StatusCode(500, new { success = false, message = "Erro interno ao liberar o parceiro." });
+            }
+        }
+
+        // Remove a liberação de parceiro. Quem tinha pago antes (ou pagou durante a parceria) continua Premium.
+        [HttpDelete("{phone}/partner")]
+        public async Task<IActionResult> RemoverParceiro(
+            [FromHeader(Name = "X-Admin-Secret")] string? secret,
+            string phone)
+        {
+            var negado = ValidarAcesso(secret);
+            if (negado != null) return negado;
+
+            var telefone = NormalizarTelefone(phone);
+            if (telefone == null)
+            {
+                return BadRequest(new { success = false, message = "Telefone inválido." });
+            }
+
+            try
+            {
+                var trials = _database.GetCollection<BsonDocument>("B2C_Trial_Users");
+                var filtro = Builders<BsonDocument>.Filter.Eq("_id", telefone);
+                var existente = await trials.Find(filtro).FirstOrDefaultAsync();
+
+                if (existente == null || !(existente.TryGetValue("Partner", out var parceiro) && parceiro.IsBoolean && parceiro.AsBoolean))
+                {
+                    return NotFound(new { success = false, message = "Este usuário não é parceiro." });
+                }
+
+                bool premiumAntes = existente.TryGetValue("PremiumBeforePartner", out var p) && p.IsBoolean && p.AsBoolean;
+                var pagamento = await _database.GetCollection<BsonDocument>("PaymentTracking")
+                    .Find(Builders<BsonDocument>.Filter.And(
+                        Builders<BsonDocument>.Filter.Eq("_id", telefone),
+                        Builders<BsonDocument>.Filter.Eq("Status", "Paid")))
+                    .FirstOrDefaultAsync();
+                bool continuaPremium = premiumAntes || pagamento != null;
+
+                await trials.UpdateOneAsync(filtro, Builders<BsonDocument>.Update
+                    .Set("Premium", continuaPremium)
+                    .Set("Partner", false)
+                    .Set("PartnerRemovedAt", DateTime.UtcNow)
+                    .Unset("PartnerPendingWelcome"));
+
+                _logger.LogInformation("[Painel Gerencial] Parceria removida para {Phone}. Continua Premium: {Premium}.", telefone, continuaPremium);
+                return Ok(new
+                {
+                    success = true,
+                    message = continuaPremium
+                        ? "Parceria removida. O usuário continua Premium porque tem assinatura paga."
+                        : "Parceria removida. O usuário volta às regras do teste (se o teste já acabou, precisará assinar)."
+                });
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Erro ao remover parceiro {Phone}.", telefone);
+                return StatusCode(500, new { success = false, message = "Erro interno ao remover o parceiro." });
+            }
+        }
+
+        // Só dígitos, com DDI; aceita número brasileiro sem o 55 (10 ou 11 dígitos)
+        private static string? NormalizarTelefone(string? phone)
+        {
+            var digitos = Regex.Replace(phone ?? "", "[^0-9]", "");
+            if (digitos.Length is 10 or 11) digitos = "55" + digitos;
+            return digitos.Length is >= 12 and <= 15 ? digitos : null;
+        }
+
         // Últimos envios do painel, com o andamento da entrega informado pela Meta
         [HttpGet("sends")]
         public async Task<IActionResult> GetEnviosRecentes(
@@ -411,11 +557,13 @@ namespace LabelWise.Api.Controllers
                 string? professionalId = paciente != null && paciente.TryGetValue("ProfessionalId", out var prof) && prof.IsString ? prof.AsString : null;
                 bool isB2b = professionalId != null && professionalId != "b2c_autonomous_user";
                 bool premium = trial != null && trial.TryGetValue("Premium", out var p) && p.IsBoolean && p.AsBoolean;
+                bool parceiro = trial != null && trial.TryGetValue("Partner", out var pa) && pa.IsBoolean && pa.AsBoolean;
 
                 DateTime? inicioTrial = trial != null && trial.TryGetValue("TrialStartDate", out var ts) && ts.IsBsonDateTime ? ts.ToUniversalTime() : null;
                 bool trialExpirado = inicioTrial.HasValue && agora >= inicioTrial.Value.AddDays(TrialDurationDays);
 
                 string plano = isB2b ? "B2B"
+                    : parceiro ? "Parceiro"
                     : premium ? "Premium"
                     : trial != null ? (trialExpirado ? "Trial expirado" : "Trial")
                     : "Sem plano";
@@ -477,7 +625,9 @@ namespace LabelWise.Api.Controllers
                 else if (totalRefeicoes > 0 && (diasSemInteracao ?? int.MaxValue) >= DiasEmRisco)
                     segmento = SegmentoUsouEParou;
 
-                string? nome = paciente != null && paciente.TryGetValue("Name", out var n) && n.IsString && !string.IsNullOrWhiteSpace(n.AsString) ? n.AsString : null;
+                string? nome = paciente != null && paciente.TryGetValue("Name", out var n) && n.IsString && !string.IsNullOrWhiteSpace(n.AsString) ? n.AsString
+                    : trial != null && trial.TryGetValue("PartnerName", out var pn) && pn.IsString && !string.IsNullOrWhiteSpace(pn.AsString) ? pn.AsString
+                    : null;
 
                 linhas.Add(new AdminUserRow(
                     Phone: phone,
@@ -505,7 +655,9 @@ namespace LabelWise.Api.Controllers
                     UltimoEnvioEm: ultimoEnvio?.SentAt,
                     UltimoEnvioSucesso: ultimoEnvio?.Success,
                     UltimoEnvioStatus: ultimoEnvio?.DeliveryStatus,
-                    UltimoEnvioErro: ultimoEnvio?.ErrorMessage));
+                    UltimoEnvioErro: ultimoEnvio?.ErrorMessage,
+                    ParceiroDesde: parceiro && trial!.TryGetValue("PartnerSince", out var ps) && ps.IsBsonDateTime ? ps.ToUniversalTime() : null,
+                    ParceiroObservacao: parceiro && trial!.TryGetValue("PartnerNote", out var pnote) && pnote.IsString ? pnote.AsString : null));
             }
 
             return linhas
@@ -666,7 +818,11 @@ namespace LabelWise.Api.Controllers
         DateTime? UltimoEnvioEm,
         bool? UltimoEnvioSucesso,
         string? UltimoEnvioStatus,
-        string? UltimoEnvioErro);
+        string? UltimoEnvioErro,
+        DateTime? ParceiroDesde,
+        string? ParceiroObservacao);
+
+    public record AdminPartnerRequest(string? Name, string? Note);
 
     public record AdminSendTemplateRequest(
         List<string>? Phones,

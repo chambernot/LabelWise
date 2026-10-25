@@ -167,6 +167,10 @@ namespace LabelWise.Api.Controllers
                 bool isPremium = userDoc != null &&
                                userDoc.TryGetValue("Premium", out var premiumValue) &&
                                premiumValue.IsBoolean && premiumValue.AsBoolean;
+                // Parceiro: liberado pelo dono no painel gerencial (Premium sem pagamento)
+                bool isPartner = userDoc != null &&
+                                 userDoc.TryGetValue("Partner", out var partnerValue) &&
+                                 partnerValue.IsBoolean && partnerValue.AsBoolean;
                 bool isTrialLimitedUser = !isB2bPatient && !isPremium;
 
                 string? textoBruto = null;
@@ -323,9 +327,30 @@ namespace LabelWise.Api.Controllers
                     foodAversions = patientDocCheck["FoodAversions"].AsString;
                 }
 
-                if (!isB2bPatient && !isPremium)
+                // Parceiros também passam por aqui para configurar o perfil (onboarding e comando "meta"),
+                // mas sem expiração de teste. O Premium pago continua fora deste bloco, como antes.
+                if (!isB2bPatient && (!isPremium || isPartner))
                 {
                     var now = DateTime.UtcNow;
+
+                    // Parceiro cadastrado pelo painel antes de falar com o bot: boas-vindas próprias, já no passo 1
+                    if (isPartner && userDoc!.TryGetValue("PartnerPendingWelcome", out var pendingWelcome) &&
+                        pendingWelcome.IsBoolean && pendingWelcome.AsBoolean)
+                    {
+                        await trialCollection.UpdateOneAsync(filterTrial, Builders<MongoDB.Bson.BsonDocument>.Update.Unset("PartnerPendingWelcome"));
+
+                        string mensagemParceiro = "🤝 *Bem-vindo ao Nutrição Fácil!* 🥗\n\n" +
+                                                  "Seu acesso de *parceiro* já está liberado, completo e sem limites.\n\n" +
+                                                  "Vamos configurar seu perfil com um formulário rápido e guiado passo a passo.\n\n" +
+                                                  "🎯 **Passo 1 de 4:** Qual é o seu principal objetivo?\n" +
+                                                  "*1️⃣* Emagrecimento\n" +
+                                                  "*2️⃣* Hipertrofia\n" +
+                                                  "*3️⃣* Manutenção\n\n" +
+                                                  "_(Responda apenas com o número correspondente)_";
+
+                        await _whatsAppSender.SendTextMessageAsync(senderPhone, mensagemParceiro);
+                        return Ok();
+                    }
 
                     if (userDoc == null)
                     {
@@ -352,7 +377,7 @@ namespace LabelWise.Api.Controllers
                         return Ok();
                     }
 
-                    if (TrialExpirado(userDoc, now))
+                    if (!isPremium && TrialExpirado(userDoc, now))
                     {
                         await EnviarMensagemTrialExpiradoAsync(senderPhone);
                         return Ok();
