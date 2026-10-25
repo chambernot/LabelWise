@@ -510,7 +510,7 @@ Retorne APENAS o texto do cardápio pronto para ser colado na prescrição.
             </style>
         </head>
         <body>
-            <h1>🥗 Nutrição Facil - Relatório Pré-Consulta</h1>
+            <h1>🥗 Nutrição Fácil - Relatório Pré-Consulta</h1>
             <p><strong>Paciente (WhatsApp):</strong> {phone}</p>
             <p><strong>Objetivo Principal:</strong> {mainGoal}</p>
             <p><strong>Data de Emissão:</strong> {DateTime.UtcNow.AddHours(-3):dd/MM/yyyy HH:mm}</p>
@@ -530,7 +530,7 @@ Retorne APENAS o texto do cardápio pronto para ser colado na prescrição.
                     <p style='font-size: 20px; font-weight: bold; color: #2563eb;'>{mediaCalorias} kcal</p>
                 </div>
                 <div class='card'>
-                    <h4>Total de Registos</h4>
+                    <h4>Total de Registros</h4>
                     <p style='font-size: 20px; font-weight: bold; color: #7c3aed;'>{totalRefeicoes} refeições</p>
                 </div>
             </div>
