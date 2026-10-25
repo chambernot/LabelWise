@@ -259,7 +259,12 @@
                                                     <p class="text-[11px] font-semibold text-gray-700" x-text="u.ultimoTemplate"></p>
                                                     <span class="inline-block text-[10px] font-bold px-1.5 py-0.5 rounded mt-0.5" :class="deliveryClass(u.ultimoEnvioStatus)" x-text="deliveryLabel(u.ultimoEnvioStatus)"></span>
                                                     <p class="text-[11px] text-gray-400" x-text="formatDateTime(u.ultimoEnvioEm)"></p>
-                                                    <p x-show="u.ultimoEnvioErro" class="text-[10px] text-red-600 whitespace-normal" x-text="u.ultimoEnvioErro"></p>
+                                                    <!-- Erro da Meta limitado a 2 linhas para não esticar a linha da tabela; texto completo no tooltip e em "Envios recentes" -->
+                                                    <template x-if="u.ultimoEnvioErro">
+                                                        <p class="text-[10px] text-red-600 whitespace-normal w-48 cursor-help"
+                                                           style="display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;"
+                                                           :title="u.ultimoEnvioErro" x-text="u.ultimoEnvioErro"></p>
+                                                    </template>
                                                 </div>
                                             </template>
                                             <span x-show="!u.ultimoTemplate" class="text-[11px] text-gray-300">—</span>
