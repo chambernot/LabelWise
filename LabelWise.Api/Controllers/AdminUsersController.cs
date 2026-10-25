@@ -28,6 +28,7 @@ namespace LabelWise.Api.Controllers
         private const int MinDiasUsoIntensoPadrao = 5;
         private const int JanelaFrequenciaDias = 30;
         private const int MaxDestinatariosPorEnvio = 100;
+        private const int MinutosAguardandoEntrega = 10; // envio aceito sem aviso de entrega depois disso é tratado como não entregue
         private const string ColecaoEnvios = TemplateDeliveryTracker.ColecaoEnvios;
 
         private static readonly Regex NomeTemplateValido = new("^[a-z0-9_]{1,512}$", RegexOptions.Compiled);
@@ -133,25 +134,32 @@ namespace LabelWise.Api.Controllers
                 var usuarios = (await MontarUsuariosAsync(DiasInativoPadrao, MinDiasUsoIntensoPadrao)).ToDictionary(x => x.Phone);
                 var envios = _database.GetCollection<BsonDocument>(ColecaoEnvios);
 
-                // Telefone → data do envio anterior deste template (aceito pela Meta e sem falha de entrega)
-                var receberamRecentemente = new Dictionary<string, DateTime>();
+                // Telefone → envio anterior deste template que comprovadamente saiu (ou ainda está em andamento).
+                // Só bloqueia com confirmação da Meta (enviado/entregue/lido) ou com envio aceito há poucos minutos,
+                // cujo aviso de entrega ainda pode chegar. Envios sem rastreio ou com falha não bloqueiam.
+                var receberamRecentemente = new Dictionary<string, (DateTime Quando, string Status)>();
                 if (request.SkipIfSentWithinDays > 0)
                 {
+                    var agoraFiltro = DateTime.UtcNow;
                     var filtroRecentes = Builders<BsonDocument>.Filter.And(
                         Builders<BsonDocument>.Filter.Eq("Template", templateName),
-                        Builders<BsonDocument>.Filter.Eq("Success", true),
-                        Builders<BsonDocument>.Filter.Ne("DeliveryStatus", TemplateDeliveryTracker.StatusFalhou),
-                        Builders<BsonDocument>.Filter.Gte("SentAt", DateTime.UtcNow.AddDays(-request.SkipIfSentWithinDays)));
+                        Builders<BsonDocument>.Filter.Gte("SentAt", agoraFiltro.AddDays(-request.SkipIfSentWithinDays)),
+                        Builders<BsonDocument>.Filter.Or(
+                            Builders<BsonDocument>.Filter.In("DeliveryStatus", new[] { "sent", "delivered", "read" }),
+                            Builders<BsonDocument>.Filter.And(
+                                Builders<BsonDocument>.Filter.Eq("DeliveryStatus", TemplateDeliveryTracker.StatusAceito),
+                                Builders<BsonDocument>.Filter.Gte("SentAt", agoraFiltro.AddMinutes(-MinutosAguardandoEntrega)))));
                     var recentes = await envios.Find(filtroRecentes)
-                        .Project(Builders<BsonDocument>.Projection.Include("UserId").Include("SentAt"))
+                        .Project(Builders<BsonDocument>.Projection.Include("UserId").Include("SentAt").Include("DeliveryStatus"))
                         .ToListAsync();
                     foreach (var r in recentes)
                     {
                         if (!r.TryGetValue("UserId", out var uid) || !uid.IsString ||
                             !r.TryGetValue("SentAt", out var sentAt) || !sentAt.IsBsonDateTime) continue;
                         var quando = sentAt.ToUniversalTime();
-                        if (!receberamRecentemente.TryGetValue(uid.AsString, out var atual) || quando > atual)
-                            receberamRecentemente[uid.AsString] = quando;
+                        var status = r.TryGetValue("DeliveryStatus", out var ds) && ds.IsString ? ds.AsString : "";
+                        if (!receberamRecentemente.TryGetValue(uid.AsString, out var atual) || quando > atual.Quando)
+                            receberamRecentemente[uid.AsString] = (quando, status);
                     }
                 }
 
@@ -169,12 +177,20 @@ namespace LabelWise.Api.Controllers
 
                     if (receberamRecentemente.TryGetValue(phone, out var envioAnterior))
                     {
+                        string situacao = envioAnterior.Status switch
+                        {
+                            "read" => "foi entregue e lido",
+                            "delivered" => "foi entregue",
+                            "sent" => "foi enviado pela Meta",
+                            _ => "ainda está aguardando confirmação de entrega da Meta"
+                        };
+
                         ignorados++;
                         resultados.Add(new
                         {
                             phone,
                             status = "ignorado",
-                            motivo = $"Já recebeu este template em {envioAnterior.AddHours(-3):dd/MM 'às' HH:mm}. Para reenviar, desmarque \"Não reenviar\"."
+                            motivo = $"Este template enviado em {envioAnterior.Quando.AddHours(-3):dd/MM 'às' HH:mm} {situacao}. Para reenviar mesmo assim, desmarque \"Não reenviar\"."
                         });
                         continue;
                     }
