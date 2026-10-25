@@ -29,12 +29,18 @@ namespace LabelWise.Infrastructure.Services
         // Método genérico que aceita o nome do template e qualquer quantidade de variáveis
         public async Task<bool> SendTemplateMessageAsync(string toPhone, string templateName, params string[] templateArgs)
         {
+            var result = await SendTemplateMessageWithResultAsync(toPhone, templateName, templateArgs);
+            return result.Success;
+        }
+
+        public async Task<WhatsAppSendResult> SendTemplateMessageWithResultAsync(string toPhone, string templateName, params string[] templateArgs)
+        {
             try
             {
                 if (string.IsNullOrWhiteSpace(_phoneNumberId) || string.IsNullOrWhiteSpace(_accessToken))
                 {
                     _logger.LogError("[WhatsAppSenderService] ❌ PhoneNumberId ou AccessToken não configurado.");
-                    return false;
+                    return new WhatsAppSendResult(false, null, "config", "PhoneNumberId ou AccessToken do WhatsApp não configurado.");
                 }
 
                 var endpoint = $"https://graph.facebook.com/v20.0/{_phoneNumberId}/messages";
@@ -73,17 +79,54 @@ namespace LabelWise.Infrastructure.Services
                 if (response.IsSuccessStatusCode)
                 {
                     _logger.LogInformation("[WhatsAppSenderService] 🚀 Template '{Template}' enviado para {Phone}.", templateName, toPhone);
-                    return true;
+                    return new WhatsAppSendResult(true, LerMessageId(responseBody), null, null);
                 }
 
                 _logger.LogError("[WhatsAppSenderService] ❌ Falha ao enviar template Meta ({StatusCode}): {Error}", response.StatusCode, responseBody);
-                return false;
+                var (codigo, mensagem) = LerErro(responseBody);
+                return new WhatsAppSendResult(false, null, codigo ?? ((int)response.StatusCode).ToString(), mensagem ?? $"HTTP {(int)response.StatusCode}");
             }
             catch (Exception ex)
             {
                 _logger.LogError(ex, "[WhatsAppSenderService] ❌ Exceção ao enviar template '{Template}' para {Phone}", templateName, toPhone);
-                return false;
+                return new WhatsAppSendResult(false, null, "exception", ex.Message);
             }
+        }
+
+        // Resposta de sucesso da Meta: { "messages": [ { "id": "wamid...." } ] }
+        private static string? LerMessageId(string responseBody)
+        {
+            try
+            {
+                using var doc = JsonDocument.Parse(responseBody);
+                if (doc.RootElement.TryGetProperty("messages", out var messages) &&
+                    messages.ValueKind == JsonValueKind.Array && messages.GetArrayLength() > 0 &&
+                    messages[0].TryGetProperty("id", out var id))
+                {
+                    return id.GetString();
+                }
+            }
+            catch (JsonException) { }
+            return null;
+        }
+
+        // Resposta de erro da Meta: { "error": { "code": 132001, "message": "...", "error_data": { "details": "..." } } }
+        private static (string? Codigo, string? Mensagem) LerErro(string responseBody)
+        {
+            try
+            {
+                using var doc = JsonDocument.Parse(responseBody);
+                if (doc.RootElement.TryGetProperty("error", out var error))
+                {
+                    string? codigo = error.TryGetProperty("code", out var c) ? c.ToString() : null;
+                    string? mensagem = error.TryGetProperty("error_data", out var data) && data.TryGetProperty("details", out var details)
+                        ? details.GetString()
+                        : error.TryGetProperty("message", out var m) ? m.GetString() : null;
+                    return (codigo, mensagem);
+                }
+            }
+            catch (JsonException) { }
+            return (null, null);
         }
 
         public async Task SendTextMessageAsync(string phone, string message)

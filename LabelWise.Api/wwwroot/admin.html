@@ -199,9 +199,11 @@
                                         </td>
                                         <td class="p-3 whitespace-nowrap">
                                             <template x-if="u.ultimoTemplate">
-                                                <div>
-                                                    <p class="text-[11px] font-semibold" :class="u.ultimoEnvioSucesso ? 'text-gray-700' : 'text-red-600'" x-text="u.ultimoTemplate"></p>
-                                                    <p class="text-[11px] text-gray-400" x-text="formatDateTime(u.ultimoEnvioEm) + (u.ultimoEnvioSucesso ? '' : ' · falhou')"></p>
+                                                <div class="max-w-[12rem]">
+                                                    <p class="text-[11px] font-semibold text-gray-700" x-text="u.ultimoTemplate"></p>
+                                                    <span class="inline-block text-[10px] font-bold px-1.5 py-0.5 rounded mt-0.5" :class="deliveryClass(u.ultimoEnvioStatus)" x-text="deliveryLabel(u.ultimoEnvioStatus)"></span>
+                                                    <p class="text-[11px] text-gray-400" x-text="formatDateTime(u.ultimoEnvioEm)"></p>
+                                                    <p x-show="u.ultimoEnvioErro" class="text-[10px] text-red-600 whitespace-normal" x-text="u.ultimoEnvioErro"></p>
                                                 </div>
                                             </template>
                                             <span x-show="!u.ultimoTemplate" class="text-[11px] text-gray-300">—</span>
@@ -314,11 +316,14 @@
                         </div>
                         <p class="text-[11px] text-gray-500 mt-1">Enviando... <span x-text="sendProgress"></span>%</p>
                     </div>
-                    <div x-show="sendResult" x-cloak class="rounded-xl border p-3 text-xs space-y-2" :class="sendResult && sendResult.falhas ? 'border-red-100 bg-red-50' : 'border-emerald-100 bg-emerald-50'">
+                    <div x-show="sendResult" x-cloak class="rounded-xl border p-3 text-xs space-y-2" :class="resultClass">
                         <p class="font-bold text-gray-800">
-                            ✅ <span x-text="sendResult?.enviados ?? 0"></span> enviado(s) ·
+                            ✅ <span x-text="sendResult?.enviados ?? 0"></span> aceito(s) pela Meta ·
                             ❌ <span x-text="sendResult?.falhas ?? 0"></span> falha(s) ·
                             ⏭️ <span x-text="sendResult?.ignorados ?? 0"></span> ignorado(s)
+                        </p>
+                        <p x-show="sendResult?.enviados" class="text-gray-600">
+                            "Aceito" ainda não é "entregue": acompanhe o andamento (Enviado → Entregue → Lido) em <strong>Envios recentes</strong>, que se atualiza sozinho em alguns segundos.
                         </p>
                         <template x-for="r in (sendResult?.problemas || []).slice(0, 8)" :key="r.phone">
                             <p class="text-gray-600"><span class="font-semibold" x-text="formatPhone(r.phone)"></span>: <span x-text="r.motivo"></span></p>
@@ -327,6 +332,53 @@
                         <p x-show="sendResult?.erro" class="text-red-700 font-semibold" x-text="sendResult?.erro"></p>
                     </div>
                 </aside>
+            </section>
+
+            <!-- Envios recentes -->
+            <section class="bg-white rounded-2xl border border-gray-200 shadow-sm">
+                <div class="p-4 border-b border-gray-100 flex items-center justify-between gap-3 flex-wrap">
+                    <div>
+                        <h2 class="text-sm font-bold text-gray-900">Envios recentes</h2>
+                        <p class="text-[11px] text-gray-400">Andamento informado pela Meta: Aceito → Enviado → Entregue → Lido (ou Falhou, com o motivo).</p>
+                    </div>
+                    <button @click="loadSends" :disabled="loadingSends"
+                            class="text-xs font-semibold text-emerald-700 bg-emerald-50 hover:bg-emerald-100 px-3 py-1.5 rounded-lg transition disabled:opacity-60">
+                        <span x-text="loadingSends ? 'Atualizando...' : '↻ Atualizar status'"></span>
+                    </button>
+                </div>
+                <div class="overflow-x-auto">
+                    <table class="w-full text-sm">
+                        <thead>
+                            <tr class="text-left text-[11px] uppercase text-gray-400 border-b border-gray-100">
+                                <th class="p-3 whitespace-nowrap">Enviado em</th>
+                                <th class="p-3">Usuário</th>
+                                <th class="p-3">Template</th>
+                                <th class="p-3">Variáveis</th>
+                                <th class="p-3">Status</th>
+                                <th class="p-3">Detalhe</th>
+                            </tr>
+                        </thead>
+                        <tbody class="divide-y divide-gray-50">
+                            <template x-for="s in sends" :key="(s.messageId || '') + s.sentAt + s.phone">
+                                <tr class="align-top">
+                                    <td class="p-3 text-xs whitespace-nowrap" x-text="formatDateTime(s.sentAt)"></td>
+                                    <td class="p-3 text-xs font-semibold whitespace-nowrap" x-text="formatPhone(s.phone)"></td>
+                                    <td class="p-3 text-xs" x-text="s.template"></td>
+                                    <td class="p-3 text-[11px] text-gray-500" x-text="s.parameters.length ? s.parameters.join(' | ') : '—'"></td>
+                                    <td class="p-3 whitespace-nowrap">
+                                        <span class="text-[10px] font-bold px-1.5 py-0.5 rounded" :class="deliveryClass(s.deliveryStatus)" x-text="deliveryLabel(s.deliveryStatus)"></span>
+                                        <p x-show="s.deliveryUpdatedAt && s.deliveryStatus !== 'accepted'" class="text-[10px] text-gray-400 mt-0.5" x-text="formatDateTime(s.deliveryUpdatedAt)"></p>
+                                    </td>
+                                    <td class="p-3 text-[11px] min-w-[12rem]">
+                                        <span x-show="s.errorMessage" class="text-red-600" x-text="s.errorMessage + (s.errorCode ? ' (código ' + s.errorCode + ')' : '')"></span>
+                                        <span x-show="!s.errorMessage" class="text-gray-400" x-text="deliveryHint(s.deliveryStatus)"></span>
+                                    </td>
+                                </tr>
+                            </template>
+                        </tbody>
+                    </table>
+                </div>
+                <p x-show="!sends.length" class="text-center py-8 text-xs text-gray-400">Nenhum envio pelo painel ainda.</p>
             </section>
 
             <p class="text-[11px] text-gray-400 text-center pb-4">
@@ -408,6 +460,8 @@
                 sending: false,
                 sendProgress: 0,
                 sendResult: null,
+                sends: [],
+                loadingSends: false,
 
                 async init() {
                     let saved = null;
@@ -415,7 +469,7 @@
                     if (saved) {
                         this.secret = saved;
                         this.isLoggedIn = true;
-                        await this.loadUsers();
+                        await Promise.all([this.loadUsers(), this.loadSends()]);
                     }
                     this.$watch('filters', () => { this.page = 1; }, { deep: true });
                 },
@@ -432,7 +486,7 @@
                             this.secretInput = '';
                             try { sessionStorage.setItem(STORAGE_KEY, this.secret); } catch (e) { }
                             this.isLoggedIn = true;
-                            await this.loadUsers();
+                            await Promise.all([this.loadUsers(), this.loadSends()]);
                         } else {
                             this.loginError = result.message || 'Chave de administrador inválida.';
                         }
@@ -482,6 +536,20 @@
                         this.loadError = 'Erro de conexão com o servidor.';
                     } finally {
                         this.loading = false;
+                    }
+                },
+
+                async loadSends() {
+                    this.loadingSends = true;
+                    try {
+                        const response = await fetch('/api/admin/users/sends?limit=50', { headers: { 'X-Admin-Secret': this.secret } });
+                        if (this.handleUnauthorized(response)) return;
+                        const result = await response.json();
+                        if (response.ok && result.success) this.sends = result.data || [];
+                    } catch (err) {
+                        // A lista de envios é auxiliar: falha silenciosa, o botão permite tentar de novo
+                    } finally {
+                        this.loadingSends = false;
                     }
                 },
 
@@ -661,8 +729,52 @@
                         this.sending = false;
                         this.confirming = false;
                         this.sendResult = total;
-                        await this.loadUsers();
+                        await Promise.all([this.loadUsers(), this.loadSends()]);
+                        // Os avisos de entrega da Meta chegam alguns segundos depois do envio
+                        if (total.enviados > 0) {
+                            setTimeout(() => this.loadSends(), 8000);
+                            setTimeout(() => { this.loadSends(); this.loadUsers(); }, 30000);
+                        }
                     }
+                },
+
+                get resultClass() {
+                    const r = this.sendResult;
+                    if (!r) return '';
+                    if (r.falhas || r.erro) return 'border-red-100 bg-red-50';
+                    if (!r.enviados && r.ignorados) return 'border-amber-200 bg-amber-50';
+                    return 'border-emerald-100 bg-emerald-50';
+                },
+
+                deliveryLabel(status) {
+                    return {
+                        'accepted': '⏳ Aceito pela Meta',
+                        'accepted_legacy': 'Aceito (sem rastreio)',
+                        'sent': '✓ Enviado',
+                        'delivered': '✓✓ Entregue',
+                        'read': '✓✓ Lido',
+                        'failed': '✕ Falhou'
+                    }[status] || '—';
+                },
+                deliveryClass(status) {
+                    return {
+                        'accepted': 'bg-gray-100 text-gray-600',
+                        'accepted_legacy': 'bg-gray-100 text-gray-500',
+                        'sent': 'bg-sky-50 text-sky-700',
+                        'delivered': 'bg-emerald-50 text-emerald-700',
+                        'read': 'bg-blue-100 text-blue-700',
+                        'failed': 'bg-red-100 text-red-700'
+                    }[status] || 'bg-gray-100 text-gray-400';
+                },
+                deliveryHint(status) {
+                    return {
+                        'accepted': 'Aguardando a Meta confirmar o envio. Se ficar assim por minutos, a mensagem provavelmente não foi entregue.',
+                        'accepted_legacy': 'Enviado antes do rastreio de entrega existir.',
+                        'sent': 'Saiu da Meta; aguardando o celular confirmar o recebimento.',
+                        'delivered': 'Chegou no celular do usuário.',
+                        'read': 'O usuário abriu a mensagem.',
+                        'failed': 'A Meta não entregou a mensagem.'
+                    }[status] || '';
                 },
 
                 // ---------- Formatação ----------

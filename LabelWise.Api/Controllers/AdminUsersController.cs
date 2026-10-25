@@ -28,7 +28,7 @@ namespace LabelWise.Api.Controllers
         private const int MinDiasUsoIntensoPadrao = 5;
         private const int JanelaFrequenciaDias = 30;
         private const int MaxDestinatariosPorEnvio = 100;
-        private const string ColecaoEnvios = "AdminMessageLog";
+        private const string ColecaoEnvios = TemplateDeliveryTracker.ColecaoEnvios;
 
         private static readonly Regex NomeTemplateValido = new("^[a-z0-9_]{1,512}$", RegexOptions.Compiled);
 
@@ -133,17 +133,25 @@ namespace LabelWise.Api.Controllers
                 var usuarios = (await MontarUsuariosAsync(DiasInativoPadrao, MinDiasUsoIntensoPadrao)).ToDictionary(x => x.Phone);
                 var envios = _database.GetCollection<BsonDocument>(ColecaoEnvios);
 
-                var receberamRecentemente = new HashSet<string>();
+                // Telefone → data do envio anterior deste template (aceito pela Meta e sem falha de entrega)
+                var receberamRecentemente = new Dictionary<string, DateTime>();
                 if (request.SkipIfSentWithinDays > 0)
                 {
                     var filtroRecentes = Builders<BsonDocument>.Filter.And(
                         Builders<BsonDocument>.Filter.Eq("Template", templateName),
                         Builders<BsonDocument>.Filter.Eq("Success", true),
+                        Builders<BsonDocument>.Filter.Ne("DeliveryStatus", TemplateDeliveryTracker.StatusFalhou),
                         Builders<BsonDocument>.Filter.Gte("SentAt", DateTime.UtcNow.AddDays(-request.SkipIfSentWithinDays)));
-                    var recentes = await envios.Find(filtroRecentes).Project(Builders<BsonDocument>.Projection.Include("UserId")).ToListAsync();
+                    var recentes = await envios.Find(filtroRecentes)
+                        .Project(Builders<BsonDocument>.Projection.Include("UserId").Include("SentAt"))
+                        .ToListAsync();
                     foreach (var r in recentes)
                     {
-                        if (r.TryGetValue("UserId", out var uid) && uid.IsString) receberamRecentemente.Add(uid.AsString);
+                        if (!r.TryGetValue("UserId", out var uid) || !uid.IsString ||
+                            !r.TryGetValue("SentAt", out var sentAt) || !sentAt.IsBsonDateTime) continue;
+                        var quando = sentAt.ToUniversalTime();
+                        if (!receberamRecentemente.TryGetValue(uid.AsString, out var atual) || quando > atual)
+                            receberamRecentemente[uid.AsString] = quando;
                     }
                 }
 
@@ -159,10 +167,15 @@ namespace LabelWise.Api.Controllers
                         continue;
                     }
 
-                    if (receberamRecentemente.Contains(phone))
+                    if (receberamRecentemente.TryGetValue(phone, out var envioAnterior))
                     {
                         ignorados++;
-                        resultados.Add(new { phone, status = "ignorado", motivo = $"Já recebeu este template nos últimos {request.SkipIfSentWithinDays} dia(s)." });
+                        resultados.Add(new
+                        {
+                            phone,
+                            status = "ignorado",
+                            motivo = $"Já recebeu este template em {envioAnterior.AddHours(-3):dd/MM 'às' HH:mm}. Para reenviar, desmarque \"Não reenviar\"."
+                        });
                         continue;
                     }
 
@@ -170,7 +183,9 @@ namespace LabelWise.Api.Controllers
                         .Select(p => PersonalizarParametro(p, usuario))
                         .ToArray();
 
-                    bool sucesso = await _whatsAppSender.SendTemplateMessageAsync(phone, templateName, parametros);
+                    var envio = await _whatsAppSender.SendTemplateMessageWithResultAsync(phone, templateName, parametros);
+                    var statusInicial = envio.Success ? TemplateDeliveryTracker.StatusAceito : TemplateDeliveryTracker.StatusFalhou;
+                    var agoraEnvio = DateTime.UtcNow;
 
                     await envios.InsertOneAsync(new BsonDocument
                     {
@@ -179,11 +194,17 @@ namespace LabelWise.Api.Controllers
                         { "Template", templateName },
                         { "Parameters", new BsonArray(parametros) },
                         { "Segment", request.Segment != null ? new BsonString(request.Segment) : BsonNull.Value },
-                        { "Success", sucesso },
-                        { "SentAt", DateTime.UtcNow }
+                        { "Success", envio.Success },
+                        { "MessageId", envio.MessageId != null ? new BsonString(envio.MessageId) : BsonNull.Value },
+                        { "DeliveryStatus", statusInicial },
+                        { "DeliveryStatusRank", TemplateDeliveryTracker.Rank(statusInicial) },
+                        { "DeliveryUpdatedAt", agoraEnvio },
+                        { "ErrorCode", envio.ErrorCode != null ? new BsonString(envio.ErrorCode) : BsonNull.Value },
+                        { "ErrorMessage", envio.ErrorMessage != null ? new BsonString(envio.ErrorMessage) : BsonNull.Value },
+                        { "SentAt", agoraEnvio }
                     });
 
-                    if (sucesso)
+                    if (envio.Success)
                     {
                         enviados++;
                         resultados.Add(new { phone, status = "enviado", motivo = (string?)null });
@@ -191,7 +212,12 @@ namespace LabelWise.Api.Controllers
                     else
                     {
                         falhas++;
-                        resultados.Add(new { phone, status = "falha", motivo = "A Meta recusou o envio (confira o nome do template e a quantidade de variáveis)." });
+                        resultados.Add(new
+                        {
+                            phone,
+                            status = "falha",
+                            motivo = $"A Meta recusou o envio: {envio.ErrorMessage ?? "erro desconhecido"}" + (envio.ErrorCode != null ? $" (código {envio.ErrorCode})" : "")
+                        });
                     }
                 }
 
@@ -206,6 +232,50 @@ namespace LabelWise.Api.Controllers
                 return StatusCode(500, new { success = false, message = "Erro interno ao enviar as mensagens." });
             }
         }
+
+        // Últimos envios do painel, com o andamento da entrega informado pela Meta
+        [HttpGet("sends")]
+        public async Task<IActionResult> GetEnviosRecentes(
+            [FromHeader(Name = "X-Admin-Secret")] string? secret,
+            [FromQuery] int limit = 50)
+        {
+            var negado = ValidarAcesso(secret);
+            if (negado != null) return negado;
+
+            limit = Math.Clamp(limit, 1, 200);
+
+            var docs = await _database.GetCollection<BsonDocument>(ColecaoEnvios)
+                .Find(FilterDefinition<BsonDocument>.Empty)
+                .Sort(Builders<BsonDocument>.Sort.Descending("SentAt"))
+                .Limit(limit)
+                .ToListAsync();
+
+            var data = docs.Select(d => new
+            {
+                phone = TextoOuNull(d, "UserId"),
+                template = TextoOuNull(d, "Template"),
+                segment = TextoOuNull(d, "Segment"),
+                parameters = d.TryGetValue("Parameters", out var ps) && ps.IsBsonArray
+                    ? ps.AsBsonArray.Where(x => x.IsString).Select(x => x.AsString).ToList()
+                    : new List<string>(),
+                sentAt = DataOuNull(d, "SentAt"),
+                // Envios anteriores a este ajuste não têm DeliveryStatus: só se sabe se a Meta aceitou
+                deliveryStatus = TextoOuNull(d, "DeliveryStatus")
+                    ?? (d.TryGetValue("Success", out var ok) && ok.IsBoolean && ok.AsBoolean ? "accepted_legacy" : TemplateDeliveryTracker.StatusFalhou),
+                deliveryUpdatedAt = DataOuNull(d, "DeliveryUpdatedAt"),
+                messageId = TextoOuNull(d, "MessageId"),
+                errorCode = TextoOuNull(d, "ErrorCode"),
+                errorMessage = TextoOuNull(d, "ErrorMessage")
+            });
+
+            return Ok(new { success = true, data });
+        }
+
+        private static string? TextoOuNull(BsonDocument d, string campo) =>
+            d.TryGetValue(campo, out var v) && v.IsString ? v.AsString : null;
+
+        private static DateTime? DataOuNull(BsonDocument d, string campo) =>
+            d.TryGetValue(campo, out var v) && v.IsBsonDateTime ? v.ToUniversalTime() : null;
 
         private IActionResult? ValidarAcesso(string? secret)
         {
@@ -417,7 +487,9 @@ namespace LabelWise.Api.Controllers
                     MensagensRecebidas: perfil != null && perfil.TryGetValue("InboundCount", out var ic) && ic.IsNumeric ? ic.ToInt32() : 0,
                     UltimoTemplate: ultimoEnvio?.Template,
                     UltimoEnvioEm: ultimoEnvio?.SentAt,
-                    UltimoEnvioSucesso: ultimoEnvio?.Success));
+                    UltimoEnvioSucesso: ultimoEnvio?.Success,
+                    UltimoEnvioStatus: ultimoEnvio?.DeliveryStatus,
+                    UltimoEnvioErro: ultimoEnvio?.ErrorMessage));
             }
 
             return linhas
@@ -493,7 +565,7 @@ namespace LabelWise.Api.Controllers
             }
         }
 
-        private sealed record UltimoEnvio(string? Template, DateTime? SentAt, bool? Success);
+        private sealed record UltimoEnvio(string? Template, DateTime? SentAt, bool? Success, string? DeliveryStatus, string? ErrorMessage);
 
         private async Task<Dictionary<string, UltimoEnvio>> ObterUltimosEnviosAsync()
         {
@@ -505,7 +577,9 @@ namespace LabelWise.Api.Controllers
                     { "_id", "$UserId" },
                     { "template", new BsonDocument("$first", "$Template") },
                     { "sentAt", new BsonDocument("$first", "$SentAt") },
-                    { "success", new BsonDocument("$first", "$Success") }
+                    { "success", new BsonDocument("$first", "$Success") },
+                    { "deliveryStatus", new BsonDocument("$first", "$DeliveryStatus") },
+                    { "errorMessage", new BsonDocument("$first", "$ErrorMessage") }
                 })
             });
 
@@ -515,10 +589,18 @@ namespace LabelWise.Api.Controllers
                 .Where(d => d["_id"].IsString)
                 .ToDictionary(
                     d => d["_id"].AsString,
-                    d => new UltimoEnvio(
-                        d["template"].IsString ? d["template"].AsString : null,
-                        d["sentAt"].IsBsonDateTime ? d["sentAt"].ToUniversalTime() : null,
-                        d["success"].IsBoolean ? d["success"].AsBoolean : null));
+                    d =>
+                    {
+                        bool? success = d["success"].IsBoolean ? d["success"].AsBoolean : null;
+                        string? delivery = d.TryGetValue("deliveryStatus", out var ds) && ds.IsString ? ds.AsString
+                            : success == true ? "accepted_legacy" : success == false ? TemplateDeliveryTracker.StatusFalhou : null;
+                        return new UltimoEnvio(
+                            d["template"].IsString ? d["template"].AsString : null,
+                            d["sentAt"].IsBsonDateTime ? d["sentAt"].ToUniversalTime() : null,
+                            success,
+                            delivery,
+                            d.TryGetValue("errorMessage", out var em) && em.IsString ? em.AsString : null);
+                    });
         }
 
         #endregion
@@ -566,7 +648,9 @@ namespace LabelWise.Api.Controllers
         int MensagensRecebidas,
         string? UltimoTemplate,
         DateTime? UltimoEnvioEm,
-        bool? UltimoEnvioSucesso);
+        bool? UltimoEnvioSucesso,
+        string? UltimoEnvioStatus,
+        string? UltimoEnvioErro);
 
     public record AdminSendTemplateRequest(
         List<string>? Phones,

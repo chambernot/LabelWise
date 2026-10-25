@@ -128,6 +128,9 @@ namespace LabelWise.Api.Controllers
 
             try
             {
+                // Avisos de entrega das mensagens que enviamos (sent/delivered/read/failed)
+                await RegistrarStatusDeEntregaAsync(payload);
+
                 var messagingEvent = payload?.Entry?.FirstOrDefault()
                     ?.Changes?.FirstOrDefault()
                     ?.Value?.Messages?.FirstOrDefault();
@@ -987,6 +990,42 @@ namespace LabelWise.Api.Controllers
                 }
 
                 return Ok();
+            }
+        }
+
+        private async Task RegistrarStatusDeEntregaAsync(MetaWebhookPayload? payload)
+        {
+            if (payload?.Entry == null) return;
+
+            foreach (var status in payload.Entry
+                         .SelectMany(e => e.Changes ?? new List<MetaChange>())
+                         .SelectMany(c => c.Value?.Statuses ?? new List<MetaStatus>()))
+            {
+                if (string.IsNullOrWhiteSpace(status.Id) || string.IsNullOrWhiteSpace(status.Status)) continue;
+
+                try
+                {
+                    var quando = long.TryParse(status.Timestamp, out var unix)
+                        ? DateTimeOffset.FromUnixTimeSeconds(unix).UtcDateTime
+                        : DateTime.UtcNow;
+
+                    var erro = status.Errors?.FirstOrDefault();
+                    string? errorMessage = erro == null ? null
+                        : !string.IsNullOrWhiteSpace(erro.ErrorData?.Details) ? erro.ErrorData!.Details
+                        : erro.Message ?? erro.Title;
+
+                    await TemplateDeliveryTracker.RegistrarStatusAsync(
+                        _database, status.Id, status.Status, quando, erro?.Code?.ToString(), errorMessage);
+
+                    if (status.Status == TemplateDeliveryTracker.StatusFalhou)
+                    {
+                        _logger.LogWarning("[WhatsApp Status] Mensagem {MessageId} falhou: {Code} {Error}", status.Id, erro?.Code, errorMessage);
+                    }
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogWarning(ex, "Não foi possível registrar o status de entrega {MessageId}.", status.Id);
+                }
             }
         }
 
@@ -2219,7 +2258,33 @@ Retorne APENAS o texto da mensagem pronto para envio.
         public class MetaWebhookPayload { public List<MetaEntry>? Entry { get; set; } }
         public class MetaEntry { public List<MetaChange>? Changes { get; set; } }
         public class MetaChange { public MetaValue? Value { get; set; } }
-        public class MetaValue { public List<MetaMessage>? Messages { get; set; } }
+        public class MetaValue
+        {
+            public List<MetaMessage>? Messages { get; set; }
+            public List<MetaStatus>? Statuses { get; set; }
+        }
+
+        // Aviso de entrega de uma mensagem enviada por nós
+        public class MetaStatus
+        {
+            public string? Id { get; set; }
+            public string? Status { get; set; }
+            public string? Timestamp { get; set; }
+            [JsonPropertyName("recipient_id")]
+            public string? RecipientId { get; set; }
+            public List<MetaStatusError>? Errors { get; set; }
+        }
+
+        public class MetaStatusError
+        {
+            public int? Code { get; set; }
+            public string? Title { get; set; }
+            public string? Message { get; set; }
+            [JsonPropertyName("error_data")]
+            public MetaStatusErrorData? ErrorData { get; set; }
+        }
+
+        public class MetaStatusErrorData { public string? Details { get; set; } }
 
         public class MetaMessage
         {
