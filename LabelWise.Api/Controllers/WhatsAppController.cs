@@ -140,6 +140,16 @@ namespace LabelWise.Api.Controllers
                     return Ok();
                 }
 
+                // Painel gerencial: registra a interação sem nunca interromper o atendimento
+                try
+                {
+                    await UserActivityTracker.RegistrarMensagemRecebidaAsync(_database, senderPhone, messageType);
+                }
+                catch (Exception exAtividade)
+                {
+                    _logger.LogWarning(exAtividade, "Não foi possível registrar a atividade de {Phone}.", senderPhone);
+                }
+
                 // Classificação do usuário antes de processar mídia, para não gastar IA com quem já está bloqueado
                 var patientsCollectionCheck = _database.GetCollection<MongoDB.Bson.BsonDocument>("Nutrition_Patients");
                 var patientDocCheck = await patientsCollectionCheck.Find(Builders<MongoDB.Bson.BsonDocument>.Filter.Eq("_id", senderPhone)).FirstOrDefaultAsync();
