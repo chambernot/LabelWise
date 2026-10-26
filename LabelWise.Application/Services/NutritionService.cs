@@ -105,6 +105,11 @@ namespace LabelWise.Application.Services.Nutrition
             // 1. BUSCAR O HISTÓRICO DE MENSAGENS RECENTES (Memória de curto prazo)
             var chatHistory = await _repository.ObterUltimasMensagensAsync(request.UserId, 6);
 
+            // A mensagem atual vai como pedido; se ela já estiver no histórico, a IA a veria duas vezes e somaria as quantidades
+            chatHistory = chatHistory
+                .Where(m => !(m.Role == "user" && m.Content == request.TextInput))
+                .ToList();
+
             // 🚀 2. BUSCAR O PERFIL CLÍNICO FIXO DO PACIENTE
             var paciente = await _repository.ObterPacientePorIdAsync(request.UserId);
 

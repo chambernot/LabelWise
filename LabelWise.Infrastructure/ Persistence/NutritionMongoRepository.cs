@@ -255,11 +255,15 @@ namespace LabelWise.Infrastructure.Repositories
         {
             var corteTempo = DateTime.UtcNow.AddHours(-2);
 
-            return await _chatHistory
+            // As N mensagens MAIS RECENTES das últimas 2 horas, devolvidas em ordem cronológica
+            var recentes = await _chatHistory
                 .Find(x => x.UserId == userId && x.Timestamp >= corteTempo)
-                .SortBy(x => x.Timestamp)
+                .SortByDescending(x => x.Timestamp)
                 .Limit(limite)
                 .ToListAsync();
+
+            recentes.Reverse();
+            return recentes;
         }
     }
 }

@@ -960,8 +960,6 @@ namespace LabelWise.Api.Controllers
                     await _nutritionRepository.ExcluirMealLogAsync(refeicaoParaCorrigir.Id);
                 }
 
-                await _nutritionRepository.SalvarMensagemHistoricoAsync(senderPhone, "user", textoFinalParaIa);
-
                 var request = new ParseMealRequestDto(
                     senderPhone,
                     TextInput: textoFinalParaIa,
@@ -972,6 +970,10 @@ namespace LabelWise.Api.Controllers
                 );
 
                 var result = await _nutritionService.ProcessMealEntryAsync(request);
+
+                // Grava no histórico só depois da análise: se for gravada antes, a IA recebe a mesma mensagem
+                // duas vezes (no histórico e como pedido atual) e soma as quantidades em dobro
+                await _nutritionRepository.SalvarMensagemHistoricoAsync(senderPhone, "user", textoFinalParaIa);
                 DailyStatusResponseDto? statusDoDia = null;
 
                 bool isSystemError = result.ClarificationQuestion != null &&
