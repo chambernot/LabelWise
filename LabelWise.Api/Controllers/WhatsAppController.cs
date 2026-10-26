@@ -1500,8 +1500,7 @@ namespace LabelWise.Api.Controllers
 
                     try
                     {
-                        // O template trial_engajamento não tem variáveis na Meta; enviar parâmetro faz a Meta recusar (erro 132000)
-                        bool success = await _whatsAppSender.SendTemplateMessageAsync(phone, "trial_engajamento");
+                        bool success = await EnviarLembreteDeRegistroAsync(phone);
 
                         if (success) { sentCount++; _logger.LogInformation("Lembrete do trial enviado no dia {TrialDay}.", trialDay); }
                         else
@@ -1525,6 +1524,25 @@ namespace LabelWise.Api.Controllers
                 _logger.LogError(ex, "Erro crítico no endpoint de lembretes de trial.");
                 return StatusCode(500, new { success = false, message = "Erro interno ao processar lembretes de trial." });
             }
+        }
+
+        // Lembrete de registro: usa o template de Utilidade (não sofre o bloqueio 131049 de marketing).
+        // Enquanto ele não existir ou não estiver aprovado na Meta, a recusa é imediata e o envio cai no
+        // template antigo de Marketing. Nenhum dos dois tem variáveis (enviar parâmetro gera o erro 132000).
+        private const string TemplateLembreteRegistro = "lembrete_registro_refeicoes";
+        private const string TemplateLembreteRegistroAntigo = "trial_engajamento";
+
+        private async Task<bool> EnviarLembreteDeRegistroAsync(string phone)
+        {
+            var templatePrincipal = _configuration["MetaWhatsApp:TemplateLembreteRegistro"]?.Trim();
+            if (string.IsNullOrEmpty(templatePrincipal)) templatePrincipal = TemplateLembreteRegistro;
+
+            var envio = await _whatsAppSender.SendTemplateMessageWithResultAsync(phone, templatePrincipal);
+            if (envio.Success || templatePrincipal == TemplateLembreteRegistroAntigo) return envio.Success;
+
+            _logger.LogWarning("[Lembrete Trial] Template {Template} recusado pela Meta ({Code}: {Erro}); usando {Antigo}.",
+                templatePrincipal, envio.ErrorCode, envio.ErrorMessage, TemplateLembreteRegistroAntigo);
+            return await _whatsAppSender.SendTemplateMessageAsync(phone, TemplateLembreteRegistroAntigo);
         }
 
         private async Task<bool> ReserveTrialInteractionOrNotifyAsync(
