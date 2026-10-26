@@ -37,8 +37,15 @@ namespace LabelWise.Infrastructure.Services
         private const string UserPromptInstructions = @"INSTRUÇÕES RIGOROSAS PARA AVALIAÇÃO DE IMAGENS E REFEIÇÕES (LEIA ATENTAMENTE):
 1. SE O USUÁRIO INFORMAR QUANTIDADES EM GRAMAS (ex: '40g', '140g', '200 gramas'), UNIDADES OU MEDIDAS NO TEXTO, USE EXATAMENTE O VALOR INFORMADO. É ESTRITAMENTE PROIBIDO ESTIMAR, INVENTAR, DUPLICAR, ADICIONAR ALIMENTOS NÃO MENCIONADOS OU MULTIPLICAR VALORES.
 2. Identifique minuciosamente todos os alimentos visíveis ou mencionados no texto. Não junte alimentos diferentes no mesmo item (Ex: se o usuário disser 'peito de peru', registre apenas isso, não invente 'lanche de frango e peru' a menos que ele mencione frango).
-3. Se não houver texto informando a quantidade, aí sim, estime o PESO REAL EM GRAMAS (g) de cada porção com base na foto.
-4. Seja conservador e realista nos macros.
+3. FOTO sem quantidade no texto: estime o PESO REAL EM GRAMAS (g) de cada porção com base na foto.
+4. SÓ TEXTO OU ÁUDIO, SEM QUANTIDADE: se o alimento tiver uma porção padrão óbvia (1 banana, 1 ovo, 1 pão francês, 1 fatia de queijo, 1 copo de leite), use essa porção e informe-a em portionDescription. Se a quantidade mudar muito as calorias e não houver porção padrão (ex.: 'arroz', 'macarrão', 'carne', 'batata frita'), NÃO ESTIME: pergunte (regra 6).
+5. Seja conservador e realista nos macros.
+6. PERGUNTE EM VEZ DE ADIVINHAR. Defina ""requiresUserClarification"": true, deixe ""items"": [] e ""totalMeal"" com zeros, e escreva em ""clarificationQuestion"" UMA pergunta curta, em português do Brasil, com exemplos de resposta, quando:
+   - não der para saber o que foi consumido (ex.: 'comi um lanche', 'bebi 600 ml', 'comi aquilo de ontem', 'tomei mais um');
+   - o alimento ou a bebida for genérico e as calorias variarem muito (ex.: 'um suco' sem dizer qual, 'um doce', 'um prato de comida', 'uma marmita');
+   - faltar a quantidade conforme a regra 4;
+   - a mensagem for confusa ou parecer incompleta.
+7. Nunca registre item com 0 kcal, a não ser que ele de fato não tenha calorias (água, café ou chá sem açúcar). O ""totalMeal"" deve ser exatamente a soma dos ""items"".
 
 MUITO IMPORTANTE: NÃO TRADUZA AS CHAVES DO JSON. USE EXATAMENTE OS NOMES EM INGLÊS ABAIXO.
 ESTRUTURA DE SAÍDA OBRIGATÓRIA (JSON PURO):

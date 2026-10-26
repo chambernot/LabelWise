@@ -179,6 +179,20 @@ namespace LabelWise.Application.Services.Nutrition
                 return aiAnalysis;
             }
 
+            // O total gravado e exibido é sempre a soma dos itens: a IA às vezes devolve um total que não
+            // corresponde aos itens (ex.: item "Água 0 kcal" com total de 400 kcal)
+            if (aiAnalysis.Items != null && aiAnalysis.Items.Any())
+            {
+                aiAnalysis = aiAnalysis with
+                {
+                    TotalMeal = new MacroSummaryDto(
+                        aiAnalysis.Items.Sum(i => i.Calories),
+                        aiAnalysis.Items.Sum(i => i.ProteinG),
+                        aiAnalysis.Items.Sum(i => i.CarbsG),
+                        aiAnalysis.Items.Sum(i => i.FatG))
+                };
+            }
+
             var logTime = request.LocalTime != default ? request.LocalTime : DateTime.UtcNow;
 
             var mealLog = new MealLog(

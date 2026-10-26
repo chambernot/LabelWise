@@ -745,18 +745,46 @@ namespace LabelWise.Api.Controllers
                                     (textoBruto ?? "").Contains("água", StringComparison.OrdinalIgnoreCase) ||
                                     (textoBruto ?? "").Contains("h2o", StringComparison.OrdinalIgnoreCase);
 
+                // Só o volume, sem dizer o que bebeu (ex.: "tomei mais 600 ml"): pergunta em vez de presumir.
+                // A resposta é tratada logo abaixo ("água") ou segue para a IA com o contexto pendente (outra bebida).
+                if (!mencionaAgua && string.IsNullOrWhiteSpace(imagemBase64) && EhRegistroSoDeVolume(textoBruto ?? ""))
+                {
+                    int volumeInformado = LerVolumeMl(textoBruto ?? "") ?? 0;
+                    string perguntaBebida = $"🥤 Anotei *{volumeInformado} ml*. O que você bebeu?\n\n" +
+                                            "Responda *água* para eu somar na sua hidratação, ou diga a bebida " +
+                                            "(ex.: *suco de laranja*, *café com leite*, *refrigerante*) para eu calcular as calorias.";
+
+                    await _nutritionRepository.SalvarClarificacaoPendenteAsync(new MealClarificationContext(
+                        userId: senderPhone,
+                        originalTextInput: textoBruto ?? "",
+                        originalBase64Image: null,
+                        clarificationQuestion: perguntaBebida));
+
+                    await _whatsAppSender.SendTextMessageAsync(senderPhone, perguntaBebida);
+                    await _nutritionRepository.SalvarMensagemHistoricoAsync(senderPhone, "assistant", perguntaBebida);
+                    return Ok();
+                }
+
                 if (mencionaAgua)
                 {
                     int quantidadeMl = 250;
+                    int? volumeNaMensagem = LerVolumeMl(textoBruto ?? "");
 
-                    var matchMl = Regex.Match(textoBruto ?? "", @"(\d+)\s*(ml|litros|l)\b", RegexOptions.IgnoreCase);
-                    if (matchMl.Success)
+                    // Resposta "água" à pergunta "O que você bebeu?": usa o volume que o usuário informou antes
+                    if (volumeNaMensagem == null)
                     {
-                        quantidadeMl = int.Parse(matchMl.Groups[1].Value);
-                        if (matchMl.Groups[2].Value.Equals("l", StringComparison.OrdinalIgnoreCase) || matchMl.Groups[2].Value.Equals("litros", StringComparison.OrdinalIgnoreCase))
+                        var pendenteBebida = await _nutritionRepository.ObterClarificacaoPendenteAsync(senderPhone);
+                        int? volumePendente = pendenteBebida != null ? LerVolumeMl(pendenteBebida.OriginalTextInput ?? "") : null;
+                        if (volumePendente != null)
                         {
-                            quantidadeMl *= 1000;
+                            volumeNaMensagem = volumePendente;
+                            await _nutritionRepository.RemoverClarificacaoPendenteAsync(senderPhone);
                         }
+                    }
+
+                    if (volumeNaMensagem != null)
+                    {
+                        quantidadeMl = volumeNaMensagem.Value;
                     }
                     else
                     {
@@ -901,7 +929,7 @@ namespace LabelWise.Api.Controllers
                 if (contextoPendente != null)
                 {
                     textoFinalParaIa = $"[Contexto Anterior da Refeição: {contextoPendente.OriginalTextInput}] " +
-                                       $"[Alerta de Restrição Enviado: {contextoPendente.ClarificationQuestion}] " +
+                                       $"[Pergunta enviada ao usuário: {contextoPendente.ClarificationQuestion}] " +
                                        $"[Confirmação / Resposta do Usuário: {textoBruto}] " +
                                        $"Instrução: Processe e registre definitivamente esta refeição considerando a resposta do usuário.";
 
@@ -1203,6 +1231,42 @@ namespace LabelWise.Api.Controllers
         }
 
         #endregion
+
+        // Volume em ml ou litros, aceitando decimal ("1,5 litro", "600ml", "2 l")
+        private static readonly Regex VolumeRegex = new(@"(\d+(?:[.,]\d+)?)\s*(ml|mls|lt|litros?|l)\b", RegexOptions.IgnoreCase | RegexOptions.Compiled);
+
+        private static readonly HashSet<string> PalavrasDeRegistroDeAgua = new(StringComparer.OrdinalIgnoreCase)
+        {
+            "tomei", "bebi", "mais", "de", "do", "da", "um", "uma", "uns", "umas", "e", "eu", "ja", "já", "agora", "hoje",
+            "acabei", "foram", "foi", "so", "só", "cerca", "quase", "aproximadamente", "copo", "copos", "garrafa", "garrafas"
+        };
+
+        // Volume da mensagem em ml ("600 ml" → 600, "1,5 litro" → 1500); null se não houver volume
+        private static int? LerVolumeMl(string texto)
+        {
+            var match = VolumeRegex.Match(texto);
+            if (!match.Success ||
+                !decimal.TryParse(match.Groups[1].Value.Replace(",", "."), System.Globalization.NumberStyles.Number,
+                    System.Globalization.CultureInfo.InvariantCulture, out var volume))
+            {
+                return null;
+            }
+
+            // "ml" é mililitro; qualquer outra unidade aceita (l, lt, litro, litros) é litro
+            bool emLitros = !match.Groups[2].Value.StartsWith("ml", StringComparison.OrdinalIgnoreCase);
+            return (int)Math.Round(emLitros ? volume * 1000 : volume);
+        }
+
+        // Mensagem que só informa um volume, sem dizer o que foi bebido.
+        // "Tomei mais 600 ml" → sim (o bot pergunta o que foi); "bebi 300ml de suco" → não (tem "suco"), segue para a IA.
+        private static bool EhRegistroSoDeVolume(string texto)
+        {
+            if (!VolumeRegex.IsMatch(texto)) return false;
+
+            var resto = VolumeRegex.Replace(texto, " ");
+            resto = Regex.Replace(resto, "[^a-zA-ZáéíóúâêîôûãõçÁÉÍÓÚÂÊÎÔÛÃÕÇ ]", " ");
+            return resto.Split(' ', StringSplitOptions.RemoveEmptyEntries).All(p => PalavrasDeRegistroDeAgua.Contains(p));
+        }
 
         private static bool EhIntencaoRefeicaoOuComida(string textoLimpo, string textoOriginal, bool temImagem, bool temContextoPendente)
         {
@@ -2138,7 +2202,7 @@ Retorne APENAS o texto da mensagem pronto para envio.
                 return $"💡 *Conselho do Nutri:* \n\n{(!string.IsNullOrWhiteSpace(aiResult.AdviceText) ? aiResult.AdviceText : "Como posso ajudar?")}";
 
             if (aiResult.RequiresUserClarification)
-                return $"🤔 *Atenção ao Protocolo / Esclarecimento:*\n{aiResult.ClarificationQuestion}";
+                return $"🤔 *Só mais um detalhe:*\n{aiResult.ClarificationQuestion}";
 
             var prato = !string.IsNullOrWhiteSpace(aiResult.DishName) ? aiResult.DishName : aiResult.MealType;
             var calorias = aiResult.TotalMeal?.Calories ?? 0;
