@@ -14,9 +14,11 @@ namespace LabelWise.Infrastructure.Repositories
         private readonly IMongoCollection<Glp1Alert> _alerts;
         private readonly IMongoCollection<MealLog> _mealLogs;
         private readonly IMongoCollection<BsonDocument> _waterLogs;
+        private readonly IMongoCollection<BsonDocument> _weightLogs;
 
         public Glp1Repository(IMongoDatabase database)
         {
+            _weightLogs = database.GetCollection<BsonDocument>("WeightLogs");
             _profiles = database.GetCollection<Glp1Profile>(MongoCollectionNames.Glp1Profiles);
             _symptomLogs = database.GetCollection<Glp1SymptomLog>(MongoCollectionNames.Glp1SymptomLogs);
             _alerts = database.GetCollection<Glp1Alert>(MongoCollectionNames.Glp1Alerts);
@@ -27,6 +29,36 @@ namespace LabelWise.Infrastructure.Repositories
         public async Task<Glp1Profile?> ObterPerfilAsync(string userId)
         {
             return await _profiles.Find(x => x.Id == userId).FirstOrDefaultAsync();
+        }
+
+        public async Task SalvarPerfilAsync(Glp1Profile perfil)
+        {
+            await _profiles.ReplaceOneAsync(x => x.Id == perfil.Id, perfil, new ReplaceOptions { IsUpsert = true });
+        }
+
+        public async Task ApagarPerfilAsync(string userId)
+        {
+            await _profiles.DeleteOneAsync(x => x.Id == userId);
+        }
+
+        public async Task RegistrarPesoAsync(string userId, decimal pesoKg, DateTime agoraUtc)
+        {
+            var inicioDiaUtc = DateTime.SpecifyKind(agoraUtc.AddHours(-3).Date.AddHours(3), DateTimeKind.Utc);
+            var filter = Builders<BsonDocument>.Filter.And(
+                Builders<BsonDocument>.Filter.Eq("UserId", userId),
+                Builders<BsonDocument>.Filter.Gte("LoggedAt", inicioDiaUtc),
+                Builders<BsonDocument>.Filter.Lt("LoggedAt", inicioDiaUtc.AddDays(1)));
+
+            var existente = await _weightLogs.Find(filter).FirstOrDefaultAsync();
+            var doc = new BsonDocument
+            {
+                { "_id", existente != null ? existente["_id"] : Guid.NewGuid().ToString() },
+                { "UserId", userId },
+                { "WeightKg", (double)pesoKg },
+                { "LoggedAt", agoraUtc }
+            };
+
+            await _weightLogs.ReplaceOneAsync(Builders<BsonDocument>.Filter.Eq("_id", doc["_id"]), doc, new ReplaceOptions { IsUpsert = true });
         }
 
         public async Task<int> ContarSintomasAsync(string userId)

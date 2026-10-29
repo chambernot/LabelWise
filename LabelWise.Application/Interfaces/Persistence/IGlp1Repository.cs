@@ -7,6 +7,12 @@ namespace LabelWise.Application.Interfaces.Persistence;
 public interface IGlp1Repository
 {
     Task<Glp1Profile?> ObterPerfilAsync(string userId);
+    Task SalvarPerfilAsync(Glp1Profile perfil);
+    Task ApagarPerfilAsync(string userId);
+
+    // Grava em WeightLogs (o mesmo do comando "peso 72kg"): um registro por dia de Brasília, substituído se já houver
+    Task RegistrarPesoAsync(string userId, decimal pesoKg, DateTime agoraUtc);
+
     Task<int> ContarSintomasAsync(string userId);
     Task<int> ContarAlertasAsync(string userId);
 
