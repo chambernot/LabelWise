@@ -2,6 +2,7 @@ using LabelWise.Application.Interfaces;
 using LabelWise.Application.Interfaces.Persistence;
 using LabelWise.Domain.Entities.Glp1;
 using LabelWise.Shared.Options;
+using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using System.Globalization;
 using System.Text;
@@ -16,17 +17,27 @@ public class Glp1WhatsAppHandler
 {
     public const string RespostaReset = "Dados GLP-1 apagados. Pode recomeçar.";
     public const string RespostaNaoConfigurado = "Modo GLP-1 não configurado.";
+    public const string RespostaComandoDesconhecido =
+        "🧪 Não reconheci esse comando do Modo GLP-1. Você quis dizer:\n\n" +
+        "• *glp1 status*: mostra seus dados GLP-1\n" +
+        "• *glp1 reset*: apaga seus dados GLP-1";
 
     private static readonly string[] DiasDaSemana = { "domingo", "segunda", "terça", "quarta", "quinta", "sexta", "sábado" };
 
     private readonly IGlp1Repository _repository;
     private readonly IWhatsAppSenderService _whatsAppSender;
+    private readonly ILogger<Glp1WhatsAppHandler> _logger;
     private readonly HashSet<string> _telefonesLiberados;
 
-    public Glp1WhatsAppHandler(IGlp1Repository repository, IWhatsAppSenderService whatsAppSender, IOptions<Glp1Options> options)
+    public Glp1WhatsAppHandler(
+        IGlp1Repository repository,
+        IWhatsAppSenderService whatsAppSender,
+        IOptions<Glp1Options> options,
+        ILogger<Glp1WhatsAppHandler> logger)
     {
         _repository = repository;
         _whatsAppSender = whatsAppSender;
+        _logger = logger;
         _telefonesLiberados = (options.Value.AllowedPhones ?? Array.Empty<string>())
             .Select(SomenteDigitos)
             .Where(x => x.Length > 0)
@@ -40,23 +51,44 @@ public class Glp1WhatsAppHandler
 
     public async Task<bool> TryHandleAsync(string phone, string? text)
     {
-        if (!TelefoneLiberado(phone) || string.IsNullOrWhiteSpace(text))
+        if (string.IsNullOrWhiteSpace(text))
         {
             return false;
         }
 
-        switch (NormalizarComando(text))
+        // Sem espaços: "glp1 status", "glp1status" e "GLP-1 Status" viram "glp1status"
+        var comando = NormalizarComando(text);
+        bool pareceComandoGlp1 = comando.StartsWith("glp1", StringComparison.Ordinal);
+
+        if (!TelefoneLiberado(phone))
         {
-            case "glp1 status":
+            if (pareceComandoGlp1)
+            {
+                _logger.LogInformation(
+                    "Comando GLP-1 recebido de telefone fora de Glp1:AllowedPhones (final {Final}); {Quantidade} telefone(s) configurado(s).",
+                    FinalDoTelefone(phone), _telefonesLiberados.Count);
+            }
+            return false;
+        }
+
+        switch (comando)
+        {
+            case "glp1status":
                 await _whatsAppSender.SendTextMessageAsync(phone, await MontarStatusAsync(phone));
                 return true;
 
-            case "glp1 reset":
+            case "glp1reset":
                 await _repository.ApagarDadosAsync(phone);
                 await _whatsAppSender.SendTextMessageAsync(phone, RespostaReset);
                 return true;
 
             default:
+                // Começou com "glp1" mas não é um comando conhecido: pergunta em vez de mandar para a IA
+                if (pareceComandoGlp1)
+                {
+                    await _whatsAppSender.SendTextMessageAsync(phone, RespostaComandoDesconhecido);
+                    return true;
+                }
                 return false;
         }
     }
@@ -110,11 +142,16 @@ public class Glp1WhatsAppHandler
         return sb.ToString();
     }
 
-    // "GLP-1 Status!" → "glp1 status"
+    // "GLP-1 Status!" → "glp1status"
     private static string NormalizarComando(string text)
     {
-        var semPontuacao = Regex.Replace(text.ToLowerInvariant(), "[^a-z0-9 ]", "");
-        return Regex.Replace(semPontuacao, @"\s+", " ").Trim();
+        return Regex.Replace(text.ToLowerInvariant(), "[^a-z0-9]", "");
+    }
+
+    private static string FinalDoTelefone(string? phone)
+    {
+        var digitos = SomenteDigitos(phone);
+        return digitos.Length <= 4 ? digitos : digitos[^4..];
     }
 
     private static string SomenteDigitos(string? phone)

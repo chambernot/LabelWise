@@ -3,6 +3,7 @@ using LabelWise.Application.Interfaces.Persistence;
 using LabelWise.Application.Services.Glp1;
 using LabelWise.Domain.Entities.Glp1;
 using LabelWise.Shared.Options;
+using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
 
 namespace LabelWise.NutricaoFacil.Tests.Glp1;
@@ -18,12 +19,46 @@ public class Glp1WhatsAppHandlerTests
     private Glp1WhatsAppHandler CriarHandler(params string[] allowedPhones)
     {
         var options = Options.Create(new Glp1Options { AllowedPhones = allowedPhones });
-        return new Glp1WhatsAppHandler(_repository, _sender, options);
+        return new Glp1WhatsAppHandler(_repository, _sender, options, NullLogger<Glp1WhatsAppHandler>.Instance);
+    }
+
+    [Theory]
+    [InlineData("glp1status")]
+    [InlineData("GLP1STATUS")]
+    [InlineData("glp1  status")]
+    [InlineData("glp-1 status")]
+    public async Task Status_AceitaVariacoesDeEscrita(string texto)
+    {
+        var handler = CriarHandler(TelefoneLiberado);
+
+        Assert.True(await handler.TryHandleAsync(TelefoneLiberado, texto));
+        Assert.Contains("Modo GLP-1: status", Assert.Single(_sender.Mensagens).Texto);
+    }
+
+    [Fact]
+    public async Task Reset_SemEspaco_TambemFunciona()
+    {
+        var handler = CriarHandler(TelefoneLiberado);
+
+        Assert.True(await handler.TryHandleAsync(TelefoneLiberado, "glp1reset"));
+        Assert.Equal(new[] { TelefoneLiberado }, _repository.TelefonesApagados);
+    }
+
+    [Fact]
+    public async Task ComandoGlp1Desconhecido_PerguntaEmVezDeIrParaAIA()
+    {
+        var handler = CriarHandler(TelefoneLiberado);
+
+        Assert.True(await handler.TryHandleAsync(TelefoneLiberado, "glp1 ajuda"));
+        Assert.Equal(Glp1WhatsAppHandler.RespostaComandoDesconhecido, Assert.Single(_sender.Mensagens).Texto);
+        Assert.Equal(0, _repository.Chamadas);
     }
 
     [Theory]
     [InlineData("glp1 status")]
     [InlineData("glp1 reset")]
+    [InlineData("glp1status")]
+    [InlineData("glp1 ajuda")]
     [InlineData("almocei arroz e feijão")]
     public async Task TelefoneForaDaLista_NaoTrataNada(string texto)
     {
