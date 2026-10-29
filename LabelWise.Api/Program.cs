@@ -5,6 +5,7 @@ using LabelWise.Application.Interfaces.AI;
 using LabelWise.Application.Interfaces.Persistence;
 using LabelWise.Application.Services;
 using LabelWise.Application.Services.Nutrition;
+using LabelWise.Application.Services.Glp1;
 using LabelWise.Infrastructure.AI;
 using LabelWise.Infrastructure.BackgroundServices;
 using LabelWise.Infrastructure.Extensions;
@@ -161,6 +162,12 @@ try
     // Adicione esta linha no seu Program.cs junto aos outros registros de serviços:
     builder.Services.AddHttpClient<IWhatsAppSenderService, WhatsAppSenderService>();
     builder.Services.AddHttpClient<IMetaMediaService, MetaMediaService>();
+
+    // Modo GLP-1 (em teste): só age para os telefones de Glp1:AllowedPhones
+    builder.Services.Configure<Glp1Options>(builder.Configuration.GetSection(Glp1Options.SectionName));
+    builder.Services.AddSingleton(sp => new Glp1GoalCalculator(sp.GetRequiredService<Microsoft.Extensions.Options.IOptions<Glp1Options>>().Value));
+    builder.Services.AddScoped<IGlp1Repository, Glp1Repository>();
+    builder.Services.AddScoped<Glp1WhatsAppHandler>();
 
     // Aplicação
     builder.Services.AddScoped<ConditionEvaluationService>();

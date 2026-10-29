@@ -1,0 +1,71 @@
+using LabelWise.Application.Interfaces.Persistence;
+using LabelWise.Domain.Entities.Glp1;
+using LabelWise.Domain.Entities.Nutrition;
+using LabelWise.Infrastructure.Persistence.Mongo;
+using MongoDB.Bson;
+using MongoDB.Driver;
+
+namespace LabelWise.Infrastructure.Repositories
+{
+    public class Glp1Repository : IGlp1Repository
+    {
+        private readonly IMongoCollection<Glp1Profile> _profiles;
+        private readonly IMongoCollection<Glp1SymptomLog> _symptomLogs;
+        private readonly IMongoCollection<Glp1Alert> _alerts;
+        private readonly IMongoCollection<MealLog> _mealLogs;
+        private readonly IMongoCollection<BsonDocument> _waterLogs;
+
+        public Glp1Repository(IMongoDatabase database)
+        {
+            _profiles = database.GetCollection<Glp1Profile>(MongoCollectionNames.Glp1Profiles);
+            _symptomLogs = database.GetCollection<Glp1SymptomLog>(MongoCollectionNames.Glp1SymptomLogs);
+            _alerts = database.GetCollection<Glp1Alert>(MongoCollectionNames.Glp1Alerts);
+            _mealLogs = database.GetCollection<MealLog>("Nutrition_MealLogs");
+            _waterLogs = database.GetCollection<BsonDocument>("WaterLogs");
+        }
+
+        public async Task<Glp1Profile?> ObterPerfilAsync(string userId)
+        {
+            return await _profiles.Find(x => x.Id == userId).FirstOrDefaultAsync();
+        }
+
+        public async Task<int> ContarSintomasAsync(string userId)
+        {
+            return (int)await _symptomLogs.CountDocumentsAsync(x => x.UserId == userId);
+        }
+
+        public async Task<int> ContarAlertasAsync(string userId)
+        {
+            return (int)await _alerts.CountDocumentsAsync(x => x.UserId == userId);
+        }
+
+        public async Task<decimal> ObterProteinaDoDiaAsync(string userId, DateTime inicioDiaUtc)
+        {
+            var fimDiaUtc = inicioDiaUtc.AddDays(1);
+            var refeicoes = await _mealLogs
+                .Find(x => x.UserId == userId && x.LoggedAt >= inicioDiaUtc && x.LoggedAt < fimDiaUtc)
+                .ToListAsync();
+
+            return refeicoes.Where(x => !x.IsTreino).Sum(x => x.ProteinG);
+        }
+
+        // Mesma leitura do WhatsAppController.ObterAguaDoDiaAsync
+        public async Task<int> ObterAguaDoDiaAsync(string userId, DateTime inicioDiaUtc)
+        {
+            var filter = Builders<BsonDocument>.Filter.And(
+                Builders<BsonDocument>.Filter.Eq("UserId", userId),
+                Builders<BsonDocument>.Filter.Gte("LoggedAt", inicioDiaUtc),
+                Builders<BsonDocument>.Filter.Lt("LoggedAt", inicioDiaUtc.AddDays(1)));
+
+            var registros = await _waterLogs.Find(filter).ToListAsync();
+            return registros.Sum(w => w.Contains("AmountMl") && w["AmountMl"].IsNumeric ? w["AmountMl"].ToInt32() : 0);
+        }
+
+        public async Task ApagarDadosAsync(string userId)
+        {
+            await _profiles.DeleteOneAsync(x => x.Id == userId);
+            await _symptomLogs.DeleteManyAsync(x => x.UserId == userId);
+            await _alerts.DeleteManyAsync(x => x.UserId == userId);
+        }
+    }
+}

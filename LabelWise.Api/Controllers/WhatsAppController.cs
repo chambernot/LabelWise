@@ -3,6 +3,7 @@ using LabelWise.Application.DTOs.Nutrition;
 using LabelWise.Application.Interfaces;
 using LabelWise.Application.Interfaces.AI;
 using LabelWise.Application.Interfaces.Persistence;
+using LabelWise.Application.Services.Glp1;
 using LabelWise.Domain.Entities.Nutrition;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
@@ -43,6 +44,7 @@ namespace LabelWise.Api.Controllers
         private readonly IConfiguration _configuration;
         private readonly ILogger<WhatsAppController> _logger;
         private readonly IMongoDatabase _database;
+        private readonly Glp1WhatsAppHandler _glp1Handler;
         private readonly string _verifyToken;
 
         public WhatsAppController(
@@ -54,7 +56,8 @@ namespace LabelWise.Api.Controllers
             IHttpClientFactory httpClientFactory,
             IConfiguration configuration,
             ILogger<WhatsAppController> logger,
-            IMongoDatabase database)
+            IMongoDatabase database,
+            Glp1WhatsAppHandler glp1Handler)
         {
             _nutritionService = nutritionService;
             _whatsAppSender = whatsAppSender;
@@ -65,6 +68,7 @@ namespace LabelWise.Api.Controllers
             _configuration = configuration;
             _logger = logger;
             _database = database;
+            _glp1Handler = glp1Handler;
             _verifyToken = configuration["MetaWhatsApp:VerifyToken"] ?? "labelwise_verify_token_123";
         }
 
@@ -243,6 +247,20 @@ namespace LabelWise.Api.Controllers
                 }
 
                 string textoLimpoCmd = Regex.Replace(textoBruto ?? "", "[^a-zA-Z0-9áéíóúâêîôûãõçÁÉÍÓÚÂÊÎÔÛÃÕÇ ]", "").Trim().ToLowerInvariant();
+
+                // 🧪 Modo GLP-1 (em teste): só trata os telefones de Glp1:AllowedPhones.
+                // Para os demais, ou se algo falhar aqui, o fluxo segue exatamente como antes.
+                try
+                {
+                    if (await _glp1Handler.TryHandleAsync(senderPhone, textoBruto))
+                    {
+                        return Ok();
+                    }
+                }
+                catch (Exception exGlp1)
+                {
+                    _logger.LogError(exGlp1, "Falha no Modo GLP-1 para {Phone}; seguindo o fluxo normal.", senderPhone);
+                }
 
                 // 📊 INTERCETOR DE RESUMO / PAINEL VISUAL (DIÁRIO E MENSAL)
                 if (textoLimpoCmd == "resumo" || textoLimpoCmd == "relatorio" || textoLimpoCmd == "relatório" ||

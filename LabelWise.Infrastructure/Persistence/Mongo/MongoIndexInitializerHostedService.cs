@@ -104,6 +104,17 @@ public sealed class MongoIndexInitializerHostedService : IHostedService
                 new CreateIndexModel<LabelWise.Application.Models.NutritionConversation.NutritionConversationSession>(Builders<LabelWise.Application.Models.NutritionConversation.NutritionConversationSession>.IndexKeys.Ascending(x => x.DeviceId).Descending(x => x.CreatedAt), new CreateIndexOptions { Sparse = true, Name = "ix_nutrition_conversations_device" })
             ], cancellationToken);
 
+            // Modo GLP-1 (Glp1Profiles usa o telefone como _id e não precisa de índice extra)
+            await _context.Glp1SymptomLogs.Indexes.CreateManyAsync(
+            [
+                new CreateIndexModel<LabelWise.Domain.Entities.Glp1.Glp1SymptomLog>(Builders<LabelWise.Domain.Entities.Glp1.Glp1SymptomLog>.IndexKeys.Ascending(x => x.UserId).Descending(x => x.LoggedAt), new CreateIndexOptions { Name = "ix_glp1_symptom_logs_user_logged_at" })
+            ], cancellationToken);
+
+            await _context.Glp1Alerts.Indexes.CreateManyAsync(
+            [
+                new CreateIndexModel<LabelWise.Domain.Entities.Glp1.Glp1Alert>(Builders<LabelWise.Domain.Entities.Glp1.Glp1Alert>.IndexKeys.Ascending(x => x.UserId).Descending(x => x.CreatedAt), new CreateIndexOptions { Name = "ix_glp1_alerts_user_created_at" })
+            ], cancellationToken);
+
             _logger.LogInformation("MongoDB conectado e índices garantidos para o banco {DatabaseName}.", _context.Settings.DatabaseName);
         }
         catch (Exception ex)

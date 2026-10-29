@@ -31,4 +31,6 @@ public sealed class MongoDbContext
     public IMongoCollection<ImageAnalysisCacheDocument> ImageAnalysisCache => Database.GetCollection<ImageAnalysisCacheDocument>(MongoCollectionNames.ImageAnalysisCache);
     public IMongoCollection<NutritionAnalysisCacheDocument> NutritionAnalysisCache => Database.GetCollection<NutritionAnalysisCacheDocument>(MongoCollectionNames.NutritionAnalysisCache);
     public IMongoCollection<NutritionConversationSession> NutritionConversations => Database.GetCollection<NutritionConversationSession>(MongoCollectionNames.NutritionConversations);
+    public IMongoCollection<LabelWise.Domain.Entities.Glp1.Glp1SymptomLog> Glp1SymptomLogs => Database.GetCollection<LabelWise.Domain.Entities.Glp1.Glp1SymptomLog>(MongoCollectionNames.Glp1SymptomLogs);
+    public IMongoCollection<LabelWise.Domain.Entities.Glp1.Glp1Alert> Glp1Alerts => Database.GetCollection<LabelWise.Domain.Entities.Glp1.Glp1Alert>(MongoCollectionNames.Glp1Alerts);
 }
