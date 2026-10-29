@@ -1,93 +1,381 @@
 ﻿<!DOCTYPE html>
-<html lang="pt-BR">
+<html lang="pt-BR" class="scroll-smooth">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Nutrição Fácil - Revolucione seu Acompanhamento Nutricional</title>
-    <!-- Tailwind CSS -->
+    <title>Nutrição Fácil - Como Funciona | Guia Completo</title>
+    <meta name="description" content="Entenda passo a passo como o Nutrição Fácil funciona para nutricionistas, clínicas e pacientes: registro de refeições pelo WhatsApp com Inteligência Artificial e painel clínico web.">
     <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        details > summary { list-style: none; cursor: pointer; }
+        details > summary::-webkit-details-marker { display: none; }
+        details[open] .chev { transform: rotate(180deg); }
+        .tab-btn[aria-selected="true"] { background: #059669; color: #fff; box-shadow: 0 10px 25px -5px rgba(5,150,105,.35); }
+    </style>
 </head>
 <body class="bg-slate-50 font-sans antialiased text-slate-800">
 
-    <!-- Header / Navbar -->
-    <header class="bg-white border-b border-slate-100 sticky top-0 z-50">
-        <div class="max-w-6xl mx-auto px-6 h-20 flex items-center justify-between">
-            <div class="flex items-center space-x-2">
-                <span class="text-2xl font-black text-emerald-600">Nutrição Fácil 🥗</span>
-            </div>
-            <a href="#contato" class="bg-emerald-600 hover:bg-emerald-700 text-white font-semibold px-5 py-2.5 rounded-xl text-sm transition shadow-lg shadow-emerald-600/20">
-                Seja um Parceiro
+    <!-- Header -->
+    <header class="bg-white/90 backdrop-blur border-b border-slate-100 sticky top-0 z-50">
+        <div class="max-w-6xl mx-auto px-4 sm:px-6 h-16 sm:h-20 flex items-center justify-between gap-4">
+            <a href="#topo" class="text-xl sm:text-2xl font-black text-emerald-600 whitespace-nowrap">Nutrição Fácil 🥗</a>
+            <nav class="hidden md:flex items-center gap-6 text-sm font-medium text-slate-600">
+                <a href="#visao-geral" class="hover:text-emerald-600">Visão geral</a>
+                <a href="#guia" class="hover:text-emerald-600">Passo a passo</a>
+                <a href="#beneficios" class="hover:text-emerald-600">Benefícios</a>
+                <a href="#faq" class="hover:text-emerald-600">Dúvidas</a>
+            </nav>
+            <a href="#contato" class="bg-emerald-600 hover:bg-emerald-700 text-white font-semibold px-4 sm:px-5 py-2.5 rounded-xl text-sm transition shadow-lg shadow-emerald-600/20 whitespace-nowrap">
+                Quero conhecer
             </a>
         </div>
     </header>
 
-    <!-- Hero Section -->
-    <section class="py-20 px-6 text-center max-w-4xl mx-auto">
-        <span class="bg-emerald-50 text-emerald-700 text-xs font-bold px-3 py-1 rounded-full uppercase tracking-wider">Inovação em Nutrição</span>
-        <h1 class="text-4xl sm:text-5xl font-black text-slate-900 mt-6 leading-tight">
-            Seus pacientes registrando a dieta direto pelo <span class="text-emerald-600">WhatsApp</span>, com Inteligência Artificial.
-        </h1>
-        <p class="text-lg text-slate-600 mt-6 leading-relaxed">
-            Esqueça as planilhas esquecidas no e-mail. Com o <b>Nutrição Fácil</b>, seus pacientes tiram foto do prato ou mandam áudio, a inteligência artificial calcula os macros na hora, e você acompanha tudo em um painel clínico exclusivo.
-        </p>
-        <div class="mt-8 flex justify-center gap-4">
-            <a href="#como-funciona" class="bg-emerald-600 hover:bg-emerald-700 text-white font-bold px-8 py-4 rounded-2xl transition shadow-xl shadow-emerald-600/20">
-                Conhecer o Sistema
-            </a>
+    <!-- Hero -->
+    <section id="topo" class="py-16 sm:py-20 px-4 sm:px-6">
+        <div class="max-w-6xl mx-auto grid lg:grid-cols-2 gap-12 items-center">
+            <div>
+                <span class="bg-emerald-50 text-emerald-700 text-xs font-bold px-3 py-1 rounded-full uppercase tracking-wider">Guia completo da plataforma</span>
+                <h1 class="text-4xl sm:text-5xl font-black text-slate-900 mt-6 leading-tight">
+                    Acompanhamento nutricional pelo <span class="text-emerald-600">WhatsApp</span>, com Inteligência Artificial.
+                </h1>
+                <p class="text-lg text-slate-600 mt-6 leading-relaxed">
+                    O paciente manda uma <b>foto</b> ou um <b>áudio</b> do prato, a IA calcula calorias e macronutrientes na hora, e a nutricionista acompanha tudo em um <b>painel clínico web</b>. Nesta página você entende, passo a passo, como cada lado usa o sistema.
+                </p>
+                <div class="mt-8 flex flex-col sm:flex-row gap-3">
+                    <a href="#guia" data-goto="b2b" class="goto text-center bg-emerald-600 hover:bg-emerald-700 text-white font-bold px-6 py-4 rounded-2xl transition shadow-xl shadow-emerald-600/20">
+                        Sou nutricionista / clínica
+                    </a>
+                    <a href="#guia" data-goto="b2c" class="goto text-center bg-white hover:bg-emerald-50 text-emerald-700 border-2 border-emerald-600 font-bold px-6 py-4 rounded-2xl transition">
+                        Sou paciente
+                    </a>
+                </div>
+            </div>
+
+            <!-- Mockup WhatsApp -->
+            <div class="mx-auto w-full max-w-sm">
+                <div class="bg-slate-900 rounded-[2.5rem] p-3 shadow-2xl">
+                    <div class="bg-[#e5ddd5] rounded-[2rem] overflow-hidden">
+                        <div class="bg-emerald-700 text-white px-4 py-3 flex items-center gap-3">
+                            <div class="w-9 h-9 rounded-full bg-white/20 flex items-center justify-center">🥗</div>
+                            <div>
+                                <p class="font-semibold text-sm leading-tight">Nutrição Fácil</p>
+                                <p class="text-[11px] text-emerald-100">online</p>
+                            </div>
+                        </div>
+                        <div class="p-4 space-y-3 text-sm">
+                            <div class="ml-auto max-w-[80%] bg-[#dcf8c6] rounded-xl rounded-tr-none p-2 shadow-sm">
+                                <div class="bg-gradient-to-br from-amber-200 via-emerald-200 to-orange-200 rounded-lg h-24 flex items-center justify-center text-4xl">🍛</div>
+                                <p class="text-[11px] text-slate-500 text-right mt-1">12:34 ✓✓</p>
+                            </div>
+                            <div class="max-w-[85%] bg-white rounded-xl rounded-tl-none p-3 shadow-sm">
+                                <p class="font-semibold text-slate-900">Almoço registrado! ✅</p>
+                                <p class="text-slate-600 mt-1">Arroz, feijão, frango grelhado e salada.</p>
+                                <div class="grid grid-cols-2 gap-1 mt-2 text-xs">
+                                    <span class="bg-slate-50 rounded px-2 py-1">🔥 ~610 kcal</span>
+                                    <span class="bg-slate-50 rounded px-2 py-1">🥩 Prot 42 g</span>
+                                    <span class="bg-slate-50 rounded px-2 py-1">🍚 Carb 68 g</span>
+                                    <span class="bg-slate-50 rounded px-2 py-1">🥑 Gord 15 g</span>
+                                </div>
+                                <p class="text-slate-600 mt-2">Ótima escolha! Você está dentro da meta de proteína de hoje 💪</p>
+                            </div>
+                            <div class="ml-auto max-w-[80%] bg-[#dcf8c6] rounded-xl rounded-tr-none px-3 py-2 shadow-sm flex items-center gap-2">
+                                <span>🎤</span><div class="h-1 flex-1 bg-emerald-600/40 rounded"></div><span class="text-xs text-slate-500">0:08</span>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                <p class="text-center text-xs text-slate-400 mt-3">Exemplo ilustrativo de conversa</p>
+            </div>
         </div>
     </section>
 
-    <!-- Como Funciona -->
-    <section id="como-funciona" class="py-16 px-6 bg-white border-y border-slate-100">
+    <!-- Visão geral -->
+    <section id="visao-geral" class="py-16 px-4 sm:px-6 bg-white border-y border-slate-100">
         <div class="max-w-6xl mx-auto">
-            <div class="text-center max-w-2xl mx-auto mb-16">
-                <h2 class="text-3xl font-bold text-slate-900">Como funciona na prática?</h2>
-                <p class="text-slate-500 mt-2">Simplicidade para o paciente, poder de gestão para a nutricionista.</p>
+            <div class="text-center max-w-2xl mx-auto mb-12">
+                <h2 class="text-3xl font-bold text-slate-900">Como tudo se conecta</h2>
+                <p class="text-slate-500 mt-2">Dois lados, um mesmo fluxo de informação.</p>
+            </div>
+            <div class="grid md:grid-cols-4 gap-4">
+                <div class="bg-slate-50 rounded-3xl p-6 border border-slate-100">
+                    <div class="text-3xl">👩‍⚕️</div>
+                    <p class="text-xs font-bold text-emerald-600 mt-4">1. NUTRICIONISTA</p>
+                    <p class="font-semibold text-slate-900 mt-1">Cadastra o paciente e o plano alimentar no painel web</p>
+                </div>
+                <div class="bg-slate-50 rounded-3xl p-6 border border-slate-100">
+                    <div class="text-3xl">📱</div>
+                    <p class="text-xs font-bold text-emerald-600 mt-4">2. PACIENTE</p>
+                    <p class="font-semibold text-slate-900 mt-1">Acessa dieta e metas pelo WhatsApp e registra as refeições</p>
+                </div>
+                <div class="bg-slate-50 rounded-3xl p-6 border border-slate-100">
+                    <div class="text-3xl">🤖</div>
+                    <p class="text-xs font-bold text-emerald-600 mt-4">3. INTELIGÊNCIA ARTIFICIAL</p>
+                    <p class="font-semibold text-slate-900 mt-1">Identifica os alimentos, estima porções e calcula os macros</p>
+                </div>
+                <div class="bg-slate-50 rounded-3xl p-6 border border-slate-100">
+                    <div class="text-3xl">📊</div>
+                    <p class="text-xs font-bold text-emerald-600 mt-4">4. ACOMPANHAMENTO</p>
+                    <p class="font-semibold text-slate-900 mt-1">Tudo aparece no dashboard da nutricionista, organizado por dia</p>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- Guia passo a passo -->
+    <section id="guia" class="py-16 sm:py-20 px-4 sm:px-6">
+        <div class="max-w-6xl mx-auto">
+            <div class="text-center max-w-2xl mx-auto mb-10">
+                <h2 class="text-3xl font-bold text-slate-900">Passo a passo de utilização</h2>
+                <p class="text-slate-500 mt-2">Escolha o seu perfil para ver o guia completo.</p>
             </div>
 
-            <div class="grid grid-cols-1 md:grid-cols-2 gap-12">
-                <!-- Lado do Paciente -->
-                <div class="bg-slate-50 p-8 rounded-3xl border border-slate-100">
-                    <div class="bg-emerald-100 text-emerald-800 w-12 h-12 rounded-2xl flex items-center justify-center font-bold text-xl mb-6">📱</div>
-                    <h3 class="text-xl font-bold text-slate-900 mb-3">Para o Paciente (No WhatsApp)</h3>
-                    <ul class="space-y-3 text-sm text-slate-600">
-                        <li class="flex items-start">✅ <b>Link Mágico:</b> Acesso rápido à dieta e metas direto no celular com uma palavra-chave.</li>
-                        <li class="flex items-start">✅ <b>Sem balança obrigatória:</b> O paciente pode mandar foto ou áudio do prato sem precisar pesar os alimentos. A IA estima as porções com inteligência.</li>
-                        <li class="flex items-start">✅ <b>Feedback instantâneo:</b> O bot incentiva e calcula calorias e macronutrientes na hora.</li>
-                    </ul>
-                </div>
+            <div role="tablist" class="flex flex-col sm:flex-row justify-center gap-3 mb-12">
+                <button role="tab" id="tab-b2b" data-tab="b2b" aria-selected="true" class="tab-btn px-6 py-3 rounded-2xl font-bold bg-white border border-slate-200 text-slate-700 transition">
+                    🏥 Para Nutricionistas e Clínicas <span class="opacity-70 font-medium">(B2B)</span>
+                </button>
+                <button role="tab" id="tab-b2c" data-tab="b2c" aria-selected="false" class="tab-btn px-6 py-3 rounded-2xl font-bold bg-white border border-slate-200 text-slate-700 transition">
+                    🙋 Para Pacientes <span class="opacity-70 font-medium">(B2C)</span>
+                </button>
+            </div>
 
-                <!-- Lado da Nutricionista -->
-                <div class="bg-slate-50 p-8 rounded-3xl border border-slate-100">
-                    <div class="bg-emerald-100 text-emerald-800 w-12 h-12 rounded-2xl flex items-center justify-center font-bold text-xl mb-6">📊</div>
-                    <h3 class="text-xl font-bold text-slate-900 mb-3">Para a Nutricionista (Painel Web)</h3>
-                    <ul class="space-y-3 text-sm text-slate-600">
-                        <li class="flex items-start">✅ <b>Cadastro via IA:</b> Envie uma foto ou PDF de um protocolo e o sistema extrai e estrutura tudo automaticamente.</li>
-                        <li class="flex items-start">✅ <b>Dashboard de Consumo:</b> Acompanhe o histórico de refeições dos últimos 7, 30 ou 90 dias agrupados por dia.</li>
-                        <li class="flex items-start">✅ <b>Gestão de Carteira:</b> Controle organizado de pacientes ativos com total segurança de dados.</li>
+            <!-- B2B -->
+            <div id="panel-b2b" role="tabpanel" class="tab-panel">
+                <ol class="relative border-l-2 border-emerald-200 ml-4 space-y-10">
+                    <li class="pl-8 relative">
+                        <span class="absolute -left-[1.15rem] top-0 w-9 h-9 rounded-full bg-emerald-600 text-white font-bold flex items-center justify-center">1</span>
+                        <div class="bg-white rounded-3xl p-6 border border-slate-100 shadow-sm">
+                            <h3 class="text-xl font-bold text-slate-900">Ative sua conta de parceiro</h3>
+                            <p class="text-slate-600 mt-2">Fale com um consultor pelo WhatsApp. Ele libera o seu acesso ao <b>painel web</b> e explica como a plataforma se encaixa na rotina do seu consultório ou clínica.</p>
+                        </div>
+                    </li>
+                    <li class="pl-8 relative">
+                        <span class="absolute -left-[1.15rem] top-0 w-9 h-9 rounded-full bg-emerald-600 text-white font-bold flex items-center justify-center">2</span>
+                        <div class="bg-white rounded-3xl p-6 border border-slate-100 shadow-sm">
+                            <h3 class="text-xl font-bold text-slate-900">Cadastre seus pacientes</h3>
+                            <p class="text-slate-600 mt-2">No painel, adicione cada paciente à sua <b>carteira</b>. A partir daí ele passa a ser acompanhado por você, e você controla quem está ativo.</p>
+                        </div>
+                    </li>
+                    <li class="pl-8 relative">
+                        <span class="absolute -left-[1.15rem] top-0 w-9 h-9 rounded-full bg-emerald-600 text-white font-bold flex items-center justify-center">3</span>
+                        <div class="bg-white rounded-3xl p-6 border border-slate-100 shadow-sm">
+                            <h3 class="text-xl font-bold text-slate-900">Envie o plano alimentar com o Cadastro via IA</h3>
+                            <p class="text-slate-600 mt-2">Não precisa digitar tudo de novo. Envie uma <b>foto</b> ou o <b>PDF</b> do protocolo que você já usa: a IA lê o documento, extrai refeições, alimentos e metas e organiza tudo de forma estruturada.</p>
+                            <div class="mt-4 bg-emerald-50 text-emerald-800 text-sm rounded-2xl p-4">💡 <b>Dica:</b> revise o resultado antes de salvar. Assim você garante que a dieta que o paciente verá é exatamente a que você prescreveu.</div>
+                        </div>
+                    </li>
+                    <li class="pl-8 relative">
+                        <span class="absolute -left-[1.15rem] top-0 w-9 h-9 rounded-full bg-emerald-600 text-white font-bold flex items-center justify-center">4</span>
+                        <div class="bg-white rounded-3xl p-6 border border-slate-100 shadow-sm">
+                            <h3 class="text-xl font-bold text-slate-900">Oriente o paciente a começar pelo WhatsApp</h3>
+                            <p class="text-slate-600 mt-2">Passe ao paciente o número do Nutrição Fácil e a palavra-chave de acesso. Com ela, ele recebe o <b>Link Mágico</b> para ver a dieta e as metas no celular e já pode registrar a primeira refeição.</p>
+                        </div>
+                    </li>
+                    <li class="pl-8 relative">
+                        <span class="absolute -left-[1.15rem] top-0 w-9 h-9 rounded-full bg-emerald-600 text-white font-bold flex items-center justify-center">5</span>
+                        <div class="bg-white rounded-3xl p-6 border border-slate-100 shadow-sm">
+                            <h3 class="text-xl font-bold text-slate-900">Acompanhe o consumo no Dashboard</h3>
+                            <p class="text-slate-600 mt-2">Cada refeição registrada aparece no painel com calorias e macronutrientes. Veja o histórico dos <b>últimos 7, 30 ou 90 dias</b>, agrupado por dia, e identifique rapidamente onde o paciente está acertando e onde precisa de ajuste.</p>
+                            <!-- mini mockup dashboard -->
+                            <div class="mt-5 bg-slate-50 rounded-2xl border border-slate-100 p-4">
+                                <div class="flex flex-wrap items-center justify-between gap-2 mb-4">
+                                    <p class="font-semibold text-slate-900 text-sm">Paciente: Maria S.</p>
+                                    <div class="flex gap-1 text-xs">
+                                        <span class="bg-emerald-600 text-white px-3 py-1 rounded-lg">7 dias</span>
+                                        <span class="bg-white border border-slate-200 px-3 py-1 rounded-lg">30 dias</span>
+                                        <span class="bg-white border border-slate-200 px-3 py-1 rounded-lg">90 dias</span>
+                                    </div>
+                                </div>
+                                <div class="flex items-end gap-2 h-28">
+                                    <div class="flex-1 bg-emerald-300 rounded-t" style="height:70%"></div>
+                                    <div class="flex-1 bg-emerald-400 rounded-t" style="height:85%"></div>
+                                    <div class="flex-1 bg-emerald-300 rounded-t" style="height:60%"></div>
+                                    <div class="flex-1 bg-amber-300 rounded-t" style="height:100%"></div>
+                                    <div class="flex-1 bg-emerald-400 rounded-t" style="height:80%"></div>
+                                    <div class="flex-1 bg-emerald-300 rounded-t" style="height:75%"></div>
+                                    <div class="flex-1 bg-emerald-500 rounded-t" style="height:90%"></div>
+                                </div>
+                                <div class="flex gap-2 text-[10px] text-slate-400 mt-1 text-center">
+                                    <span class="flex-1">Seg</span><span class="flex-1">Ter</span><span class="flex-1">Qua</span><span class="flex-1">Qui</span><span class="flex-1">Sex</span><span class="flex-1">Sáb</span><span class="flex-1">Dom</span>
+                                </div>
+                                <p class="text-[11px] text-slate-400 mt-2">Ilustração do painel</p>
+                            </div>
+                        </div>
+                    </li>
+                    <li class="pl-8 relative">
+                        <span class="absolute -left-[1.15rem] top-0 w-9 h-9 rounded-full bg-emerald-600 text-white font-bold flex items-center justify-center">6</span>
+                        <div class="bg-white rounded-3xl p-6 border border-slate-100 shadow-sm">
+                            <h3 class="text-xl font-bold text-slate-900">Use os dados na consulta e ajuste o plano</h3>
+                            <p class="text-slate-600 mt-2">Chegue ao retorno sabendo o que o paciente realmente comeu. Atualize o plano no painel sempre que precisar — o paciente passa a ver a versão nova pelo Link Mágico.</p>
+                        </div>
+                    </li>
+                </ol>
+
+                <div class="mt-12 grid sm:grid-cols-3 gap-4">
+                    <div class="bg-white rounded-2xl p-5 border border-slate-100"><p class="font-bold text-slate-900">🏥 Clínicas com equipe</p><p class="text-sm text-slate-600 mt-1">Cada profissional organiza sua própria carteira de pacientes.</p></div>
+                    <div class="bg-white rounded-2xl p-5 border border-slate-100"><p class="font-bold text-slate-900">👩‍⚕️ Consultório individual</p><p class="text-sm text-slate-600 mt-1">Acompanhamento entre consultas sem trocar mensagens uma a uma.</p></div>
+                    <div class="bg-white rounded-2xl p-5 border border-slate-100"><p class="font-bold text-slate-900">💻 Atendimento online</p><p class="text-sm text-slate-600 mt-1">O paciente pode estar em qualquer lugar: basta ter WhatsApp.</p></div>
+                </div>
+            </div>
+
+            <!-- B2C -->
+            <div id="panel-b2c" role="tabpanel" class="tab-panel hidden">
+                <ol class="relative border-l-2 border-emerald-200 ml-4 space-y-10">
+                    <li class="pl-8 relative">
+                        <span class="absolute -left-[1.15rem] top-0 w-9 h-9 rounded-full bg-emerald-600 text-white font-bold flex items-center justify-center">1</span>
+                        <div class="bg-white rounded-3xl p-6 border border-slate-100 shadow-sm">
+                            <h3 class="text-xl font-bold text-slate-900">Salve o número do Nutrição Fácil</h3>
+                            <p class="text-slate-600 mt-2">Tudo acontece no WhatsApp que você já usa. <b>Não precisa baixar aplicativo</b> nem criar senha.</p>
+                        </div>
+                    </li>
+                    <li class="pl-8 relative">
+                        <span class="absolute -left-[1.15rem] top-0 w-9 h-9 rounded-full bg-emerald-600 text-white font-bold flex items-center justify-center">2</span>
+                        <div class="bg-white rounded-3xl p-6 border border-slate-100 shadow-sm">
+                            <h3 class="text-xl font-bold text-slate-900">Envie a palavra-chave e receba o Link Mágico</h3>
+                            <p class="text-slate-600 mt-2">Mande a palavra-chave de acesso e você recebe um link que abre direto no celular com a <b>sua dieta</b> e as <b>suas metas</b> do dia.</p>
+                        </div>
+                    </li>
+                    <li class="pl-8 relative">
+                        <span class="absolute -left-[1.15rem] top-0 w-9 h-9 rounded-full bg-emerald-600 text-white font-bold flex items-center justify-center">3</span>
+                        <div class="bg-white rounded-3xl p-6 border border-slate-100 shadow-sm">
+                            <h3 class="text-xl font-bold text-slate-900">Registre cada refeição do jeito mais fácil</h3>
+                            <p class="text-slate-600 mt-2">Escolha como prefere:</p>
+                            <div class="grid sm:grid-cols-3 gap-3 mt-4">
+                                <div class="bg-slate-50 rounded-2xl p-4"><p class="text-2xl">📸</p><p class="font-semibold text-slate-900 mt-2">Foto do prato</p><p class="text-sm text-slate-600">Tire a foto antes de comer e envie.</p></div>
+                                <div class="bg-slate-50 rounded-2xl p-4"><p class="text-2xl">🎤</p><p class="font-semibold text-slate-900 mt-2">Áudio</p><p class="text-sm text-slate-600">"Comi dois ovos mexidos e uma fatia de pão."</p></div>
+                                <div class="bg-slate-50 rounded-2xl p-4"><p class="text-2xl">⚖️</p><p class="font-semibold text-slate-900 mt-2">Sem balança</p><p class="text-sm text-slate-600">Não precisa pesar: a IA estima as porções.</p></div>
+                            </div>
+                        </div>
+                    </li>
+                    <li class="pl-8 relative">
+                        <span class="absolute -left-[1.15rem] top-0 w-9 h-9 rounded-full bg-emerald-600 text-white font-bold flex items-center justify-center">4</span>
+                        <div class="bg-white rounded-3xl p-6 border border-slate-100 shadow-sm">
+                            <h3 class="text-xl font-bold text-slate-900">Receba o retorno na hora</h3>
+                            <p class="text-slate-600 mt-2">Em segundos o bot responde com os alimentos identificados, as <b>calorias</b> e os <b>macronutrientes</b> (proteínas, carboidratos e gorduras), além de uma mensagem de incentivo para você seguir firme.</p>
+                        </div>
+                    </li>
+                    <li class="pl-8 relative">
+                        <span class="absolute -left-[1.15rem] top-0 w-9 h-9 rounded-full bg-emerald-600 text-white font-bold flex items-center justify-center">5</span>
+                        <div class="bg-white rounded-3xl p-6 border border-slate-100 shadow-sm">
+                            <h3 class="text-xl font-bold text-slate-900">Sua nutricionista acompanha junto</h3>
+                            <p class="text-slate-600 mt-2">Tudo o que você registra vai para o painel dela. Na próxima consulta, ela já sabe como foi a sua semana e pode ajustar o plano com base no que você realmente comeu.</p>
+                        </div>
+                    </li>
+                </ol>
+
+                <div class="mt-12 bg-white rounded-3xl border border-slate-100 p-6 sm:p-8">
+                    <h3 class="text-lg font-bold text-slate-900">Dicas para aproveitar melhor</h3>
+                    <ul class="mt-4 grid sm:grid-cols-2 gap-3 text-sm text-slate-600">
+                        <li>✅ Fotografe o prato de cima, com boa luz, mostrando todos os alimentos.</li>
+                        <li>✅ No áudio, cite quantidades aproximadas ("uma concha", "duas colheres").</li>
+                        <li>✅ Registre logo depois de comer, para não esquecer nenhuma refeição.</li>
+                        <li>✅ Inclua lanches, bebidas e beliscos: eles também contam.</li>
                     </ul>
                 </div>
             </div>
         </div>
     </section>
 
-    <!-- Call to Action / Contato -->
-    <section id="contato" class="py-20 px-6 text-center max-w-3xl mx-auto">
-        <h2 class="text-3xl font-bold text-slate-900">Leve o Nutrição Fácil para a sua clínica</h2>
-        <p class="text-slate-600 mt-4">
-            Aumente a retenção dos seus pacientes, melhore a adesão às dietas e modernize o seu atendimento hoje mesmo.
-        </p>
-        <div class="mt-8">
-            <a href="https://wa.me/5511971247423?text=Olá!%20Gostaria%20de%20saber%20mais%20sobre%20o%20sistema%20Nutrição%20Fácil." target="_blank" class="inline-block bg-emerald-600 hover:bg-emerald-700 text-white font-bold px-8 py-4 rounded-2xl transition shadow-xl shadow-emerald-600/20">
-                Falar com Consultor via WhatsApp
-            </a>
+    <!-- Benefícios -->
+    <section id="beneficios" class="py-16 px-4 sm:px-6 bg-white border-y border-slate-100">
+        <div class="max-w-6xl mx-auto">
+            <div class="text-center max-w-2xl mx-auto mb-12">
+                <h2 class="text-3xl font-bold text-slate-900">O que cada um ganha</h2>
+            </div>
+            <div class="grid md:grid-cols-2 gap-8">
+                <div class="bg-slate-50 p-8 rounded-3xl border border-slate-100">
+                    <h3 class="text-xl font-bold text-slate-900 mb-4">🏥 Nutricionistas e clínicas</h3>
+                    <ul class="space-y-3 text-slate-600">
+                        <li>✅ Mais adesão dos pacientes ao plano alimentar</li>
+                        <li>✅ Mais retenção: o paciente se sente acompanhado entre as consultas</li>
+                        <li>✅ Menos tempo digitando dietas, graças ao Cadastro via IA</li>
+                        <li>✅ Decisões clínicas baseadas no consumo real</li>
+                        <li>✅ Carteira de pacientes organizada em um só lugar</li>
+                    </ul>
+                </div>
+                <div class="bg-slate-50 p-8 rounded-3xl border border-slate-100">
+                    <h3 class="text-xl font-bold text-slate-900 mb-4">🙋 Pacientes</h3>
+                    <ul class="space-y-3 text-slate-600">
+                        <li>✅ Registro em segundos, sem planilha e sem app novo</li>
+                        <li>✅ Sem precisar pesar a comida</li>
+                        <li>✅ Dieta e metas sempre à mão no celular</li>
+                        <li>✅ Retorno imediato e motivação diária</li>
+                        <li>✅ Consultas mais produtivas com a nutricionista</li>
+                    </ul>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- FAQ -->
+    <section id="faq" class="py-16 sm:py-20 px-4 sm:px-6">
+        <div class="max-w-3xl mx-auto">
+            <h2 class="text-3xl font-bold text-slate-900 text-center mb-10">Perguntas frequentes</h2>
+            <div class="space-y-3">
+                <details class="bg-white rounded-2xl border border-slate-100 p-5">
+                    <summary class="flex justify-between items-center font-semibold text-slate-900">O paciente precisa instalar algum aplicativo? <span class="chev transition">⌄</span></summary>
+                    <p class="text-slate-600 mt-3">Não. O paciente usa apenas o WhatsApp. A dieta e as metas abrem pelo Link Mágico, direto no navegador do celular.</p>
+                </details>
+                <details class="bg-white rounded-2xl border border-slate-100 p-5">
+                    <summary class="flex justify-between items-center font-semibold text-slate-900">Os valores calculados pela IA são exatos? <span class="chev transition">⌄</span></summary>
+                    <p class="text-slate-600 mt-3">São estimativas feitas a partir da foto ou da descrição em áudio. Elas são pensadas para facilitar o acompanhamento do dia a dia e não substituem a avaliação da nutricionista, que continua sendo a responsável pela conduta.</p>
+                </details>
+                <details class="bg-white rounded-2xl border border-slate-100 p-5">
+                    <summary class="flex justify-between items-center font-semibold text-slate-900">Posso usar os planos alimentares que já tenho prontos? <span class="chev transition">⌄</span></summary>
+                    <p class="text-slate-600 mt-3">Sim. Pelo Cadastro via IA você envia a foto ou o PDF do protocolo e o sistema estrutura as informações automaticamente.</p>
+                </details>
+                <details class="bg-white rounded-2xl border border-slate-100 p-5">
+                    <summary class="flex justify-between items-center font-semibold text-slate-900">Por quanto tempo consigo ver o histórico do paciente? <span class="chev transition">⌄</span></summary>
+                    <p class="text-slate-600 mt-3">O dashboard mostra o consumo dos últimos 7, 30 ou 90 dias, agrupado por dia.</p>
+                </details>
+                <details class="bg-white rounded-2xl border border-slate-100 p-5">
+                    <summary class="flex justify-between items-center font-semibold text-slate-900">E se o paciente esquecer de registrar uma refeição? <span class="chev transition">⌄</span></summary>
+                    <p class="text-slate-600 mt-3">Ele pode enviar a foto ou o áudio depois, informando qual refeição foi. Quanto mais completo o registro, mais fiel fica o acompanhamento.</p>
+                </details>
+                <details class="bg-white rounded-2xl border border-slate-100 p-5">
+                    <summary class="flex justify-between items-center font-semibold text-slate-900">Quem consegue ver os dados do paciente? <span class="chev transition">⌄</span></summary>
+                    <p class="text-slate-600 mt-3">Os registros ficam disponíveis para a nutricionista responsável, dentro da carteira de pacientes dela no painel.</p>
+                </details>
+            </div>
+        </div>
+    </section>
+
+    <!-- CTA -->
+    <section id="contato" class="py-16 sm:py-20 px-4 sm:px-6 bg-emerald-600">
+        <div class="max-w-4xl mx-auto text-center text-white">
+            <h2 class="text-3xl sm:text-4xl font-black">Pronto para começar?</h2>
+            <p class="text-emerald-50 mt-4 text-lg">Fale com a nossa equipe pelo WhatsApp e tire suas dúvidas.</p>
+            <div class="mt-10 grid sm:grid-cols-2 gap-4 text-left">
+                <a href="https://wa.me/5511971247423?text=Ol%C3%A1!%20Sou%20nutricionista%20e%20gostaria%20de%20levar%20o%20Nutri%C3%A7%C3%A3o%20F%C3%A1cil%20para%20minha%20cl%C3%ADnica." target="_blank" rel="noopener" class="block bg-white text-slate-900 rounded-3xl p-6 hover:-translate-y-1 transition shadow-xl">
+                    <p class="text-3xl">🏥</p>
+                    <p class="font-bold text-lg mt-3">Sou nutricionista / clínica</p>
+                    <p class="text-sm text-slate-600 mt-1">Quero ser parceiro e usar com meus pacientes.</p>
+                    <p class="text-emerald-600 font-bold mt-4">Falar com consultor →</p>
+                </a>
+                <a href="https://wa.me/5511971247423?text=Ol%C3%A1!%20Sou%20paciente%20e%20gostaria%20de%20saber%20como%20usar%20o%20Nutri%C3%A7%C3%A3o%20F%C3%A1cil." target="_blank" rel="noopener" class="block bg-white text-slate-900 rounded-3xl p-6 hover:-translate-y-1 transition shadow-xl">
+                    <p class="text-3xl">🙋</p>
+                    <p class="font-bold text-lg mt-3">Sou paciente</p>
+                    <p class="text-sm text-slate-600 mt-1">Quero entender como registrar minhas refeições.</p>
+                    <p class="text-emerald-600 font-bold mt-4">Falar no WhatsApp →</p>
+                </a>
+            </div>
         </div>
     </section>
 
     <!-- Footer -->
-    <footer class="bg-white border-t border-slate-100 py-8 text-center text-xs text-slate-400">
+    <footer class="bg-white border-t border-slate-100 py-8 px-4 text-center text-xs text-slate-400">
         <p>&copy; 2026 Nutrição Fácil. Todos os direitos reservados.</p>
+        <p class="mt-1">As estimativas nutricionais geradas por IA não substituem a orientação de um profissional de nutrição.</p>
     </footer>
 
+    <script>
+        function showTab(id) {
+            document.querySelectorAll('.tab-btn').forEach(b => b.setAttribute('aria-selected', b.dataset.tab === id ? 'true' : 'false'));
+            document.querySelectorAll('.tab-panel').forEach(p => p.classList.toggle('hidden', p.id !== 'panel-' + id));
+        }
+        document.querySelectorAll('.tab-btn').forEach(b => b.addEventListener('click', () => showTab(b.dataset.tab)));
+        document.querySelectorAll('.goto').forEach(a => a.addEventListener('click', () => showTab(a.dataset.goto)));
+        if (location.hash === '#paciente') showTab('b2c');
+    </script>
 </body>
 </html>
