@@ -40,14 +40,14 @@
                     Acompanhamento nutricional pelo <span class="text-emerald-600">WhatsApp</span>, com Inteligência Artificial.
                 </h1>
                 <p class="text-lg text-slate-600 mt-6 leading-relaxed">
-                    O paciente manda uma <b>foto</b> ou um <b>áudio</b> do prato, a IA calcula calorias e macronutrientes na hora, e a nutricionista acompanha tudo em um <b>painel clínico web</b>. Nesta página você entende, passo a passo, como cada lado usa o sistema.
+                    O paciente manda uma <b>foto</b> ou um <b>áudio</b> do prato, a IA calcula calorias e macronutrientes na hora, e o app mostra quanto você já consumiu, quanto falta e dá dicas para a próxima refeição. Use por conta própria (B2C) ou com a sua nutricionista, que acompanha tudo em um <b>painel clínico web</b> (B2B). Nesta página você entende, passo a passo, como cada lado usa o sistema.
                 </p>
                 <div class="mt-8 flex flex-col sm:flex-row gap-3">
                     <a href="#guia" data-goto="b2b" class="goto text-center bg-emerald-600 hover:bg-emerald-700 text-white font-bold px-6 py-4 rounded-2xl transition shadow-xl shadow-emerald-600/20">
                         Sou nutricionista / clínica
                     </a>
                     <a href="#guia" data-goto="b2c" class="goto text-center bg-white hover:bg-emerald-50 text-emerald-700 border-2 border-emerald-600 font-bold px-6 py-4 rounded-2xl transition">
-                        Sou paciente
+                        Quero usar para mim
                     </a>
                 </div>
             </div>
@@ -135,7 +135,7 @@
                     🏥 Para Nutricionistas e Clínicas <span class="opacity-70 font-medium">(B2B)</span>
                 </button>
                 <button role="tab" id="tab-b2c" data-tab="b2c" aria-selected="false" class="tab-btn px-6 py-3 rounded-2xl font-bold bg-white border border-slate-200 text-slate-700 transition">
-                    🙋 Para Pacientes <span class="opacity-70 font-medium">(B2C)</span>
+                    🙋 Para Você <span class="opacity-70 font-medium">(B2C)</span>
                 </button>
             </div>
 
@@ -224,19 +224,32 @@
                     <li class="pl-8 relative">
                         <span class="absolute -left-[1.15rem] top-0 w-9 h-9 rounded-full bg-emerald-600 text-white font-bold flex items-center justify-center">1</span>
                         <div class="bg-white rounded-3xl p-6 border border-slate-100 shadow-sm">
-                            <h3 class="text-xl font-bold text-slate-900">Salve o número do Nutrição Fácil</h3>
-                            <p class="text-slate-600 mt-2">Tudo acontece no WhatsApp que você já usa. <b>Não precisa baixar aplicativo</b> nem criar senha.</p>
+                            <h3 class="text-xl font-bold text-slate-900">Faça seu cadastro</h3>
+                            <p class="text-slate-600 mt-2">Informe seu <b>objetivo</b>, <b>peso</b>, <b>altura</b> e <b>sexo</b>. É rápido e é a base para todo o acompanhamento.</p>
                         </div>
                     </li>
                     <li class="pl-8 relative">
                         <span class="absolute -left-[1.15rem] top-0 w-9 h-9 rounded-full bg-emerald-600 text-white font-bold flex items-center justify-center">2</span>
                         <div class="bg-white rounded-3xl p-6 border border-slate-100 shadow-sm">
-                            <h3 class="text-xl font-bold text-slate-900">Envie a palavra-chave e receba o Link Mágico</h3>
-                            <p class="text-slate-600 mt-2">Mande a palavra-chave de acesso e você recebe um link que abre direto no celular com a <b>sua dieta</b> e as <b>suas metas</b> do dia.</p>
+                            <h3 class="text-xl font-bold text-slate-900">Receba suas metas diárias</h3>
+                            <p class="text-slate-600 mt-2">Com esses dados, o app calcula a média de <b>calorias</b> que você deve consumir por dia, já separada em <b>proteínas</b>, <b>carboidratos</b> e <b>gorduras</b>.</p>
+                            <div class="grid grid-cols-2 sm:grid-cols-4 gap-2 mt-4 text-sm">
+                                <div class="bg-slate-50 rounded-xl p-3 text-center"><p class="text-xs text-slate-500">Calorias</p><p class="font-bold text-slate-900">🔥 kcal/dia</p></div>
+                                <div class="bg-slate-50 rounded-xl p-3 text-center"><p class="text-xs text-slate-500">Proteína</p><p class="font-bold text-slate-900">🥩 g/dia</p></div>
+                                <div class="bg-slate-50 rounded-xl p-3 text-center"><p class="text-xs text-slate-500">Carboidrato</p><p class="font-bold text-slate-900">🍚 g/dia</p></div>
+                                <div class="bg-slate-50 rounded-xl p-3 text-center"><p class="text-xs text-slate-500">Gordura</p><p class="font-bold text-slate-900">🥑 g/dia</p></div>
+                            </div>
                         </div>
                     </li>
                     <li class="pl-8 relative">
                         <span class="absolute -left-[1.15rem] top-0 w-9 h-9 rounded-full bg-emerald-600 text-white font-bold flex items-center justify-center">3</span>
+                        <div class="bg-white rounded-3xl p-6 border border-slate-100 shadow-sm">
+                            <h3 class="text-xl font-bold text-slate-900">Conte o que você não come</h3>
+                            <p class="text-slate-600 mt-2">Cadastre os alimentos de que <b>não gosta</b>, suas <b>alergias</b> e se tem alguma <b>doença</b>. Assim as dicas e sugestões respeitam a sua realidade.</p>
+                        </div>
+                    </li>
+                    <li class="pl-8 relative">
+                        <span class="absolute -left-[1.15rem] top-0 w-9 h-9 rounded-full bg-emerald-600 text-white font-bold flex items-center justify-center">4</span>
                         <div class="bg-white rounded-3xl p-6 border border-slate-100 shadow-sm">
                             <h3 class="text-xl font-bold text-slate-900">Registre cada refeição do jeito mais fácil</h3>
                             <p class="text-slate-600 mt-2">Escolha como prefere:</p>
@@ -248,20 +261,43 @@
                         </div>
                     </li>
                     <li class="pl-8 relative">
-                        <span class="absolute -left-[1.15rem] top-0 w-9 h-9 rounded-full bg-emerald-600 text-white font-bold flex items-center justify-center">4</span>
+                        <span class="absolute -left-[1.15rem] top-0 w-9 h-9 rounded-full bg-emerald-600 text-white font-bold flex items-center justify-center">5</span>
                         <div class="bg-white rounded-3xl p-6 border border-slate-100 shadow-sm">
-                            <h3 class="text-xl font-bold text-slate-900">Receba o retorno na hora</h3>
-                            <p class="text-slate-600 mt-2">Em segundos o bot responde com os alimentos identificados, as <b>calorias</b> e os <b>macronutrientes</b> (proteínas, carboidratos e gorduras), além de uma mensagem de incentivo para você seguir firme.</p>
+                            <h3 class="text-xl font-bold text-slate-900">Veja quanto consumiu e quanto falta</h3>
+                            <p class="text-slate-600 mt-2">A cada registro, o app mostra os alimentos identificados e atualiza o seu saldo do dia: <b>quanto você já consumiu</b> e <b>quanto ainda falta</b> de calorias, proteínas, carboidratos e gorduras.</p>
+                            <div class="mt-4 bg-slate-50 rounded-2xl p-4 space-y-3 text-sm">
+                                <div><div class="flex justify-between"><span>Proteína</span><span class="text-slate-500">ilustrativo</span></div><div class="h-2 bg-slate-200 rounded-full mt-1"><div class="h-2 bg-emerald-500 rounded-full" style="width:65%"></div></div></div>
+                                <div><div class="flex justify-between"><span>Carboidrato</span></div><div class="h-2 bg-slate-200 rounded-full mt-1"><div class="h-2 bg-emerald-400 rounded-full" style="width:50%"></div></div></div>
+                                <div><div class="flex justify-between"><span>Gordura</span></div><div class="h-2 bg-slate-200 rounded-full mt-1"><div class="h-2 bg-amber-400 rounded-full" style="width:80%"></div></div></div>
+                            </div>
                         </div>
                     </li>
                     <li class="pl-8 relative">
-                        <span class="absolute -left-[1.15rem] top-0 w-9 h-9 rounded-full bg-emerald-600 text-white font-bold flex items-center justify-center">5</span>
+                        <span class="absolute -left-[1.15rem] top-0 w-9 h-9 rounded-full bg-emerald-600 text-white font-bold flex items-center justify-center">6</span>
                         <div class="bg-white rounded-3xl p-6 border border-slate-100 shadow-sm">
-                            <h3 class="text-xl font-bold text-slate-900">Sua nutricionista acompanha junto</h3>
-                            <p class="text-slate-600 mt-2">Tudo o que você registra vai para o painel dela. Na próxima consulta, ela já sabe como foi a sua semana e pode ajustar o plano com base no que você realmente comeu.</p>
+                            <h3 class="text-xl font-bold text-slate-900">Receba dicas para a próxima refeição</h3>
+                            <p class="text-slate-600 mt-2">Com base no que falta para fechar o dia e no seu perfil (preferências, alergias e doenças), o app sugere o que comer na próxima refeição.</p>
+                        </div>
+                    </li>
+                    <li class="pl-8 relative">
+                        <span class="absolute -left-[1.15rem] top-0 w-9 h-9 rounded-full bg-emerald-600 text-white font-bold flex items-center justify-center">7</span>
+                        <div class="bg-white rounded-3xl p-6 border border-slate-100 shadow-sm">
+                            <h3 class="text-xl font-bold text-slate-900">Tire dúvidas com o Modo Nutri</h3>
+                            <p class="text-slate-600 mt-2">Ative o <b>Modo Nutri</b> e converse com uma IA que conhece as suas informações. Pergunte o que quiser ou peça uma dica: ela responde de forma personalizada.</p>
+                            <div class="mt-4 bg-emerald-50 text-emerald-800 text-sm rounded-2xl p-4">💬 Ex.: "Posso trocar o arroz do jantar por batata-doce?" ou "Me dá uma ideia de lanche com mais proteína."</div>
                         </div>
                     </li>
                 </ol>
+
+                <div class="mt-12 grid sm:grid-cols-3 gap-4">
+                    <div class="bg-white rounded-2xl p-5 border border-slate-100"><p class="font-bold text-slate-900">🎯 Ajuste suas metas</p><p class="text-sm text-slate-600 mt-1">Você pode reescrever duas metas quando quiser.</p></div>
+                    <div class="bg-white rounded-2xl p-5 border border-slate-100"><p class="font-bold text-slate-900">✏️ Corrija registros</p><p class="text-sm text-slate-600 mt-1">Errou algo? Corrija a refeição e o saldo do dia é recalculado.</p></div>
+                    <div class="bg-white rounded-2xl p-5 border border-slate-100"><p class="font-bold text-slate-900">🗑️ Remova refeições</p><p class="text-sm text-slate-600 mt-1">Apague um lançamento feito por engano.</p></div>
+                </div>
+
+                <div class="mt-6 bg-white rounded-3xl border border-slate-100 p-6 text-sm text-slate-600">
+                    <b class="text-slate-900">Acompanha uma nutricionista?</b> Se ela usa o Nutrição Fácil, os seus registros também aparecem no painel dela, e o plano que ela prescreveu fica acessível pelo Link Mágico.
+                </div>
 
                 <div class="mt-12 bg-white rounded-3xl border border-slate-100 p-6 sm:p-8">
                     <h3 class="text-lg font-bold text-slate-900">Dicas para aproveitar melhor</h3>
@@ -294,13 +330,15 @@
                     </ul>
                 </div>
                 <div class="bg-slate-50 p-8 rounded-3xl border border-slate-100">
-                    <h3 class="text-xl font-bold text-slate-900 mb-4">🙋 Pacientes</h3>
+                    <h3 class="text-xl font-bold text-slate-900 mb-4">🙋 Usuários (B2C)</h3>
                     <ul class="space-y-3 text-slate-600">
                         <li>✅ Registro em segundos, sem planilha e sem app novo</li>
                         <li>✅ Sem precisar pesar a comida</li>
                         <li>✅ Dieta e metas sempre à mão no celular</li>
                         <li>✅ Retorno imediato e motivação diária</li>
-                        <li>✅ Consultas mais produtivas com a nutricionista</li>
+                        <li>✅ Metas de calorias e macros calculadas para você</li>
+                        <li>✅ Dicas da próxima refeição que respeitam alergias e preferências</li>
+                        <li>✅ Modo Nutri para tirar dúvidas a qualquer hora</li>
                     </ul>
                 </div>
             </div>
@@ -315,6 +353,18 @@
                 <details class="bg-white rounded-2xl border border-slate-100 p-5">
                     <summary class="flex justify-between items-center font-semibold text-slate-900">O paciente precisa instalar algum aplicativo? <span class="chev transition">⌄</span></summary>
                     <p class="text-slate-600 mt-3">Não. O paciente usa apenas o WhatsApp. A dieta e as metas abrem pelo Link Mágico, direto no navegador do celular.</p>
+                </details>
+                <details class="bg-white rounded-2xl border border-slate-100 p-5">
+                    <summary class="flex justify-between items-center font-semibold text-slate-900">Preciso ter nutricionista para usar? <span class="chev transition">⌄</span></summary>
+                    <p class="text-slate-600 mt-3">Não. Na versão B2C você faz o cadastro, recebe suas metas de calorias e macros, registra as refeições e recebe dicas e respostas do Modo Nutri por conta própria. Se tiver uma nutricionista que usa o Nutrição Fácil, ela também pode acompanhar seus registros.</p>
+                </details>
+                <details class="bg-white rounded-2xl border border-slate-100 p-5">
+                    <summary class="flex justify-between items-center font-semibold text-slate-900">O que é o Modo Nutri? <span class="chev transition">⌄</span></summary>
+                    <p class="text-slate-600 mt-3">É uma IA que usa as suas informações (objetivo, metas, preferências, alergias e doenças) para responder perguntas e dar dicas personalizadas sobre alimentação. Ela não substitui a consulta com um profissional.</p>
+                </details>
+                <details class="bg-white rounded-2xl border border-slate-100 p-5">
+                    <summary class="flex justify-between items-center font-semibold text-slate-900">Posso corrigir ou apagar uma refeição? <span class="chev transition">⌄</span></summary>
+                    <p class="text-slate-600 mt-3">Sim. Você pode corrigir ou remover registros, e também reescrever duas das suas metas.</p>
                 </details>
                 <details class="bg-white rounded-2xl border border-slate-100 p-5">
                     <summary class="flex justify-between items-center font-semibold text-slate-900">Os valores calculados pela IA são exatos? <span class="chev transition">⌄</span></summary>
@@ -352,10 +402,10 @@
                     <p class="text-sm text-slate-600 mt-1">Quero ser parceiro e usar com meus pacientes.</p>
                     <p class="text-emerald-600 font-bold mt-4">Falar com consultor →</p>
                 </a>
-                <a href="https://wa.me/5511971247423?text=Ol%C3%A1!%20Sou%20paciente%20e%20gostaria%20de%20saber%20como%20usar%20o%20Nutri%C3%A7%C3%A3o%20F%C3%A1cil." target="_blank" rel="noopener" class="block bg-white text-slate-900 rounded-3xl p-6 hover:-translate-y-1 transition shadow-xl">
+                <a href="https://wa.me/5511971247423?text=Ol%C3%A1!%20Gostaria%20de%20usar%20o%20Nutri%C3%A7%C3%A3o%20F%C3%A1cil." target="_blank" rel="noopener" class="block bg-white text-slate-900 rounded-3xl p-6 hover:-translate-y-1 transition shadow-xl">
                     <p class="text-3xl">🙋</p>
-                    <p class="font-bold text-lg mt-3">Sou paciente</p>
-                    <p class="text-sm text-slate-600 mt-1">Quero entender como registrar minhas refeições.</p>
+                    <p class="font-bold text-lg mt-3">Quero usar para mim</p>
+                    <p class="text-sm text-slate-600 mt-1">Quero monitorar minha alimentação com metas e dicas.</p>
                     <p class="text-emerald-600 font-bold mt-4">Falar no WhatsApp →</p>
                 </a>
             </div>
