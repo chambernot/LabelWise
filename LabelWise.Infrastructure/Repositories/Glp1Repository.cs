@@ -1,4 +1,5 @@
 using LabelWise.Application.Interfaces.Persistence;
+using LabelWise.Application.Services.Glp1;
 using LabelWise.Domain.Entities.Glp1;
 using LabelWise.Domain.Entities.Nutrition;
 using LabelWise.Infrastructure.Persistence.Mongo;
@@ -73,12 +74,19 @@ namespace LabelWise.Infrastructure.Repositories
 
         public async Task<decimal> ObterProteinaDoDiaAsync(string userId, DateTime inicioDiaUtc)
         {
-            var fimDiaUtc = inicioDiaUtc.AddDays(1);
-            var refeicoes = await _mealLogs
-                .Find(x => x.UserId == userId && x.LoggedAt >= inicioDiaUtc && x.LoggedAt < fimDiaUtc)
-                .ToListAsync();
+            return (await ObterConsumoDoDiaAsync(userId, inicioDiaUtc)).ProteinG;
+        }
 
-            return refeicoes.Where(x => !x.IsTreino).Sum(x => x.ProteinG);
+        public async Task<Glp1DayIntake> ObterConsumoDoDiaAsync(string userId, DateTime inicioDiaUtc)
+        {
+            var fimDiaUtc = inicioDiaUtc.AddDays(1);
+            var refeicoes = (await _mealLogs
+                .Find(x => x.UserId == userId && x.LoggedAt >= inicioDiaUtc && x.LoggedAt < fimDiaUtc)
+                .ToListAsync())
+                .Where(x => !x.IsTreino)
+                .ToList();
+
+            return new Glp1DayIntake(refeicoes.Sum(x => x.ProteinG), refeicoes.Sum(x => Math.Max(0, x.Calories)), refeicoes.Count);
         }
 
         // Mesma leitura do WhatsAppController.ObterAguaDoDiaAsync

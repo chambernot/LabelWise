@@ -4,6 +4,7 @@ using LabelWise.Application.Interfaces;
 using LabelWise.Application.Interfaces.AI;
 using LabelWise.Application.Interfaces.Persistence;
 using LabelWise.Application.Services.Glp1;
+using LabelWise.Application.Services.Nutrition;
 using LabelWise.Domain.Entities.Nutrition;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
@@ -1036,13 +1037,22 @@ namespace LabelWise.Api.Controllers
 
                     await _nutritionRepository.SalvarClarificacaoPendenteAsync(novaClarificacao);
                 }
-                else if (result.TotalMeal != null && !isSystemError && !result.IsAdvice)
+                Glp1DayContext? glp1Dia = null;
+
+                if (result.TotalMeal != null && !isSystemError && !result.IsAdvice && !result.AnalysisFailed && !result.RequiresUserClarification)
                 {
-                    var dataHojeBrFinal = DateTime.UtcNow.AddHours(-3);
-                    statusDoDia = await _nutritionService.GetDailyStatusAndSuggestionAsync(senderPhone, dataHojeBrFinal);
+                    var agoraUtcFinal = DateTime.UtcNow;
+                    var dataHojeBrFinal = agoraUtcFinal.AddHours(-3);
+
+                    // Modo GLP-1: só para quem tem Glp1Profiles.Enabled; para os demais é nulo e nada muda
+                    glp1Dia = await ObterContextoGlp1Async(senderPhone, agoraUtcFinal);
+
+                    statusDoDia = glp1Dia != null
+                        ? await _nutritionService.GetDailyStatusAndSuggestionAsync(senderPhone, dataHojeBrFinal, glp1Dia.ProteinTargetG)
+                        : await _nutritionService.GetDailyStatusAndSuggestionAsync(senderPhone, dataHojeBrFinal);
                 }
 
-                var respostaTexto = FormatarRespostaParaWhatsApp(result, statusDoDia);
+                var respostaTexto = WhatsAppMealResponseFormatter.FormatarRefeicao(result, statusDoDia, glp1Dia);
                 await _whatsAppSender.SendTextMessageAsync(senderPhone, respostaTexto);
                 await _nutritionRepository.SalvarMensagemHistoricoAsync(senderPhone, "assistant", respostaTexto);
 
@@ -1104,24 +1114,34 @@ namespace LabelWise.Api.Controllers
 
         #region Helper Methods - Painel / Resumo Visual
 
-        private static string GerarBarraProgresso(decimal atual, decimal meta, int tamanhoBarra = 10)
+        private static string GerarBarraProgresso(decimal atual, decimal meta, int tamanhoBarra = 10) =>
+            WhatsAppMealResponseFormatter.GerarBarraProgresso(atual, meta, tamanhoBarra);
+
+        // Falha no Modo GLP-1 nunca interrompe o atendimento: volta para o formato normal
+        private async Task<Glp1DayContext?> ObterContextoGlp1Async(string phone, DateTime agoraUtc)
         {
-            if (meta <= 0) meta = 1;
-            decimal porcentagem = Math.Min(1.0m, Math.Max(0.0m, atual / meta));
-            int preenchidos = (int)Math.Round(porcentagem * tamanhoBarra);
-            int vazios = tamanhoBarra - preenchidos;
-
-            var sb = new StringBuilder();
-            for (int i = 0; i < preenchidos; i++) sb.Append("🟩");
-            for (int i = 0; i < vazios; i++) sb.Append("⬜");
-
-            return $"{sb} {porcentagem * 100:F0}%";
+            try
+            {
+                return await _glp1Handler.ObterContextoDoDiaAsync(phone, agoraUtc);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Falha ao ler o Modo GLP-1 de {Phone}; usando o formato normal.", phone);
+                return null;
+            }
         }
 
         private async Task<string> ObterResumoFormatadoWhatsappAsync(string phone)
         {
             var agoraUtc = DateTime.UtcNow;
             var hojeBr = agoraUtc.AddHours(-3);
+
+            var glp1Dia = await ObterContextoGlp1Async(phone, agoraUtc);
+            if (glp1Dia != null)
+            {
+                return WhatsAppMealResponseFormatter.FormatarResumoGlp1(glp1Dia);
+            }
+
             // 1º dia do mês às 00:00 de Brasília, expresso em UTC
             var inicioMesUtc = DateTime.SpecifyKind(new DateTime(hojeBr.Year, hojeBr.Month, 1).AddHours(3), DateTimeKind.Utc);
 
@@ -2209,59 +2229,6 @@ Retorne APENAS o texto da mensagem pronto para envio.
                 _logger.LogError(ex, "Erro ao estimar gasto calórico.");
                 return 0;
             }
-        }
-
-        private string FormatarRespostaParaWhatsApp(MealAnalysisResponseDto aiResult, DailyStatusResponseDto? statusDoDia)
-        {
-            if (aiResult.ClarificationQuestion != null && aiResult.ClarificationQuestion.Contains("instáveis", StringComparison.OrdinalIgnoreCase))
-                return "⚠️ *Ops! Nossos serviços estão instáveis no momento.*\nPor favor, tente novamente em instantes.";
-
-            if (aiResult.IsAdvice)
-                return $"💡 *Conselho do Nutri:* \n\n{(!string.IsNullOrWhiteSpace(aiResult.AdviceText) ? aiResult.AdviceText : "Como posso ajudar?")}";
-
-            if (aiResult.RequiresUserClarification)
-                return $"🤔 *Só mais um detalhe:*\n{aiResult.ClarificationQuestion}";
-
-            var prato = !string.IsNullOrWhiteSpace(aiResult.DishName) ? aiResult.DishName : aiResult.MealType;
-            var calorias = aiResult.TotalMeal?.Calories ?? 0;
-            var proteina = aiResult.TotalMeal?.ProteinG ?? 0;
-            var carbo = aiResult.TotalMeal?.CarbsG ?? 0;
-            var gordura = aiResult.TotalMeal?.FatG ?? 0;
-
-            var msg = $"✅ *Refeição registrada:* {prato}\n\n";
-
-            if (aiResult.Items != null && aiResult.Items.Any())
-            {
-                msg += "📋 *Itens identificados:*\n";
-                foreach (var item in aiResult.Items)
-                {
-                    msg += $"• {item.FoodName} ({item.PortionDescription}) — *{item.Calories} kcal*\n";
-                }
-                msg += "\n";
-            }
-
-            msg += $"🔥 *Calorias Totais:* {calorias} kcal\n" +
-                   $"🥩 *Proteínas:* {proteina}g\n" +
-                   $"🍞 *Carboidratos:* {carbo}g\n" +
-                   $"🥑 *Gorduras:* {gordura}g\n\n";
-
-            if (statusDoDia != null)
-            {
-                if (statusDoDia.StreakDays > 0) msg += $"🔥 *OFENSIVA:* {statusDoDia.StreakDays} dia(s) seguidos no foco! 🚀\n\n";
-                msg += $"📊 *SEU RESUMO DE HOJE*\n• *Calorias:* {statusDoDia.Consumed.Calories} / {statusDoDia.Target.Calories} kcal\n";
-                var faltamCal = statusDoDia.Remaining.Calories;
-                msg += faltamCal <= 0 ? $"_⚠️ Você atingiu ou ultrapassou sua meta!_\n" : $"_Faltam {faltamCal} kcal_\n";
-                msg += $"• *Proteínas:* {statusDoDia.Consumed.ProteinG:F0}g / {statusDoDia.Target.ProteinG:F0}g\n" +
-                       $"• *Carboidratos:* {statusDoDia.Consumed.CarbsG:F0}g / {statusDoDia.Target.CarbsG:F0}g\n" +
-                       $"• *Gorduras:* {statusDoDia.Consumed.FatG:F0}g / {statusDoDia.Target.FatG:F0}g\n";
-
-                if (faltamCal > 100 && statusDoDia.Suggestions != null && statusDoDia.Suggestions.Any())
-                {
-                    msg += "\n💡 *SUGESTÕES PARA A PRÓXIMA REFEIÇÃO:*\n";
-                    foreach (var sugestao in statusDoDia.Suggestions) msg += $"• {sugestao}\n";
-                }
-            }
-            return msg;
         }
 
         [HttpPost("broadcast-novidade")]

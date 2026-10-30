@@ -1,3 +1,4 @@
+using LabelWise.Application.Services.Glp1;
 using LabelWise.Domain.Entities.Glp1;
 
 namespace LabelWise.Application.Interfaces.Persistence;
@@ -17,6 +18,9 @@ public interface IGlp1Repository
     Task<int> ContarAlertasAsync(string userId);
 
     Task<decimal> ObterProteinaDoDiaAsync(string userId, DateTime inicioDiaUtc);
+
+    // Proteína, calorias e quantidade de refeições do dia, sem treinos
+    Task<Glp1DayIntake> ObterConsumoDoDiaAsync(string userId, DateTime inicioDiaUtc);
     Task<int> ObterAguaDoDiaAsync(string userId, DateTime inicioDiaUtc);
 
     // Apaga perfil, sintomas e alertas do telefone. Não mexe em WaterLogs, WeightLogs nem refeições.

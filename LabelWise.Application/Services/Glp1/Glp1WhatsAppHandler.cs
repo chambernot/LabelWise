@@ -157,6 +157,36 @@ public class Glp1WhatsAppHandler
         return false;
     }
 
+    // Consumo do dia e metas de quem está com o Modo GLP-1 ativo (Enabled e sem ativação em andamento).
+    // Nulo para todos os outros; telefone fora de Glp1:AllowedPhones nem consulta o banco.
+    public async Task<Glp1DayContext?> ObterContextoDoDiaAsync(string phone, DateTime agoraUtc)
+    {
+        if (!TelefoneLiberado(phone))
+        {
+            return null;
+        }
+
+        var perfil = await _repository.ObterPerfilAsync(phone);
+        if (perfil == null || !perfil.Enabled || !AtivacaoConcluida(perfil))
+        {
+            return null;
+        }
+
+        var inicioDiaUtc = DateTime.SpecifyKind(agoraUtc.AddHours(-3).Date.AddHours(3), DateTimeKind.Utc);
+        var consumo = await _repository.ObterConsumoDoDiaAsync(phone, inicioDiaUtc);
+        var agua = await _repository.ObterAguaDoDiaAsync(phone, inicioDiaUtc);
+
+        return new Glp1DayContext(
+            perfil.ProteinTargetG ?? 0,
+            perfil.CalorieFloorKcal ?? _options.CalorieFloorKcal,
+            perfil.WaterTargetMl ?? 0,
+            consumo.ProteinG,
+            consumo.CaloriesKcal,
+            consumo.Meals,
+            agua,
+            agoraUtc);
+    }
+
     // ---------------------------------------------------------------- gatilho e saída
 
     private async Task IniciarOuMostrarAsync(string phone)

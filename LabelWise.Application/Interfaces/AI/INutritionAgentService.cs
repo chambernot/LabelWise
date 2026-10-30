@@ -7,7 +7,8 @@ namespace LabelWise.Application.Interfaces.AI
 {
     public interface INutritionAgentService
     {
-        Task<List<string>> GenerateProactiveSuggestionsAsync(MacroSummaryDto remainingBalance, string nextMealType, List<string>? pratosJaConsumidos = null);
+        // glp1 preenchido = sugestões do Modo GLP-1 (no máximo 2, porção pequena, proteína). Nulo = comportamento de sempre.
+        Task<List<string>> GenerateProactiveSuggestionsAsync(MacroSummaryDto remainingBalance, string nextMealType, List<string>? pratosJaConsumidos = null, Glp1SuggestionContext? glp1 = null);
 
         Task<MealAnalysisResponseDto> ExtractMealDataAsync(ParseMealRequestDto request);
 

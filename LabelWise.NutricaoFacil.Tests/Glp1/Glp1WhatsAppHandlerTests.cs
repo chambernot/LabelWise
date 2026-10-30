@@ -635,6 +635,45 @@ public class Glp1WhatsAppHandlerTests
         Assert.Equal(Glp1WhatsAppHandler.RespostaComandoDesconhecido, Assert.Single(_sender.Mensagens).Texto);
     }
 
+    // ================================================================ contexto do dia (resposta da refeição e "resumo")
+
+    [Fact]
+    public async Task ContextoDoDia_TelefoneForaDaLista_NuloSemConsultarOBanco()
+    {
+        PerfilAtivo();
+
+        Assert.Null(await Handler().ObterContextoDoDiaAsync(OutroTelefone, DateTime.UtcNow));
+        Assert.Equal(0, _repository.Chamadas);
+    }
+
+    [Fact]
+    public async Task ContextoDoDia_SemPerfilOuDesativadoOuEmAtivacao_Nulo()
+    {
+        Assert.Null(await Handler().ObterContextoDoDiaAsync(TelefoneLiberado, DateTime.UtcNow));
+
+        PerfilAtivo(enabled: false);
+        Assert.Null(await Handler().ObterContextoDoDiaAsync(TelefoneLiberado, DateTime.UtcNow));
+
+        PerfilNaEtapa(Glp1ActivationSteps.Dose).Enabled = true;
+        Assert.Null(await Handler().ObterContextoDoDiaAsync(TelefoneLiberado, DateTime.UtcNow));
+    }
+
+    [Fact]
+    public async Task ContextoDoDia_ModoAtivo_TrazMetasEConsumo()
+    {
+        PerfilAtivo();
+        _repository.ProteinaHoje = 40;
+        _repository.CaloriasHoje = 900;
+        _repository.RefeicoesHoje = 2;
+        _repository.AguaHoje = 1500;
+        var agora = DateTime.UtcNow;
+
+        var ctx = await Handler().ObterContextoDoDiaAsync(TelefoneLiberado, agora);
+
+        Assert.NotNull(ctx);
+        Assert.Equal(new Glp1DayContext(86, 1200, 2520, 40, 900, 2, 1500, agora), ctx);
+    }
+
     // ================================================================ dublês
 
     private sealed class FakeGlp1Repository : IGlp1Repository
@@ -655,6 +694,9 @@ public class Glp1WhatsAppHandlerTests
         public Task<int> ContarSintomasAsync(string userId) { Chamadas++; return Task.FromResult(Sintomas); }
         public Task<int> ContarAlertasAsync(string userId) { Chamadas++; return Task.FromResult(Alertas); }
         public Task<decimal> ObterProteinaDoDiaAsync(string userId, DateTime inicioDiaUtc) { Chamadas++; return Task.FromResult(ProteinaHoje); }
+        public int CaloriasHoje { get; set; }
+        public int RefeicoesHoje { get; set; }
+        public Task<Glp1DayIntake> ObterConsumoDoDiaAsync(string userId, DateTime inicioDiaUtc) { Chamadas++; return Task.FromResult(new Glp1DayIntake(ProteinaHoje, CaloriasHoje, RefeicoesHoje)); }
         public Task<int> ObterAguaDoDiaAsync(string userId, DateTime inicioDiaUtc) { Chamadas++; return Task.FromResult(AguaHoje); }
 
         public Task ApagarDadosAsync(string userId)

@@ -93,8 +93,13 @@ FORMATO: { ""targetCalories"": 0, ""targetProteinG"": 0, ""targetCarbsG"": 0, ""
             _geminiModel = (GetConfigValue(configuration, "Model", "Gemini:Model") ?? "gemini-1.5-flash").Trim();
         }
 
-        public async Task<List<string>> GenerateProactiveSuggestionsAsync(MacroSummaryDto remainingBalance, string nextMealType, List<string>? pratosJaConsumidos = null)
+        public async Task<List<string>> GenerateProactiveSuggestionsAsync(MacroSummaryDto remainingBalance, string nextMealType, List<string>? pratosJaConsumidos = null, Glp1SuggestionContext? glp1 = null)
         {
+            if (glp1 != null)
+            {
+                return await GenerateGlp1SuggestionsAsync(glp1, nextMealType, pratosJaConsumidos);
+            }
+
             try
             {
                 var historicoPratos = (pratosJaConsumidos != null && pratosJaConsumidos.Any())
@@ -126,6 +131,75 @@ FORMATO: { ""targetCalories"": 0, ""targetProteinG"": 0, ""targetCarbsG"": 0, ""
             catch { return GetFallbackSuggestions(); }
         }
 
+        public const int MaxSugestoesGlp1 = 2;
+
+        // Modo GLP-1: no máximo 2 sugestões de porção pequena, ricas em proteína e fáceis de digerir.
+        // Nunca sugerir pular refeição ou comer menos. Sem fallback fixo: uma sugestão genérica poderia
+        // ferir restrições ou aversões, então em caso de erro não mostramos nada.
+        private async Task<List<string>> GenerateGlp1SuggestionsAsync(Glp1SuggestionContext glp1, string nextMealType, List<string>? pratosJaConsumidos)
+        {
+            try
+            {
+                var historicoPratos = (pratosJaConsumidos != null && pratosJaConsumidos.Any())
+                    ? string.Join(", ", pratosJaConsumidos)
+                    : "Nenhum alimento registrado.";
+
+                var prompt =
+                    "Você é um copiloto nutricional para uma pessoa que usa medicamento GLP-1 com acompanhamento médico. " +
+                    $"Sugira NO MÁXIMO {MaxSugestoesGlp1} opções para a próxima refeição.\n\n" +
+                    "REGRAS OBRIGATÓRIAS:\n" +
+                    "- Porções PEQUENAS, ricas em proteína e fáceis de digerir (evite frituras, alimentos muito gordurosos e pratos volumosos).\n" +
+                    "- Cada opção em uma frase curta, com a quantidade (ex.: '1 iogurte natural com 1 colher de whey').\n" +
+                    $"- Respeite as restrições/alergias: {(string.IsNullOrWhiteSpace(glp1.Restricoes) ? "Nenhuma" : glp1.Restricoes)}\n" +
+                    $"- Evite as aversões: {(string.IsNullOrWhiteSpace(glp1.Aversoes) ? "Nenhuma" : glp1.Aversoes)}\n" +
+                    "- NUNCA sugira pular refeição, fazer jejum, comer menos ou reduzir porções.\n" +
+                    "- Não fale de medicamento nem de dose.\n\n" +
+                    $"PRÓXIMA REFEIÇÃO: {nextMealType}\n" +
+                    $"PROTEÍNA QUE AINDA FALTA HOJE: {glp1.ProteinaRestanteG:F0} g\n" +
+                    $"ALIMENTOS JÁ CONSUMIDOS HOJE: {historicoPratos}\n\n" +
+                    @"Retorne APENAS um JSON: { ""suggestions"": [""opção 1"", ""opção 2""] }";
+
+                var requestBody = new
+                {
+                    model = _geminiModel,
+                    temperature = 0.5,
+                    max_tokens = 2000,
+                    messages = new object[] { new { role = "user", content = prompt } }
+                };
+
+                var sugestoes = await CallGeminiAsync(requestBody, (responseStr) =>
+                {
+                    var jsonContent = ExtractContentFromResponse(responseStr, requireJson: true);
+                    using var document = JsonDocument.Parse(jsonContent);
+                    return TryGetPropertyCaseInsensitive(document.RootElement, "suggestions", out var suggs)
+                        ? JsonSerializer.Deserialize<List<string>>(suggs.GetRawText()) ?? new List<string>()
+                        : new List<string>();
+                });
+
+                return FiltrarSugestoesGlp1(sugestoes);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "Não foi possível gerar sugestões do Modo GLP-1.");
+                return new List<string>();
+            }
+        }
+
+        // Segunda barreira, independente do prompt: descarta sugestão de pular refeição, jejum ou comer menos
+        public static List<string> FiltrarSugestoesGlp1(IEnumerable<string>? sugestoes)
+        {
+            if (sugestoes == null) return new List<string>();
+
+            return sugestoes
+                .Where(s => !string.IsNullOrWhiteSpace(s))
+                .Select(s => s.Trim())
+                .Where(s => !System.Text.RegularExpressions.Regex.IsMatch(
+                    RemoverAcentos(s).ToLowerInvariant(),
+                    @"\b(pul(e|ar|ando)|jejum|jejuar|coma menos|comer menos|reduz(a|ir)|diminu(a|ir)|evite comer|nao coma|deixe de comer)\b"))
+                .Take(MaxSugestoesGlp1)
+                .ToList();
+        }
+
         public async Task<MealAnalysisResponseDto> ExtractMealDataAsync(ParseMealRequestDto request) => await ExtractMealDataAsync(request, null);
 
         public async Task<MealAnalysisResponseDto> ExtractMealDataAsync(ParseMealRequestDto request, List<ChatMessageLog>? chatHistory)
@@ -137,9 +211,9 @@ FORMATO: { ""targetCalories"": 0, ""targetProteinG"": 0, ""targetCarbsG"": 0, ""
             }
             catch (Exception ex)
             {
+                // Sem análise não há refeição: nada é gravado e o usuário é convidado a mandar de novo
                 _logger.LogError(ex, "Erro crítico ao processar refeição com Gemini.");
-                string nomePrato = !string.IsNullOrWhiteSpace(request.TextInput) && request.TextInput.Length < 30 ? request.TextInput : "Refeição Registrada";
-                return new MealAnalysisResponseDto("Refeição", nomePrato, new List<FoodItemDto>(), new MacroSummaryDto(400, 18, 45, 12), false, null);
+                return MealAnalysisResponseDto.Falha();
             }
         }
 
@@ -290,9 +364,13 @@ FORMATO: { ""targetCalories"": 0, ""targetProteinG"": 0, ""targetCarbsG"": 0, ""
                     cal = sumCal; prot = sumProt; carb = sumCarb; fat = sumFat;
                 }
 
-                if (cal <= 0 && !isAdvice)
+                // Registro com 0 kcal só é legítimo quando todos os itens são água, café ou chá.
+                // Qualquer outro 0 kcal é falha da IA: não inventamos valores.
+                if (cal <= 0 && !isAdvice && !requiresClarification &&
+                    !(items.Any() && items.All(i => EhBebidaSemCaloria(i.FoodName))))
                 {
-                    cal = 400; prot = 18m; carb = 45m; fat = 12m;
+                    _logger.LogWarning("[ParseMealResponse] Registro sem calorias e sem itens válidos; tratado como falha: {Json}", jsonContent);
+                    return MealAnalysisResponseDto.Falha();
                 }
 
                 return new MealAnalysisResponseDto(mealType, dishName, items, new MacroSummaryDto(cal, prot, carb, fat), requiresClarification, clarificationQuestion, isAdvice, adviceText);
@@ -300,7 +378,7 @@ FORMATO: { ""targetCalories"": 0, ""targetProteinG"": 0, ""targetCarbsG"": 0, ""
             catch (Exception ex)
             {
                 _logger.LogError(ex, "[ParseMealResponse] Erro fatal no parser ao ler: {Json}", jsonContent);
-                return new MealAnalysisResponseDto("Refeição", "Refeição (Recuperada)", new List<FoodItemDto>(), new MacroSummaryDto(400, 18, 45, 12), false, null);
+                return MealAnalysisResponseDto.Falha();
             }
         }
 
@@ -427,14 +505,32 @@ FORMATO: { ""targetCalories"": 0, ""targetProteinG"": 0, ""targetCarbsG"": 0, ""
                     return rawText.Substring(firstBrace, lastBrace - firstBrace + 1).Trim();
                 }
 
-                _logger.LogWarning("[Gemini Vision Fallback] Texto retornado não possui chaves JSON.");
-
-                string safeText = !string.IsNullOrWhiteSpace(rawText) ? rawText.Replace("\"", "'").Replace("\n", " ") : "Alimento Registrado";
-                if (safeText.Length > 80) safeText = safeText.Substring(0, 80) + "...";
-
-                return $"{{\"dishName\":\"{safeText}\",\"totalMeal\":{{\"calories\":350,\"proteinG\":15,\"carbsG\":40,\"fatG\":12}},\"items\":[{{\"foodName\":\"{safeText}\",\"portionDescription\":\"Estimativa visual\",\"estimatedWeightG\":250,\"calories\":350,\"proteinG\":15,\"carbsG\":40,\"fatG\":12,\"confidenceScore\":0.7}}]}}";
+                // Sem JSON não há dado nenhum. Devolve um objeto vazio: na refeição vira falha (ParseMealResponse);
+                // nos outros usos (dieta, metas, sugestões) o resultado é o mesmo de antes, porque a refeição
+                // inventada que era devolvida aqui não tinha nenhum campo que eles leiam.
+                _logger.LogWarning("[Gemini] Texto retornado não possui chaves JSON.");
+                return "{}";
             }
             return rawText;
+        }
+
+        // Água, café ou chá (sem acento e sem diferenciar maiúsculas): os únicos itens que podem ter 0 kcal
+        private static bool EhBebidaSemCaloria(string? foodName)
+        {
+            if (string.IsNullOrWhiteSpace(foodName)) return false;
+            var nome = RemoverAcentos(foodName).ToLowerInvariant();
+            return System.Text.RegularExpressions.Regex.IsMatch(nome, @"\b(agua|cafe|cha|water|coffee|tea)\b");
+        }
+
+        private static string RemoverAcentos(string texto)
+        {
+            var decomposto = texto.Normalize(NormalizationForm.FormD);
+            var sb = new StringBuilder(decomposto.Length);
+            foreach (var c in decomposto)
+            {
+                if (System.Globalization.CharUnicodeInfo.GetUnicodeCategory(c) != System.Globalization.UnicodeCategory.NonSpacingMark) sb.Append(c);
+            }
+            return sb.ToString().Normalize(NormalizationForm.FormC);
         }
 
         private static List<string> GetFallbackSuggestions() => new List<string> { "Omelete de 3 ovos", "Frango grelhado e salada", "Shake de whey protein" };

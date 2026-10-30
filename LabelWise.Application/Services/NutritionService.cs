@@ -53,12 +53,17 @@ namespace LabelWise.Application.Services.Nutrition
             return CalcularStatusDoDiaAsync(userId, date, gerarSugestoes: true);
         }
 
+        public Task<DailyStatusResponseDto> GetDailyStatusAndSuggestionAsync(string userId, DateTime date, int glp1ProteinTargetG)
+        {
+            return CalcularStatusDoDiaAsync(userId, date, gerarSugestoes: true, glp1ProteinTargetG);
+        }
+
         public Task<DailyStatusResponseDto> GetDailyStatusAsync(string userId, DateTime date)
         {
             return CalcularStatusDoDiaAsync(userId, date, gerarSugestoes: false);
         }
 
-        private async Task<DailyStatusResponseDto> CalcularStatusDoDiaAsync(string userId, DateTime date, bool gerarSugestoes)
+        private async Task<DailyStatusResponseDto> CalcularStatusDoDiaAsync(string userId, DateTime date, bool gerarSugestoes, int? glp1ProteinTargetG = null)
         {
             var targetDate = date.Date;
 
@@ -91,9 +96,24 @@ namespace LabelWise.Application.Services.Nutrition
                 .Where(dish => !string.IsNullOrWhiteSpace(dish))
                 .ToList();
 
-            var suggestions = gerarSugestoes
-                ? await _aiAgent.GenerateProactiveSuggestionsAsync(remaining, nextMealType, pratosJaConsumidos)
-                : new List<string>();
+            List<string> suggestions;
+            if (!gerarSugestoes)
+            {
+                suggestions = new List<string>();
+            }
+            else if (glp1ProteinTargetG.HasValue)
+            {
+                var paciente = await _repository.ObterPacientePorIdAsync(userId);
+                var glp1 = new Glp1SuggestionContext(
+                    paciente?.MedicalRestrictions,
+                    paciente?.FoodAversions,
+                    Math.Max(0, glp1ProteinTargetG.Value - consumed.ProteinG));
+                suggestions = await _aiAgent.GenerateProactiveSuggestionsAsync(remaining, nextMealType, pratosJaConsumidos, glp1);
+            }
+            else
+            {
+                suggestions = await _aiAgent.GenerateProactiveSuggestionsAsync(remaining, nextMealType, pratosJaConsumidos);
+            }
 
             int streakDays = await _repository.CalcularOfensivaStreakAsync(userId);
 
@@ -168,6 +188,12 @@ namespace LabelWise.Application.Services.Nutrition
 
             // 5. Delega a análise para o agente de IA enviando o histórico conversacional junto
             var aiAnalysis = await _aiAgent.ExtractMealDataAsync(enrichedRequest, chatHistory);
+
+            // IA falhou: não grava nada (antes, esses casos viravam uma refeição inventada de 400/350 kcal)
+            if (aiAnalysis.AnalysisFailed)
+            {
+                return aiAnalysis;
+            }
 
             if (aiAnalysis.IsAdvice)
             {
