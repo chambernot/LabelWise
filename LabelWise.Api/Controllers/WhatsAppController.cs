@@ -2307,6 +2307,39 @@ Retorne APENAS o texto da mensagem pronto para envio.
             }
         }
 
+        // Modo GLP-1: chamar de hora em hora. Só age às 9h (dia da aplicação) e às 21h (ingestão baixa).
+        // ?dryRun=true só lista quem receberia; ?phone=55... roda só para esse telefone, ignorando a hora.
+        [HttpPost("send-glp1-reminders")]
+        public async Task<IActionResult> SendGlp1Reminders(
+            [FromHeader(Name = "X-Cron-Secret")] string secret,
+            [FromServices] Glp1ReminderService glp1Reminders,
+            [FromQuery] bool dryRun = false,
+            [FromQuery] string? phone = null)
+        {
+            var expectedSecret = _configuration["CronSecret"];
+            if (string.IsNullOrEmpty(secret) || secret != expectedSecret) return Unauthorized(new { success = false, message = "Acesso negado." });
+
+            try
+            {
+                var resultado = await glp1Reminders.ExecutarAsync(DateTime.UtcNow, dryRun, phone);
+                return Ok(new
+                {
+                    success = true,
+                    message = resultado.Observacao,
+                    dryRun = resultado.DryRun,
+                    horaBrasilia = resultado.HoraBrasilia,
+                    enviados = resultado.Enviados,
+                    falhas = resultado.Falhas,
+                    selecionados = resultado.Selecionados
+                });
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Erro interno ao processar os lembretes do Modo GLP-1.");
+                return StatusCode(500, new { success = false, message = "Erro interno ao processar." });
+            }
+        }
+
         [HttpPost("send-water-reminders")]
         public async Task<IActionResult> SendWaterReminders([FromHeader(Name = "X-Cron-Secret")] string secret)
         {

@@ -27,6 +27,124 @@ namespace LabelWise.Infrastructure.Repositories
             _alerts = database.GetCollection<Glp1Alert>(MongoCollectionNames.Glp1Alerts);
             _mealLogs = database.GetCollection<MealLog>("Nutrition_MealLogs");
             _waterLogs = database.GetCollection<BsonDocument>("WaterLogs");
+            _reminderLogs = database.GetCollection<BsonDocument>(MongoCollectionNames.Glp1ReminderLogs);
+            _userActivity = database.GetCollection<BsonDocument>("UserActivity");
+        }
+
+        private readonly IMongoCollection<BsonDocument> _reminderLogs;
+        private readonly IMongoCollection<BsonDocument> _userActivity; // só leitura (gravada pelo UserActivityTracker)
+
+        // ---------------------------------------------------------------- lembretes
+
+        public async Task<List<Glp1Profile>> ListarPerfisAtivosAsync()
+        {
+            return await _profiles.Find(x => x.Enabled && x.ActivationStep == null).ToListAsync();
+        }
+
+        public async Task<Glp1Alert?> ObterUltimoAlertaAsync(string userId, Glp1AlertType tipo)
+        {
+            return await _alerts.Find(x => x.UserId == userId && x.Type == tipo)
+                .SortByDescending(x => x.CreatedAt)
+                .FirstOrDefaultAsync();
+        }
+
+        private static string IdDoLembrete(string userId, string tipo, string diaBr) => $"{userId}_{tipo}_{diaBr}";
+
+        public async Task<bool> LembreteJaEnviadoAsync(string userId, string tipo, string diaBr)
+        {
+            return await _reminderLogs.Find(Builders<BsonDocument>.Filter.Eq("_id", IdDoLembrete(userId, tipo, diaBr))).AnyAsync();
+        }
+
+        public async Task<bool> RegistrarEnvioLembreteAsync(string userId, string tipo, string diaBr, DateTime agoraUtc)
+        {
+            try
+            {
+                // _id único: duas execuções no mesmo dia não conseguem reservar o mesmo envio
+                await _reminderLogs.InsertOneAsync(new BsonDocument
+                {
+                    { "_id", IdDoLembrete(userId, tipo, diaBr) },
+                    { "UserId", userId },
+                    { "Type", tipo },
+                    { "Day", diaBr },
+                    { "SentAt", agoraUtc }
+                });
+                return true;
+            }
+            catch (MongoWriteException ex) when (ex.WriteError?.Category == ServerErrorCategory.DuplicateKey)
+            {
+                return false;
+            }
+        }
+
+        public async Task<DateTime?> ObterUltimaMensagemRecebidaAsync(string userId)
+        {
+            var doc = await _userActivity.Find(Builders<BsonDocument>.Filter.Eq("_id", userId)).FirstOrDefaultAsync();
+            return doc != null && doc.TryGetValue("LastInboundAt", out var v) && v.IsBsonDateTime ? v.ToUniversalTime() : null;
+        }
+
+        // ---------------------------------------------------------------- portal da nutricionista
+
+        public async Task<List<Glp1Profile>> ObterPerfisAsync(IEnumerable<string> userIds)
+        {
+            var ids = userIds.Distinct().ToList();
+            return ids.Count == 0 ? new List<Glp1Profile>() : await _profiles.Find(x => ids.Contains(x.Id)).ToListAsync();
+        }
+
+        public async Task<HashSet<string>> ObterTelefonesComAlertaNaoVistoAsync(IEnumerable<string> userIds)
+        {
+            var ids = userIds.Distinct().ToList();
+            if (ids.Count == 0) return new HashSet<string>();
+
+            var alertas = await _alerts.Find(x => ids.Contains(x.UserId) && x.SeenByNutritionistAt == null).ToListAsync();
+            return alertas.Select(x => x.UserId).ToHashSet();
+        }
+
+        public async Task<List<Glp1Alert>> ObterAlertasParaPortalAsync(string userId, DateTime desdeUtc)
+        {
+            return await _alerts.Find(x => x.UserId == userId && (x.CreatedAt >= desdeUtc || x.SeenByNutritionistAt == null))
+                .SortByDescending(x => x.CreatedAt)
+                .ToListAsync();
+        }
+
+        public async Task<bool> MarcarAlertaVistoAsync(string userId, string alertId, DateTime agoraUtc)
+        {
+            var resultado = await _alerts.UpdateOneAsync(
+                x => x.Id == alertId && x.UserId == userId,
+                Builders<Glp1Alert>.Update.Set(x => x.SeenByNutritionistAt, agoraUtc));
+            return resultado.MatchedCount > 0;
+        }
+
+        public async Task<List<Glp1MealEntry>> ObterRefeicoesDesdeAsync(string userId, DateTime desdeUtc)
+        {
+            var refeicoes = await _mealLogs.Find(x => x.UserId == userId && x.LoggedAt >= desdeUtc).ToListAsync();
+            return refeicoes.Select(x => new Glp1MealEntry(x.LoggedAt, x.Calories, x.ProteinG, x.IsTreino)).ToList();
+        }
+
+        public async Task<List<Glp1WaterEntry>> ObterAguaDesdeAsync(string userId, DateTime desdeUtc)
+        {
+            var filter = Builders<BsonDocument>.Filter.And(
+                Builders<BsonDocument>.Filter.Eq("UserId", userId),
+                Builders<BsonDocument>.Filter.Gte("LoggedAt", desdeUtc));
+
+            return (await _waterLogs.Find(filter).ToListAsync())
+                .Where(d => d.Contains("LoggedAt") && d["LoggedAt"].IsBsonDateTime)
+                .Select(d => new Glp1WaterEntry(
+                    d["LoggedAt"].ToUniversalTime(),
+                    d.Contains("AmountMl") && d["AmountMl"].IsNumeric ? d["AmountMl"].ToInt32() : 0))
+                .ToList();
+        }
+
+        public async Task<List<Glp1WeightEntry>> ObterPesosDesdeAsync(string userId, DateTime desdeUtc)
+        {
+            var filter = Builders<BsonDocument>.Filter.And(
+                Builders<BsonDocument>.Filter.Eq("UserId", userId),
+                Builders<BsonDocument>.Filter.Gte("LoggedAt", desdeUtc));
+
+            return (await _weightLogs.Find(filter).ToListAsync())
+                .Where(d => d.Contains("LoggedAt") && d["LoggedAt"].IsBsonDateTime && d.Contains("WeightKg") && d["WeightKg"].IsNumeric)
+                .Select(d => new Glp1WeightEntry(d["LoggedAt"].ToUniversalTime(), (decimal)d["WeightKg"].ToDouble()))
+                .OrderBy(x => x.LoggedAt)
+                .ToList();
         }
 
         public async Task<Glp1Profile?> ObterPerfilAsync(string userId)

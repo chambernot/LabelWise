@@ -22,6 +22,29 @@ public interface IGlp1Repository
     // Restrições/alergias e aversões do onboarding (Nutrition_Patients), para filtrar as dicas
     Task<(string? Restricoes, string? Aversoes)> ObterRestricoesEAversoesAsync(string userId);
 
+    // ---------- lembretes
+    Task<List<Glp1Profile>> ListarPerfisAtivosAsync();
+    Task<Glp1Alert?> ObterUltimoAlertaAsync(string userId, Glp1AlertType tipo);
+    Task<bool> LembreteJaEnviadoAsync(string userId, string tipo, string diaBr);
+
+    // Reserva o envio do dia (telefone + tipo + dia). false = já havia um envio desse tipo hoje.
+    Task<bool> RegistrarEnvioLembreteAsync(string userId, string tipo, string diaBr, DateTime agoraUtc);
+
+    // Última mensagem recebida da pessoa (UserActivity.LastInboundAt), para decidir entre texto livre e template
+    Task<DateTime?> ObterUltimaMensagemRecebidaAsync(string userId);
+
+    // ---------- portal da nutricionista
+    Task<List<Glp1Profile>> ObterPerfisAsync(IEnumerable<string> userIds);
+    Task<HashSet<string>> ObterTelefonesComAlertaNaoVistoAsync(IEnumerable<string> userIds);
+
+    // Alertas criados desde a data, mais qualquer alerta ainda não visto
+    Task<List<Glp1Alert>> ObterAlertasParaPortalAsync(string userId, DateTime desdeUtc);
+    Task<bool> MarcarAlertaVistoAsync(string userId, string alertId, DateTime agoraUtc);
+
+    Task<List<Glp1MealEntry>> ObterRefeicoesDesdeAsync(string userId, DateTime desdeUtc);
+    Task<List<Glp1WaterEntry>> ObterAguaDesdeAsync(string userId, DateTime desdeUtc);
+    Task<List<Glp1WeightEntry>> ObterPesosDesdeAsync(string userId, DateTime desdeUtc);
+
     Task<int> ContarAlertasAsync(string userId);
 
     Task<decimal> ObterProteinaDoDiaAsync(string userId, DateTime inicioDiaUtc);

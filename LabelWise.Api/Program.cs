@@ -168,6 +168,7 @@ try
     builder.Services.AddSingleton(sp => new Glp1GoalCalculator(sp.GetRequiredService<Microsoft.Extensions.Options.IOptions<Glp1Options>>().Value));
     builder.Services.AddScoped<IGlp1Repository, Glp1Repository>();
     builder.Services.AddScoped<Glp1WhatsAppHandler>();
+    builder.Services.AddScoped<Glp1ReminderService>();
 
     // Aplicação
     builder.Services.AddScoped<ConditionEvaluationService>();

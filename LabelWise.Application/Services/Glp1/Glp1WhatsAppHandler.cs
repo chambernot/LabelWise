@@ -25,6 +25,8 @@ public class Glp1WhatsAppHandler
         "• *glp1*: ativa o modo ou mostra suas metas\n" +
         "• *glp1 status*: mostra seus dados GLP-1\n" +
         "• *sair glp1*: desativa o modo\n" +
+        "• *parar lembretes glp1* / *voltar lembretes glp1*\n" +
+        "• *glp1 testar lembrete* / *glp1 testar alerta*\n" +
         "• *glp1 reset*: apaga seus dados GLP-1";
 
     public const string PerguntaConsentimento =
@@ -61,6 +63,7 @@ public class Glp1WhatsAppHandler
     private const string Comandos =
         "Comandos:\n" +
         "• *glp1 status*: mostra seus dados GLP-1\n" +
+        "• *parar lembretes glp1*: para os lembretes\n" +
         "• *sair glp1*: desativa o modo";
 
     private static readonly string[] DiasDaSemana = { "domingo", "segunda", "terça", "quarta", "quinta", "sexta", "sábado" };
@@ -115,7 +118,7 @@ public class Glp1WhatsAppHandler
 
         if (!TelefoneLiberado(phone))
         {
-            if (pareceComandoGlp1 || comando == "modoglp1" || comando == "sairglp1")
+            if (pareceComandoGlp1 || comando is "modoglp1" or "sairglp1" or "pararlembretesglp1" or "voltarlembretesglp1")
             {
                 _logger.LogInformation(
                     "Comando GLP-1 recebido de telefone fora de Glp1:AllowedPhones (final {Final}); {Quantidade} telefone(s) configurado(s).",
@@ -143,6 +146,30 @@ public class Glp1WhatsAppHandler
             case "sairglp1":
                 await SairAsync(phone);
                 return Glp1MessageResult.Tratado;
+
+            case "pararlembretesglp1":
+                await AlterarLembretesAsync(phone, optOut: true);
+                return Glp1MessageResult.Tratado;
+
+            case "voltarlembretesglp1":
+                await AlterarLembretesAsync(phone, optOut: false);
+                return Glp1MessageResult.Tratado;
+
+            // Testes: enviam na hora para o próprio número, sem olhar hora nem regra e sem contar como envio do dia
+            case "glp1testarlembrete":
+                await EnviarAsync(phone, Glp1ReminderTexts.LembreteAplicacao);
+                return Glp1MessageResult.Tratado;
+
+            case "glp1testaralerta":
+                await _repository.InserirAlertaAsync(new Glp1Alert
+                {
+                    UserId = phone,
+                    Type = Glp1AlertType.IngestaoBaixa,
+                    Details = "Teste enviado pelo comando glp1 testar alerta",
+                    CreatedAt = DateTime.UtcNow
+                });
+                await EnviarAsync(phone, Glp1ReminderTexts.AlertaIngestao);
+                return Glp1MessageResult.Tratado;
         }
 
         var perfil = await _repository.ObterPerfilAsync(phone);
@@ -165,6 +192,27 @@ public class Glp1WhatsAppHandler
         }
 
         return Glp1MessageResult.NaoTratado;
+    }
+
+    // ---------------------------------------------------------------- lembretes
+
+    public const string RespostaLembretesParados =
+        "Pronto, não vou mais enviar lembretes do Modo GLP-1. Para voltar a receber, mande: voltar lembretes glp1";
+    public const string RespostaLembretesVoltaram = "Lembretes do Modo GLP-1 ativados de novo ✅";
+
+    private async Task AlterarLembretesAsync(string phone, bool optOut)
+    {
+        var perfil = await _repository.ObterPerfilAsync(phone);
+        if (perfil == null || !AtivacaoConcluida(perfil))
+        {
+            await EnviarAsync(phone, RespostaNaoAtivo);
+            return;
+        }
+
+        perfil.RemindersOptOut = optOut;
+        perfil.UpdatedAt = DateTime.UtcNow;
+        await _repository.SalvarPerfilAsync(perfil);
+        await EnviarAsync(phone, optOut ? RespostaLembretesParados : RespostaLembretesVoltaram);
     }
 
     // ---------------------------------------------------------------- sintomas

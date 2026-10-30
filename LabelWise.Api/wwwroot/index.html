@@ -263,6 +263,8 @@
                                                 <span x-show="patient.clinicalStatus === 'Em Dia'" class="bg-emerald-100 text-emerald-800 text-[9px] font-bold px-2 py-0.5 rounded-full">🟢 Em Dia</span>
                                                 <span x-show="patient.clinicalStatus === 'Atenção'" class="bg-amber-100 text-amber-800 text-[9px] font-bold px-2 py-0.5 rounded-full">🟡 Atenção</span>
                                                 <span x-show="patient.clinicalStatus === 'Inativo'" class="bg-red-100 text-red-800 text-[9px] font-bold px-2 py-0.5 rounded-full">🔴 Inativo</span>
+                                                <span x-show="patient.isGlp1" class="bg-violet-100 text-violet-800 text-[9px] font-bold px-2 py-0.5 rounded-full">GLP-1</span>
+                                                <span x-show="patient.hasUnseenGlp1Alert" title="Alerta GLP-1 não visto" class="inline-block w-2 h-2 rounded-full bg-red-500 align-middle"></span>
                                             </div>
                                             <p class="text-[10px] text-red-600 font-medium" x-text="patient.clinicalProtocol ? '🛡️ ' + patient.clinicalProtocol : 'Sem guardrails'"></p>
                                         </div>
@@ -310,6 +312,8 @@
                                                     <span x-show="patient.clinicalStatus === 'Em Dia'" class="bg-emerald-100 text-emerald-800 text-[9px] font-bold px-2 py-0.5 rounded-full">🟢 Em Dia</span>
                                                     <span x-show="patient.clinicalStatus === 'Atenção'" class="bg-amber-100 text-amber-800 text-[9px] font-bold px-2 py-0.5 rounded-full">🟡 Atenção</span>
                                                     <span x-show="patient.clinicalStatus === 'Inativo'" class="bg-red-100 text-red-800 text-[9px] font-bold px-2 py-0.5 rounded-full">🔴 Inativo</span>
+                                                    <span x-show="patient.isGlp1" class="bg-violet-100 text-violet-800 text-[9px] font-bold px-2 py-0.5 rounded-full">GLP-1</span>
+                                                    <span x-show="patient.hasUnseenGlp1Alert" title="Alerta GLP-1 não visto" class="inline-block w-2 h-2 rounded-full bg-red-500"></span>
 
                                                     <a :href="'https://wa.me/' + patient.userId" target="_blank" title="Chamar no WhatsApp"
                                                        class="text-green-500 hover:text-green-600 transition">
@@ -397,6 +401,115 @@
             </div>
 
             <div class="py-4 overflow-y-auto flex-1 space-y-4 pr-2">
+                <!-- 💉 MODO GLP-1 (só aparece para pacientes com o modo configurado) -->
+                <template x-if="glp1">
+                    <div class="bg-violet-50/50 border border-violet-100 rounded-xl p-4 space-y-4">
+                        <div class="flex items-center justify-between flex-wrap gap-2">
+                            <h4 class="text-sm font-bold text-violet-900">💉 Modo GLP-1</h4>
+                            <span class="text-[10px] font-bold px-2 py-0.5 rounded-full"
+                                  :class="glp1.enabled ? 'bg-emerald-100 text-emerald-800' : 'bg-gray-200 text-gray-600'"
+                                  x-text="glp1.enabled ? 'Ativo' : 'Desativado pelo paciente'"></span>
+                        </div>
+
+                        <div class="grid grid-cols-2 sm:grid-cols-4 gap-2">
+                            <div class="bg-white p-2.5 rounded-lg border border-gray-100">
+                                <span class="text-[10px] font-bold uppercase text-gray-400">Medicamento</span>
+                                <p class="text-xs font-bold text-gray-800 mt-0.5" x-text="glp1.medication || '—'"></p>
+                            </div>
+                            <div class="bg-white p-2.5 rounded-lg border border-gray-100">
+                                <span class="text-[10px] font-bold uppercase text-gray-400">Dose informada</span>
+                                <p class="text-xs font-bold text-gray-800 mt-0.5" x-text="glp1.dose || '—'"></p>
+                            </div>
+                            <div class="bg-white p-2.5 rounded-lg border border-gray-100">
+                                <span class="text-[10px] font-bold uppercase text-gray-400">Dia da aplicação</span>
+                                <p class="text-xs font-bold text-gray-800 mt-0.5 capitalize" x-text="glp1.injectionDay || '—'"></p>
+                            </div>
+                            <div class="bg-white p-2.5 rounded-lg border border-gray-100">
+                                <span class="text-[10px] font-bold uppercase text-gray-400">Metas</span>
+                                <p class="text-[11px] font-bold text-gray-800 mt-0.5"
+                                   x-text="'🥩 ' + glp1.proteinTargetG + ' g · 🔥 mín. ' + glp1.calorieFloorKcal + ' kcal · 💧 ' + formatLitros(glp1.waterTargetMl) + ' L'"></p>
+                            </div>
+                        </div>
+
+                        <div class="grid grid-cols-2 sm:grid-cols-3 gap-2">
+                            <div class="bg-white p-2.5 rounded-lg border border-violet-100">
+                                <span class="text-[10px] font-bold uppercase text-violet-600">Proteína média</span>
+                                <p class="text-sm font-extrabold text-violet-900 mt-0.5" x-text="glp1.proteinAvgG + ' g / ' + glp1.proteinTargetG + ' g'"></p>
+                                <p class="text-[10px] text-gray-500" x-text="'em ' + glp1.daysWithMeals + ' dia(s) com registro'"></p>
+                            </div>
+                            <div class="bg-white p-2.5 rounded-lg border border-violet-100">
+                                <span class="text-[10px] font-bold uppercase text-violet-600">Dias com proteína ≥ 80%</span>
+                                <p class="text-sm font-extrabold text-violet-900 mt-0.5" x-text="glp1.proteinAtLeast80PctPercent + '%'"></p>
+                                <p class="text-[10px] text-gray-500" x-text="glp1.daysProteinAtLeast80Pct + ' de ' + glp1.daysWithMeals + ' dia(s)'"></p>
+                            </div>
+                            <div class="bg-white p-2.5 rounded-lg border border-blue-100 col-span-2 sm:col-span-1">
+                                <span class="text-[10px] font-bold uppercase text-blue-600">Água média</span>
+                                <p class="text-sm font-extrabold text-blue-800 mt-0.5" x-text="formatLitros(glp1.waterAvgMl) + ' L / ' + formatLitros(glp1.waterTargetMl) + ' L'"></p>
+                                <p class="text-[10px] text-gray-500" x-text="'em ' + glp1.daysWithWater + ' dia(s) com registro'"></p>
+                            </div>
+                        </div>
+
+                        <div class="bg-white p-3 rounded-lg border border-gray-100">
+                            <canvas id="glp1ProteinChart" height="100"></canvas>
+                        </div>
+
+                        <div class="grid sm:grid-cols-2 gap-3">
+                            <div class="bg-white p-3 rounded-lg border border-gray-100">
+                                <h5 class="text-[11px] font-bold uppercase text-gray-500 mb-2">⚖️ Peso</h5>
+                                <template x-if="glp1.weights.length === 0">
+                                    <p class="text-xs text-gray-400">Nenhum peso registrado no período.</p>
+                                </template>
+                                <div class="flex flex-wrap gap-1.5">
+                                    <template x-for="w in glp1.weights" :key="w.date">
+                                        <span class="bg-gray-100 text-gray-700 text-[11px] px-2 py-1 rounded" x-text="formatDdMm(w.date) + ': ' + w.weightKg + ' kg'"></span>
+                                    </template>
+                                </div>
+                            </div>
+                            <div class="bg-white p-3 rounded-lg border border-gray-100">
+                                <h5 class="text-[11px] font-bold uppercase text-gray-500 mb-2">🤢 Sintomas por dia</h5>
+                                <template x-if="glp1Symptoms.length === 0">
+                                    <p class="text-xs text-gray-400">Nenhum sintoma relatado no período.</p>
+                                </template>
+                                <div class="space-y-1">
+                                    <template x-for="d in glp1Symptoms" :key="d.date">
+                                        <p class="text-[11px] text-gray-700">
+                                            <span class="font-bold" x-text="formatDdMm(d.date)"></span>
+                                            <span x-text="d.symptoms.join(', ')"></span>
+                                            <span x-show="d.hasRedFlag" class="text-red-600 font-bold">🚨</span>
+                                        </p>
+                                    </template>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="bg-white p-3 rounded-lg border border-gray-100">
+                            <h5 class="text-[11px] font-bold uppercase text-gray-500 mb-2">🔔 Alertas</h5>
+                            <template x-if="glp1.alerts.length === 0">
+                                <p class="text-xs text-gray-400">Nenhum alerta no período.</p>
+                            </template>
+                            <div class="divide-y divide-gray-50">
+                                <template x-for="a in glp1.alerts" :key="a.id">
+                                    <div class="py-2 flex items-start justify-between gap-2">
+                                        <div class="min-w-0">
+                                            <p class="text-xs font-bold" :class="a.type === 'SinalAlerta' ? 'text-red-700' : 'text-amber-700'"
+                                               x-text="(a.type === 'SinalAlerta' ? '🚨 Sinal de alerta' : '🍽️ Ingestão baixa') + ' · ' + new Date(a.createdAt).toLocaleString('pt-BR', {day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit'})"></p>
+                                            <p class="text-[11px] text-gray-600 break-words" x-text="a.details || ''"></p>
+                                        </div>
+                                        <template x-if="!a.seenAt">
+                                            <button @click="markGlp1AlertSeen(a.id)" class="shrink-0 text-[11px] font-bold bg-violet-100 hover:bg-violet-200 text-violet-800 px-2.5 py-1 rounded-lg transition">
+                                                Marcar como visto
+                                            </button>
+                                        </template>
+                                        <template x-if="a.seenAt">
+                                            <span class="shrink-0 text-[10px] text-gray-400">✓ visto</span>
+                                        </template>
+                                    </div>
+                                </template>
+                            </div>
+                        </div>
+                    </div>
+                </template>
+
                 <template x-for="(group, dateStr) in groupedLogs" :key="dateStr">
                     <div class="border border-gray-100 rounded-xl overflow-hidden shadow-sm">
                         <div class="bg-gray-50 px-4 py-3 border-b border-gray-100">
@@ -478,6 +591,8 @@
                         selectedPatientLogs: [],
                         targetCalories: 2000,
                         selectedPeriod: '7',
+                        glp1: null,
+                        glp1ChartInstance: null,
 
                         form: {
                             patientPhone: '',
@@ -596,7 +711,9 @@
                                         dietaryRestrictions: p.dietaryRestrictions || p.DietaryRestrictions,
                                         favoriteFoods: p.favoriteFoods || p.FavoriteFoods,
                                         prescribedMealPlan: p.prescribedMealPlan || p.PrescribedMealPlan,
-                                        clinicalStatus: p.clinicalStatus || p.ClinicalStatus || 'Em Dia'
+                                        clinicalStatus: p.clinicalStatus || p.ClinicalStatus || 'Em Dia',
+                                        isGlp1: !!(p.isGlp1 || p.IsGlp1),
+                                        hasUnseenGlp1Alert: !!(p.hasUnseenGlp1Alert || p.HasUnseenGlp1Alert)
                                     }));
                                 }
                             } catch (err) {
@@ -716,8 +833,114 @@
 
                         async viewLogs(phone) {
                             this.selectedPatientPhone = phone;
+                            this.glp1 = null;
                             this.showModal = true;
                             await this.fetchLogs();
+                        },
+
+                        get glp1Symptoms() {
+                            if (!this.glp1) return [];
+                            return this.glp1.daily.filter(d => d.symptoms.length > 0).slice().reverse();
+                        },
+
+                        formatDdMm(dateStr) {
+                            const parts = (dateStr || '').split('-');
+                            return parts.length === 3 ? `${parts[2]}/${parts[1]}` : dateStr;
+                        },
+
+                        formatLitros(ml) {
+                            return ((ml || 0) / 1000).toLocaleString('pt-BR', { maximumFractionDigits: 1 });
+                        },
+
+                        // Modo GLP-1: só traz dados para pacientes com o modo configurado (senão data = null e o bloco some)
+                        async fetchGlp1() {
+                            if (!this.selectedPatientPhone) return;
+                            try {
+                                const response = await fetch(`/api/nutritionist/glp1/${this.selectedPatientPhone}?days=${this.selectedPeriod}`, {
+                                    method: 'GET',
+                                    headers: { 'X-Nutri-Key': this.apiKey }
+                                });
+                                const result = await response.json();
+                                this.glp1 = response.ok && result.success ? result.data : null;
+                                this.$nextTick(() => this.renderGlp1Chart());
+                            } catch (err) {
+                                this.glp1 = null;
+                                console.error('Erro ao buscar dados GLP-1 do paciente', err);
+                            }
+                        },
+
+                        async markGlp1AlertSeen(alertId) {
+                            try {
+                                const response = await fetch(`/api/nutritionist/glp1/${this.selectedPatientPhone}/alerts/${alertId}/seen`, {
+                                    method: 'POST',
+                                    headers: { 'X-Nutri-Key': this.apiKey }
+                                });
+                                if (response.ok) {
+                                    const alerta = this.glp1?.alerts.find(a => a.id === alertId);
+                                    if (alerta) alerta.seenAt = new Date().toISOString();
+                                    this.loadPatients(); // atualiza o ponto vermelho da lista
+                                }
+                            } catch (err) {
+                                console.error('Erro ao marcar alerta como visto', err);
+                            }
+                        },
+
+                        renderGlp1Chart() {
+                            if (this.glp1ChartInstance) {
+                                this.glp1ChartInstance.destroy();
+                                this.glp1ChartInstance = null;
+                            }
+
+                            const ctx = document.getElementById('glp1ProteinChart');
+                            if (!ctx || !this.glp1) return;
+
+                            const daily = this.glp1.daily;
+                            this.glp1ChartInstance = new Chart(ctx, {
+                                type: 'line',
+                                data: {
+                                    labels: daily.map(d => this.formatDdMm(d.date)),
+                                    datasets: [
+                                        {
+                                            label: 'Proteína (g)',
+                                            // dia sem refeição registrada fica em branco, sem puxar a linha para zero
+                                            data: daily.map(d => d.meals > 0 ? d.proteinG : null),
+                                            borderColor: '#7c3aed',
+                                            backgroundColor: 'rgba(124, 58, 237, 0.1)',
+                                            borderWidth: 2,
+                                            fill: true,
+                                            tension: 0.3,
+                                            spanGaps: true
+                                        },
+                                        {
+                                            label: 'Meta de proteína',
+                                            data: daily.map(() => this.glp1.proteinTargetG),
+                                            borderColor: '#ef4444',
+                                            borderWidth: 1.5,
+                                            borderDash: [5, 5],
+                                            pointRadius: 0,
+                                            fill: false
+                                        }
+                                    ]
+                                },
+                                options: {
+                                    responsive: true,
+                                    plugins: {
+                                        legend: {
+                                            position: 'bottom',
+                                            labels: { boxWidth: 12, font: { size: 11 } }
+                                        }
+                                    },
+                                    scales: {
+                                        y: {
+                                            beginAtZero: true,
+                                            grid: { color: '#f3f4f6' }
+                                        },
+                                        x: {
+                                            grid: { display: false }
+                                        }
+                                    }
+                                }
+                            });
                         },
 
                         async fetchLogs() {
@@ -745,6 +968,9 @@
                             } catch (err) {
                                 console.error('Erro ao buscar logs do paciente', err);
                             }
+
+                            // Mesmo período (7/30/90 dias) para o bloco do Modo GLP-1
+                            await this.fetchGlp1();
                         },
 
                         renderAdherenceChart() {

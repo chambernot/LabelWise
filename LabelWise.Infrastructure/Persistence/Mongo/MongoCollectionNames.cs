@@ -20,4 +20,5 @@ public static class MongoCollectionNames
     public const string Glp1Profiles = "Glp1Profiles";
     public const string Glp1SymptomLogs = "Glp1SymptomLogs";
     public const string Glp1Alerts = "Glp1Alerts";
+    public const string Glp1ReminderLogs = "Glp1ReminderLogs";
 }

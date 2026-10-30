@@ -22,4 +22,5 @@
   <ItemGroup>
     <ProjectReference Include="..\LabelWise.Application\LabelWise.Application.csproj" />
     <ProjectReference Include="..\LabelWise.Infrastructure\LabelWise.Infrastructure.csproj" />
+    <ProjectReference Include="..\LabelWise.Api\LabelWise.Api.csproj" />
   </ItemGroup></Project>

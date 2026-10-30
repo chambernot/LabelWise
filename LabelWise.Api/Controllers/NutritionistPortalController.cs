@@ -1,5 +1,7 @@
 ﻿using LabelWise.Application.DTOs.Nutrition;
 using LabelWise.Application.Interfaces.AI;
+using LabelWise.Application.Interfaces.Persistence;
+using LabelWise.Application.Services.Glp1;
 using LabelWise.Domain.Entities.Nutrition;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Configuration;
@@ -27,14 +29,17 @@ public class NutritionistPortalController : ControllerBase
     private readonly ILogger<NutritionistPortalController> _logger;
     private readonly IHttpClientFactory _httpClientFactory;
     private readonly string _nutriKey;
+    private readonly IGlp1Repository _glp1Repository;
 
     public NutritionistPortalController(
         INutritionAgentService aiService,
         IMongoDatabase database,
         IConfiguration configuration,
         ILogger<NutritionistPortalController> logger,
-        IHttpClientFactory httpClientFactory)
+        IHttpClientFactory httpClientFactory,
+        IGlp1Repository glp1Repository)
     {
+        _glp1Repository = glp1Repository;
         _aiService = aiService;
         _database = database;
         _goalsCollection = _database.GetCollection<DailyNutritionGoal>("DailyGoals");
@@ -226,6 +231,100 @@ Retorne APENAS o texto do cardápio pronto para ser colado na prescrição.
         }
     }
 
+    // ---------------------------------------------------------------- Modo GLP-1
+
+    // Carteira: a chave mestre vê todos; as demais só os pacientes com meta (DailyGoals) cadastrada por elas
+    private async Task<bool> PodeVerPacienteAsync(AuthenticatedNutri nutri, string phone)
+    {
+        if (nutri.IsMaster) return true;
+
+        var nutricionistas = await _goalsCollection.Find(x => x.UserId == phone)
+            .Project(x => x.NutritionistId)
+            .ToListAsync();
+        return Glp1PortalSummaryBuilder.PodeVerPaciente(false, nutri.Id, nutricionistas);
+    }
+
+    [HttpGet("glp1/{phone}")]
+    public async Task<IActionResult> GetGlp1Summary(
+        [FromHeader(Name = "X-Nutri-Key")] string key,
+        string phone,
+        [FromQuery] int days = 7)
+    {
+        var nutri = await ObterNutricionistaAutenticadoAsync(key);
+        if (nutri == null)
+        {
+            return Unauthorized(new { success = false, message = "Chave de acesso inválida." });
+        }
+
+        if (!Glp1PortalSummaryBuilder.PeriodosPermitidos.Contains(days))
+        {
+            return BadRequest(new { success = false, message = "Período inválido. Use 7, 30 ou 90 dias." });
+        }
+
+        try
+        {
+            if (!await PodeVerPacienteAsync(nutri, phone))
+            {
+                return StatusCode(403, new { success = false, message = "Este paciente não está na sua carteira." });
+            }
+
+            var perfil = await _glp1Repository.ObterPerfilAsync(phone);
+            if (perfil == null || !string.IsNullOrEmpty(perfil.ActivationStep) || !perfil.ProteinTargetG.HasValue)
+            {
+                // Paciente sem o Modo GLP-1: o portal simplesmente não mostra o bloco
+                return Ok(new { success = true, data = (object?)null });
+            }
+
+            var agora = DateTime.UtcNow;
+            var inicio = Glp1PortalSummaryBuilder.InicioDoPeriodoUtc(agora, days);
+
+            var resumo = Glp1PortalSummaryBuilder.Montar(
+                perfil, days, agora,
+                await _glp1Repository.ObterRefeicoesDesdeAsync(phone, inicio),
+                await _glp1Repository.ObterAguaDesdeAsync(phone, inicio),
+                await _glp1Repository.ObterPesosDesdeAsync(phone, inicio),
+                await _glp1Repository.ObterSintomasDesdeAsync(phone, inicio),
+                await _glp1Repository.ObterAlertasParaPortalAsync(phone, inicio));
+
+            return Ok(new { success = true, data = resumo });
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Erro ao montar o resumo GLP-1 do paciente {Phone}", phone);
+            return StatusCode(500, new { success = false, message = "Erro interno ao buscar os dados GLP-1." });
+        }
+    }
+
+    [HttpPost("glp1/{phone}/alerts/{id}/seen")]
+    public async Task<IActionResult> MarkGlp1AlertSeen(
+        [FromHeader(Name = "X-Nutri-Key")] string key,
+        string phone,
+        string id)
+    {
+        var nutri = await ObterNutricionistaAutenticadoAsync(key);
+        if (nutri == null)
+        {
+            return Unauthorized(new { success = false, message = "Chave de acesso inválida." });
+        }
+
+        try
+        {
+            if (!await PodeVerPacienteAsync(nutri, phone))
+            {
+                return StatusCode(403, new { success = false, message = "Este paciente não está na sua carteira." });
+            }
+
+            return await _glp1Repository.MarcarAlertaVistoAsync(phone, id, DateTime.UtcNow)
+                ? Ok(new { success = true })
+                : NotFound(new { success = false, message = "Alerta não encontrado." });
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Erro ao marcar o alerta GLP-1 {AlertId} do paciente {Phone}", id, phone);
+            return StatusCode(500, new { success = false, message = "Erro interno ao marcar o alerta." });
+        }
+    }
+
     [HttpDelete("patient/{phone}")]
     public async Task<IActionResult> DeletePatient(
         [FromHeader(Name = "X-Nutri-Key")] string key,
@@ -279,6 +378,23 @@ Retorne APENAS o texto do cardápio pronto para ser colado na prescrição.
             var patientsCollection = _database.GetCollection<MongoDB.Bson.BsonDocument>("Nutrition_Patients");
             var resultList = new System.Collections.Generic.List<object>();
 
+            // Modo GLP-1: selo e ponto vermelho de alerta não visto. Uma falha aqui não derruba a lista.
+            var telefonesGlp1 = new System.Collections.Generic.HashSet<string>();
+            var telefonesComAlerta = new System.Collections.Generic.HashSet<string>();
+            try
+            {
+                var ids = goals.Select(x => x.UserId).Distinct().ToList();
+                telefonesGlp1 = (await _glp1Repository.ObterPerfisAsync(ids))
+                    .Where(p => p.Enabled && string.IsNullOrEmpty(p.ActivationStep) && p.ProteinTargetG.HasValue)
+                    .Select(p => p.Id)
+                    .ToHashSet();
+                telefonesComAlerta = await _glp1Repository.ObterTelefonesComAlertaNaoVistoAsync(ids);
+            }
+            catch (Exception exGlp1)
+            {
+                _logger.LogWarning(exGlp1, "Não foi possível ler o Modo GLP-1 da lista de pacientes.");
+            }
+
             foreach (var g in goals)
             {
                 string clinicalProtocol = "";
@@ -315,7 +431,9 @@ Retorne APENAS o texto do cardápio pronto para ser colado na prescrição.
                     FavoriteFoods = g.FavoriteFoods,
                     PrescribedMealPlan = g.PrescribedMealPlan,
                     ClinicalProtocol = clinicalProtocol,
-                    ClinicalStatus = clinicalStatus // Enviando para o Frontend
+                    ClinicalStatus = clinicalStatus, // Enviando para o Frontend
+                    IsGlp1 = telefonesGlp1.Contains(g.UserId),
+                    HasUnseenGlp1Alert = telefonesComAlerta.Contains(g.UserId)
                 });
             }
 
