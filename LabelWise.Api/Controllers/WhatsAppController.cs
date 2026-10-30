@@ -2307,27 +2307,33 @@ Retorne APENAS o texto da mensagem pronto para envio.
             }
         }
 
-        // Modo GLP-1: chamar de hora em hora. Só age às 9h (dia da aplicação) e às 21h (ingestão baixa).
-        // ?dryRun=true só lista quem receberia; ?phone=55... roda só para esse telefone, ignorando a hora.
+        // Modo GLP-1. O cron externo chama ?tipo=lembrete às 9h e ?tipo=alerta às 21h (Brasília).
+        // ?dryRun=true só lista quem receberia; ?phone=55... roda só para esse telefone;
+        // ?forceTemplate=true (só com phone) usa o template mesmo dentro da janela de 24 h.
         [HttpPost("send-glp1-reminders")]
         public async Task<IActionResult> SendGlp1Reminders(
             [FromHeader(Name = "X-Cron-Secret")] string secret,
             [FromServices] Glp1ReminderService glp1Reminders,
+            [FromQuery] string? tipo = null,
             [FromQuery] bool dryRun = false,
-            [FromQuery] string? phone = null)
+            [FromQuery] string? phone = null,
+            [FromQuery] bool forceTemplate = false)
         {
             var expectedSecret = _configuration["CronSecret"];
             if (string.IsNullOrEmpty(secret) || secret != expectedSecret) return Unauthorized(new { success = false, message = "Acesso negado." });
 
+            var erro = Glp1ReminderService.ValidarParametros(tipo, phone, forceTemplate);
+            if (erro != null) return BadRequest(new { success = false, message = erro });
+
             try
             {
-                var resultado = await glp1Reminders.ExecutarAsync(DateTime.UtcNow, dryRun, phone);
+                var resultado = await glp1Reminders.ExecutarAsync(DateTime.UtcNow, Glp1ReminderService.ParseTipo(tipo)!, dryRun, phone, forceTemplate);
                 return Ok(new
                 {
                     success = true,
                     message = resultado.Observacao,
+                    tipo = resultado.Tipo,
                     dryRun = resultado.DryRun,
-                    horaBrasilia = resultado.HoraBrasilia,
                     enviados = resultado.Enviados,
                     falhas = resultado.Falhas,
                     selecionados = resultado.Selecionados

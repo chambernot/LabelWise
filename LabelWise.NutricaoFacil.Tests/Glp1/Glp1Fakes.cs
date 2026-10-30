@@ -116,6 +116,12 @@ internal sealed class FakeWhatsAppSender : IWhatsAppSenderService
         return Task.FromResult(true);
     }
 
-    public Task<WhatsAppSendResult> SendTemplateMessageWithResultAsync(string toPhone, string templateName, params string[] templateArgs) =>
-        throw new InvalidOperationException("O Modo GLP-1 não deveria enviar template nestes testes.");
+    // Resultado devolvido pela "Meta" nos testes de template
+    public WhatsAppSendResult ResultadoTemplate { get; set; } = new(true, "wamid.teste", null, null);
+
+    public Task<WhatsAppSendResult> SendTemplateMessageWithResultAsync(string toPhone, string templateName, params string[] templateArgs)
+    {
+        Templates.Add((toPhone, templateName, templateArgs));
+        return Task.FromResult(ResultadoTemplate);
+    }
 }

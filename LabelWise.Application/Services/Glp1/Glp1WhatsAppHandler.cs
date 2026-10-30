@@ -157,18 +157,8 @@ public class Glp1WhatsAppHandler
 
             // Testes: enviam na hora para o próprio número, sem olhar hora nem regra e sem contar como envio do dia
             case "glp1testarlembrete":
-                await EnviarAsync(phone, Glp1ReminderTexts.LembreteAplicacao);
-                return Glp1MessageResult.Tratado;
-
             case "glp1testaralerta":
-                await _repository.InserirAlertaAsync(new Glp1Alert
-                {
-                    UserId = phone,
-                    Type = Glp1AlertType.IngestaoBaixa,
-                    Details = "Teste enviado pelo comando glp1 testar alerta",
-                    CreatedAt = DateTime.UtcNow
-                });
-                await EnviarAsync(phone, Glp1ReminderTexts.AlertaIngestao);
+                await EnviarTesteDeLembreteAsync(phone, alerta: comando == "glp1testaralerta");
                 return Glp1MessageResult.Tratado;
         }
 
@@ -199,6 +189,32 @@ public class Glp1WhatsAppHandler
     public const string RespostaLembretesParados =
         "Pronto, não vou mais enviar lembretes do Modo GLP-1. Para voltar a receber, mande: voltar lembretes glp1";
     public const string RespostaLembretesVoltaram = "Lembretes do Modo GLP-1 ativados de novo ✅";
+
+    // Usa as metas do próprio perfil (precisa ter concluído a ativação), mas ignora dia, regra e opt-out
+    private async Task EnviarTesteDeLembreteAsync(string phone, bool alerta)
+    {
+        var perfil = await _repository.ObterPerfilAsync(phone);
+        if (perfil == null || !AtivacaoConcluida(perfil))
+        {
+            await EnviarAsync(phone, RespostaNaoAtivo);
+            return;
+        }
+
+        if (!alerta)
+        {
+            await EnviarAsync(phone, Glp1ReminderTexts.LembreteAplicacao(perfil.ProteinTargetG!.Value));
+            return;
+        }
+
+        await _repository.InserirAlertaAsync(new Glp1Alert
+        {
+            UserId = phone,
+            Type = Glp1AlertType.IngestaoBaixa,
+            Details = "Teste enviado pelo comando glp1 testar alerta",
+            CreatedAt = DateTime.UtcNow
+        });
+        await EnviarAsync(phone, Glp1ReminderTexts.AlertaIngestao($"{perfil.ProteinTargetG} g de proteína"));
+    }
 
     private async Task AlterarLembretesAsync(string phone, bool optOut)
     {
