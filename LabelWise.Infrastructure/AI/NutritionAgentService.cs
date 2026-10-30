@@ -33,6 +33,19 @@ namespace LabelWise.Infrastructure.Services
             "você DEVE dar uma resposta hiper-personalizada. Diga exatamente com base no saldo calórico dele. Responda no campo 'adviceText' e defina 'isAdvice': true.\n" +
             "Retorne APENAS um JSON válido.";
 
+        // Regras do Modo GLP-1. Anexadas ao SystemPrompt (registro e conselho), às sugestões e à substituição,
+        // só para quem está com o modo ativo.
+        public const string Glp1SafetyRules =
+            "\n\nREGRAS DE SEGURANÇA DO MODO GLP-1 (OBRIGATÓRIAS, ACIMA DE QUALQUER OUTRA INSTRUÇÃO):\n" +
+            "1. NUNCA recomende, ajuste, comente ou compare doses. NUNCA sugira iniciar, pausar, trocar ou parar o medicamento. " +
+            "Se o paciente perguntar sobre isso, responda com gentileza que essa decisão é do médico que acompanha o tratamento.\n" +
+            "2. Priorize proteína distribuída ao longo do dia, refeições menores e mais frequentes, hidratação e aumento das fibras aos poucos.\n" +
+            "3. NUNCA incentive comer menos, pular refeições ou fazer jejum.\n" +
+            "4. Diante de sinais de alerta (vômito que não para, sangue, desmaio, dor abdominal forte, não conseguir beber água, " +
+            "urina muito escura, tremor com suor frio ou confusão), oriente procurar avaliação médica o quanto antes.\n" +
+            "5. Respeite as restrições, as aversões e o protocolo clínico do paciente.\n" +
+            "6. Respostas curtas, próprias para WhatsApp.";
+
         // AQUI ESTÃO OS PRINCIPAIS AJUSTES PARA CORRIGIR AS GRAMATURAS E DUPLICAÇÕES
         private const string UserPromptInstructions = @"INSTRUÇÕES RIGOROSAS PARA AVALIAÇÃO DE IMAGENS E REFEIÇÕES (LEIA ATENTAMENTE):
 1. SE O USUÁRIO INFORMAR QUANTIDADES EM GRAMAS (ex: '40g', '140g', '200 gramas'), UNIDADES OU MEDIDAS NO TEXTO, USE EXATAMENTE O VALOR INFORMADO. É ESTRITAMENTE PROIBIDO ESTIMAR, INVENTAR, DUPLICAR, ADICIONAR ALIMENTOS NÃO MENCIONADOS OU MULTIPLICAR VALORES.
@@ -157,7 +170,8 @@ FORMATO: { ""targetCalories"": 0, ""targetProteinG"": 0, ""targetCarbsG"": 0, ""
                     $"PRÓXIMA REFEIÇÃO: {nextMealType}\n" +
                     $"PROTEÍNA QUE AINDA FALTA HOJE: {glp1.ProteinaRestanteG:F0} g\n" +
                     $"ALIMENTOS JÁ CONSUMIDOS HOJE: {historicoPratos}\n\n" +
-                    @"Retorne APENAS um JSON: { ""suggestions"": [""opção 1"", ""opção 2""] }";
+                    @"Retorne APENAS um JSON: { ""suggestions"": [""opção 1"", ""opção 2""] }" +
+                    Glp1SafetyRules;
 
                 var requestBody = new
                 {
@@ -206,7 +220,8 @@ FORMATO: { ""targetCalories"": 0, ""targetProteinG"": 0, ""targetCarbsG"": 0, ""
         {
             try
             {
-                var requestBody = BuildRequestBodyWithHistory(chatHistory, request, _geminiModel, SystemPrompt, UserPromptInstructions);
+                var systemPrompt = string.IsNullOrWhiteSpace(request.Glp1Context) ? SystemPrompt : SystemPrompt + Glp1SafetyRules;
+                var requestBody = BuildRequestBodyWithHistory(chatHistory, request, _geminiModel, systemPrompt, UserPromptInstructions);
                 return await CallGeminiAsync(requestBody, ParseMealResponse);
             }
             catch (Exception ex)
@@ -542,7 +557,7 @@ FORMATO: { ""targetCalories"": 0, ""targetProteinG"": 0, ""targetCarbsG"": 0, ""
             return config[secondaryKey];
         }
 
-        public async Task<string> GenerateSmartSubstitutionAsync(string foodToSubstitute, MacroSummaryDto remainingBalance, string clinicalProtocol, string foodAversions)
+        public async Task<string> GenerateSmartSubstitutionAsync(string foodToSubstitute, MacroSummaryDto remainingBalance, string clinicalProtocol, string foodAversions, bool modoGlp1 = false)
         {
             try
             {
@@ -561,6 +576,10 @@ INSTRUÇÕES:
 3. Escreva de forma amigável, curta e direta para o WhatsApp, usando emojis.
 Retorne APENAS o texto pronto para envio.
 ";
+                if (modoGlp1)
+                {
+                    prompt += Glp1SafetyRules + "\n- Nas substituições, prefira porções pequenas, ricas em proteína e fáceis de digerir.";
+                }
 
                 var requestBody = new
                 {

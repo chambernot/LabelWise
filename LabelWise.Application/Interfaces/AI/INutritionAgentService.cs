@@ -26,7 +26,8 @@ namespace LabelWise.Application.Interfaces.AI
     List<string> mealsLogged);
 
         // No contrato INutritionAgentService.cs (adicione a assinatura)
-        Task<string> GenerateSmartSubstitutionAsync(string foodToSubstitute, MacroSummaryDto remainingBalance, string clinicalProtocol, string foodAversions);
+        // modoGlp1 = true anexa as regras de segurança do Modo GLP-1 ao prompt
+        Task<string> GenerateSmartSubstitutionAsync(string foodToSubstitute, MacroSummaryDto remainingBalance, string clinicalProtocol, string foodAversions, bool modoGlp1 = false);
 
         // Assinatura no INutritionAgentService.cs
         Task<string> GenerateWeeklyProgressSummaryAsync(string patientName, decimal initialWeight, decimal currentWeight, int targetCalories, double avgConsumedCalories, int avgWaterMl, int streakDays);

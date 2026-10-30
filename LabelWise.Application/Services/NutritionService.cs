@@ -174,6 +174,12 @@ namespace LabelWise.Application.Services.Nutrition
                                       $"Gorduras {targetFat}g (Consumido: {consumedFat:F0}g).\n" +
                                       $"- Refeições já registradas hoje: {logs.Count(x => !x.IsTreino)} refeições.";
 
+            // Modo GLP-1: medicamento, dia, metas, consumo e sintomas (o texto nunca traz a dose)
+            if (!string.IsNullOrWhiteSpace(request.Glp1Context))
+            {
+                contextoPaciente += request.Glp1Context;
+            }
+
             var textoOriginal = request.TextInput ?? string.Empty;
             var textoEnriquecido = textoOriginal + contextoPaciente;
 
@@ -183,7 +189,8 @@ namespace LabelWise.Application.Services.Nutrition
                 request.Base64Image,
                 request.AudioUrl,
                 request.LocalTime,
-                request.ClinicalProtocol
+                request.ClinicalProtocol,
+                Glp1Context: request.Glp1Context
             );
 
             // 5. Delega a análise para o agente de IA enviando o histórico conversacional junto

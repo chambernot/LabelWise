@@ -97,11 +97,16 @@ public class Glp1WhatsAppHandler
         return !string.IsNullOrWhiteSpace(phone) && _telefonesLiberados.Contains(SomenteDigitos(phone));
     }
 
-    public async Task<bool> TryHandleAsync(string phone, string? text)
+    public async Task<bool> TryHandleAsync(string phone, string? text) => (await ProcessarMensagemAsync(phone, text)).Handled;
+
+    // Chamado pelo WhatsAppController depois da transcrição do áudio e antes de qualquer outro fluxo.
+    // Handled = true: respondido aqui. Handled = false com TextoParaAnexar: era sintoma + comida; o sintoma já foi
+    // gravado e o registro da refeição segue normalmente, com esse texto no fim da resposta.
+    public async Task<Glp1MessageResult> ProcessarMensagemAsync(string phone, string? text)
     {
         if (string.IsNullOrWhiteSpace(text))
         {
-            return false;
+            return Glp1MessageResult.NaoTratado;
         }
 
         // Sem espaços nem acentos: "glp1 status", "glp1status" e "GLP-1 Status" viram "glp1status"
@@ -116,45 +121,146 @@ public class Glp1WhatsAppHandler
                     "Comando GLP-1 recebido de telefone fora de Glp1:AllowedPhones (final {Final}); {Quantidade} telefone(s) configurado(s).",
                     FinalDoTelefone(phone), _telefonesLiberados.Count);
             }
-            return false;
+            return Glp1MessageResult.NaoTratado;
         }
 
         switch (comando)
         {
             case "glp1status":
                 await EnviarAsync(phone, await MontarStatusAsync(phone));
-                return true;
+                return Glp1MessageResult.Tratado;
 
             case "glp1reset":
                 await _repository.ApagarDadosAsync(phone);
                 await EnviarAsync(phone, RespostaReset);
-                return true;
+                return Glp1MessageResult.Tratado;
 
             case "glp1":
             case "modoglp1":
                 await IniciarOuMostrarAsync(phone);
-                return true;
+                return Glp1MessageResult.Tratado;
 
             case "sairglp1":
                 await SairAsync(phone);
-                return true;
+                return Glp1MessageResult.Tratado;
         }
 
         var perfil = await _repository.ObterPerfilAsync(phone);
         if (!string.IsNullOrEmpty(perfil?.ActivationStep))
         {
             await ProcessarEtapaAsync(perfil, text);
-            return true;
+            return Glp1MessageResult.Tratado;
         }
 
         // Começou com "glp1" mas não é um comando conhecido: pergunta em vez de mandar para a IA
         if (pareceComandoGlp1)
         {
             await EnviarAsync(phone, RespostaComandoDesconhecido);
-            return true;
+            return Glp1MessageResult.Tratado;
         }
 
-        return false;
+        if (perfil != null && perfil.Enabled && AtivacaoConcluida(perfil))
+        {
+            return await ProcessarSintomasAsync(phone, text);
+        }
+
+        return Glp1MessageResult.NaoTratado;
+    }
+
+    // ---------------------------------------------------------------- sintomas
+
+    public const string RespostaSinalDeAlerta =
+        "Esses sinais precisam de avaliação médica o quanto antes. Se piorar, procure um pronto atendimento.";
+
+    private async Task<Glp1MessageResult> ProcessarSintomasAsync(string phone, string text)
+    {
+        var deteccao = Glp1SymptomDetector.Detectar(text);
+        if (deteccao.Vazio)
+        {
+            return Glp1MessageResult.NaoTratado;
+        }
+
+        var agora = DateTime.UtcNow;
+
+        // Sinal de alerta tem prioridade sobre tudo: nenhuma dica alimentar e nenhum registro de refeição
+        if (deteccao.TemSinalDeAlerta)
+        {
+            var sintomasAlerta = deteccao.Sintomas.Count > 0 ? deteccao.Sintomas : new[] { Glp1Symptom.Outro };
+            await _repository.InserirSintomasAsync(sintomasAlerta.Select(s => NovoSintoma(phone, s, isRedFlag: true, agora)));
+            await _repository.InserirAlertaAsync(new Glp1Alert
+            {
+                UserId = phone,
+                Type = Glp1AlertType.SinalAlerta,
+                Details = string.Join(", ", deteccao.SinaisDeAlerta),
+                CreatedAt = agora
+            });
+
+            _logger.LogWarning("Modo GLP-1: sinal de alerta registrado para o telefone final {Final}: {Sinais}.",
+                FinalDoTelefone(phone), string.Join(", ", deteccao.SinaisDeAlerta));
+
+            await EnviarAsync(phone, RespostaSinalDeAlerta);
+            return Glp1MessageResult.Tratado;
+        }
+
+        await _repository.InserirSintomasAsync(deteccao.Sintomas.Select(s => NovoSintoma(phone, s, isRedFlag: false, agora)));
+
+        var (restricoes, aversoes) = await _repository.ObterRestricoesEAversoesAsync(phone);
+        var dica = Glp1TipsCatalog.Escolher(Glp1TipsCatalog.Categoria(deteccao.Sintomas[0]), restricoes, aversoes);
+        var nomes = JuntarNomes(deteccao.Sintomas.Select(Glp1SymptomDetector.Nome).ToList());
+        var anotacao = $"Anotei: {nomes}. 💡 {dica}";
+
+        if (deteccao.TemComida)
+        {
+            // Sintoma + comida: a refeição segue para o registro normal e a anotação vai no fim da resposta
+            return new Glp1MessageResult(false, TextoParaAnexar: "📝 " + anotacao, RespostaSeNaoHouverRefeicao: anotacao);
+        }
+
+        await EnviarAsync(phone, anotacao);
+        return Glp1MessageResult.Tratado;
+    }
+
+    private static Glp1SymptomLog NovoSintoma(string phone, Glp1Symptom sintoma, bool isRedFlag, DateTime agora) =>
+        new() { UserId = phone, Symptom = sintoma, IsRedFlag = isRedFlag, LoggedAt = agora };
+
+    private static string JuntarNomes(List<string> nomes) =>
+        nomes.Count == 1 ? nomes[0] : string.Join(", ", nomes.Take(nomes.Count - 1)) + " e " + nomes[^1];
+
+    // ---------------------------------------------------------------- contexto para a IA (Modo Nutri)
+
+    public async Task<bool> EstaAtivoAsync(string phone)
+    {
+        if (!TelefoneLiberado(phone)) return false;
+        var perfil = await _repository.ObterPerfilAsync(phone);
+        return perfil != null && perfil.Enabled && AtivacaoConcluida(perfil);
+    }
+
+    // Texto acrescentado ao contextoPaciente. NUNCA inclui a dose.
+    public async Task<string?> MontarContextoParaIaAsync(string phone, DateTime agoraUtc)
+    {
+        if (!TelefoneLiberado(phone)) return null;
+
+        var perfil = await _repository.ObterPerfilAsync(phone);
+        if (perfil == null || !perfil.Enabled || !AtivacaoConcluida(perfil)) return null;
+
+        var inicioDiaUtc = DateTime.SpecifyKind(agoraUtc.AddHours(-3).Date.AddHours(3), DateTimeKind.Utc);
+        var consumo = await _repository.ObterConsumoDoDiaAsync(phone, inicioDiaUtc);
+        var agua = await _repository.ObterAguaDoDiaAsync(phone, inicioDiaUtc);
+        var sintomas = await _repository.ObterSintomasDesdeAsync(phone, agoraUtc.AddDays(-7));
+
+        var resumoSintomas = sintomas.Count == 0
+            ? "nenhum registrado"
+            : string.Join(", ", sintomas
+                .GroupBy(s => s.Symptom)
+                .OrderByDescending(g => g.Count())
+                .Select(g => $"{Glp1SymptomDetector.Nome(g.Key)} ({g.Count()}x)"));
+
+        var metaAguaL = perfil.WaterTargetMl.HasValue ? Math.Round(perfil.WaterTargetMl.Value / 1000m, 1).ToString("0.#", PtBr) : "—";
+
+        return "\n\n[MODO GLP-1 ATIVO: o paciente usa medicamento GLP-1 com acompanhamento médico]:\n" +
+               $"- Medicamento: {Texto(perfil.Medication)} | Dia da aplicação: {DiaDaSemana(perfil.InjectionWeekday)}\n" +
+               $"- Metas do Modo GLP-1: proteína {perfil.ProteinTargetG} g/dia, mínimo de {perfil.CalorieFloorKcal?.ToString("N0", PtBr)} kcal/dia, água {metaAguaL} L/dia\n" +
+               $"- Hoje até agora: proteína {consumo.ProteinG.ToString("0", PtBr)} g, água {(agua / 1000m).ToString("0.#", PtBr)} L\n" +
+               $"- Sintomas nos últimos 7 dias: {resumoSintomas}";
     }
 
     // Consumo do dia e metas de quem está com o Modo GLP-1 ativo (Enabled e sem ativação em andamento).

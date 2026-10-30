@@ -251,9 +251,13 @@ namespace LabelWise.Api.Controllers
 
                 // 🧪 Modo GLP-1 (em teste): só trata os telefones de Glp1:AllowedPhones.
                 // Para os demais, ou se algo falhar aqui, o fluxo segue exatamente como antes.
+                // Fica depois da transcrição do áudio e antes da barreira anti-custo, então sintomas
+                // ditos em áudio também são detectados.
+                Glp1MessageResult? glp1Mensagem = null;
                 try
                 {
-                    if (await _glp1Handler.TryHandleAsync(senderPhone, textoBruto))
+                    glp1Mensagem = await _glp1Handler.ProcessarMensagemAsync(senderPhone, textoBruto);
+                    if (glp1Mensagem.Handled)
                     {
                         return Ok();
                     }
@@ -617,8 +621,18 @@ namespace LabelWise.Api.Controllers
                             Math.Max(0, targetFat - consumedFat)
                         );
 
+                        bool substituicaoGlp1 = false;
+                        try
+                        {
+                            substituicaoGlp1 = await _glp1Handler.EstaAtivoAsync(senderPhone);
+                        }
+                        catch (Exception exGlp1)
+                        {
+                            _logger.LogError(exGlp1, "Falha ao ler o Modo GLP-1 de {Phone}; substituição sem as regras GLP-1.", senderPhone);
+                        }
+
                         string respostaTroca = await _nutritionAgentService.GenerateSmartSubstitutionAsync(
-                            alimentoAlvo, remaining, protocoloClinico ?? "", foodAversions ?? ""
+                            alimentoAlvo, remaining, protocoloClinico ?? "", foodAversions ?? "", substituicaoGlp1
                         );
 
                         await _whatsAppSender.SendTextMessageAsync(senderPhone, respostaTroca);
@@ -981,6 +995,13 @@ namespace LabelWise.Api.Controllers
                 // 🛡️ GUARDRAIL: FILTRO ANTI-GASTOS DE IA E MENSAGENS GENÉRICAS
                 bool eIntencaoRefeicao = EhIntencaoRefeicaoOuComida(textoLimpoCmd, textoBruto ?? "", !string.IsNullOrWhiteSpace(imagemBase64), contextoPendente != null || refeicaoParaCorrigir != null);
 
+                if (!eIntencaoRefeicao && !string.IsNullOrEmpty(glp1Mensagem?.RespostaSeNaoHouverRefeicao))
+                {
+                    // Modo GLP-1: o sintoma já foi gravado; responde a anotação em vez da orientação genérica
+                    await _whatsAppSender.SendTextMessageAsync(senderPhone, glp1Mensagem.RespostaSeNaoHouverRefeicao);
+                    return Ok();
+                }
+
                 if (!eIntencaoRefeicao)
                 {
                     string msgOrientacao = "Não consegui identificar uma refeição no seu texto. 🥗\n\n" +
@@ -1007,13 +1028,25 @@ namespace LabelWise.Api.Controllers
                     await _nutritionRepository.ExcluirMealLogAsync(refeicaoParaCorrigir.Id);
                 }
 
+                // Modo GLP-1: contexto do tratamento para a IA (nulo para os demais usuários)
+                string? glp1ContextoIa = null;
+                try
+                {
+                    glp1ContextoIa = await _glp1Handler.MontarContextoParaIaAsync(senderPhone, DateTime.UtcNow);
+                }
+                catch (Exception exGlp1)
+                {
+                    _logger.LogError(exGlp1, "Falha ao montar o contexto GLP-1 de {Phone}; seguindo sem ele.", senderPhone);
+                }
+
                 var request = new ParseMealRequestDto(
                     senderPhone,
                     TextInput: textoFinalParaIa,
                     Base64Image: imagemFinalParaIa,
                     AudioUrl: null,
                     LocalTime: DateTime.UtcNow,
-                    ClinicalProtocol: protocoloClinico
+                    ClinicalProtocol: protocoloClinico,
+                    Glp1Context: glp1ContextoIa
                 );
 
                 var result = await _nutritionService.ProcessMealEntryAsync(request);
@@ -1053,6 +1086,12 @@ namespace LabelWise.Api.Controllers
                 }
 
                 var respostaTexto = WhatsAppMealResponseFormatter.FormatarRefeicao(result, statusDoDia, glp1Dia);
+
+                // Modo GLP-1: mensagem com sintoma + comida ("comi pizza e fiquei enjoada")
+                if (!string.IsNullOrEmpty(glp1Mensagem?.TextoParaAnexar))
+                {
+                    respostaTexto += "\n\n" + glp1Mensagem.TextoParaAnexar;
+                }
                 await _whatsAppSender.SendTextMessageAsync(senderPhone, respostaTexto);
                 await _nutritionRepository.SalvarMensagemHistoricoAsync(senderPhone, "assistant", respostaTexto);
 

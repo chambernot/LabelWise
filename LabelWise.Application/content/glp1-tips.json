@@ -1,0 +1,55 @@
+{
+  "_revisao": "ATENÇÃO: conteúdo provisório, escrito para teste do Modo GLP-1. Precisa de revisão de nutricionista antes de ser usado com mais pessoas.",
+  "versao": "glp1-tips-v1",
+  "_como_funciona": "Cada dica lista em 'alimentos' os alimentos e categorias (ex.: lactose, gluten) que ela cita. A dica não é mostrada se algum desses termos aparecer nas restrições ou aversões do usuário.",
+  "dicas": {
+    "nausea": [
+      { "texto": "Prefira porções pequenas e coma devagar, mastigando bem.", "alimentos": [] },
+      { "texto": "Comidas frias ou em temperatura ambiente costumam enjoar menos do que as quentes e de cheiro forte.", "alimentos": [] },
+      { "texto": "Um biscoito de água e sal ou uma torrada podem ajudar a acalmar o estômago.", "alimentos": ["biscoito", "torrada", "trigo", "gluten"] },
+      { "texto": "Evite deitar logo depois de comer. Espere pelo menos 1 hora.", "alimentos": [] }
+    ],
+    "constipacao": [
+      { "texto": "Beba água ao longo do dia, aos poucos.", "alimentos": [] },
+      { "texto": "Aumente as fibras aos poucos, com frutas como mamão, ameixa e pera.", "alimentos": ["mamao", "ameixa", "pera", "fruta"] },
+      { "texto": "Coloque 1 colher de aveia ou chia no iogurte ou na fruta.", "alimentos": ["aveia", "chia", "iogurte", "leite", "lactose", "gluten"] },
+      { "texto": "Uma caminhada leve depois das refeições ajuda o intestino a funcionar.", "alimentos": [] }
+    ],
+    "diarreia": [
+      { "texto": "Beba líquidos em pequenos goles, várias vezes ao dia, para repor o que perdeu.", "alimentos": [] },
+      { "texto": "Prefira comidas leves, como arroz, batata cozida e frango desfiado.", "alimentos": ["arroz", "batata", "frango"] },
+      { "texto": "Por enquanto, evite frituras e comidas gordurosas ou muito temperadas.", "alimentos": [] },
+      { "texto": "Banana e maçã sem casca costumam cair bem.", "alimentos": ["banana", "maca", "fruta"] }
+    ],
+    "refluxo": [
+      { "texto": "Faça refeições menores e espere 2 horas para deitar depois de comer.", "alimentos": [] },
+      { "texto": "Café, refrigerante, chocolate e comidas gordurosas costumam piorar a azia. Vale observar.", "alimentos": [] },
+      { "texto": "Levantar um pouco a cabeceira da cama pode ajudar à noite.", "alimentos": [] },
+      { "texto": "Coma devagar e mastigue bem cada garfada.", "alimentos": [] }
+    ],
+    "sem_apetite": [
+      { "texto": "Mesmo sem fome, tente comer uma porção pequena a cada 3 ou 4 horas.", "alimentos": [] },
+      { "texto": "Comece a refeição pela proteína, como ovo, frango ou queijo.", "alimentos": ["ovo", "frango", "queijo", "leite", "lactose"] },
+      { "texto": "Um iogurte natural ou um copo de leite são opções fáceis quando a fome está baixa.", "alimentos": ["iogurte", "leite", "lactose"] },
+      { "texto": "Não pule refeições: uma porção pequena já ajuda a manter a energia.", "alimentos": [] }
+    ],
+    "hidratacao": [
+      { "texto": "Beba água em pequenos goles ao longo do dia, sem esperar a sede.", "alimentos": [] },
+      { "texto": "Deixe uma garrafinha de água sempre por perto para lembrar de beber.", "alimentos": [] },
+      { "texto": "Água de coco e chá sem açúcar também ajudam a hidratar.", "alimentos": ["coco", "cha"] },
+      { "texto": "Se estiver difícil beber, tente gelatina ou picolé de fruta.", "alimentos": ["gelatina", "fruta"] }
+    ],
+    "proteina_porcao_pequena": [
+      { "texto": "1 ovo cozido", "alimentos": ["ovo"] },
+      { "texto": "1 iogurte natural com 1 colher de aveia", "alimentos": ["iogurte", "aveia", "leite", "lactose", "gluten"] },
+      { "texto": "2 fatias de queijo branco", "alimentos": ["queijo", "leite", "lactose"] },
+      { "texto": "1 pote pequeno de queijo cottage", "alimentos": ["queijo", "cottage", "leite", "lactose"] },
+      { "texto": "3 colheres de sopa de frango desfiado", "alimentos": ["frango"] },
+      { "texto": "1 lata pequena de atum com tomate", "alimentos": ["atum", "peixe", "tomate"] },
+      { "texto": "1 copo de leite com 1 colher de whey", "alimentos": ["leite", "whey", "lactose"] },
+      { "texto": "2 colheres de sopa de grão-de-bico cozido", "alimentos": ["grao de bico"] },
+      { "texto": "1 fatia de peito de peru com 1 torrada", "alimentos": ["peru", "torrada", "trigo", "gluten"] },
+      { "texto": "1 omelete pequena de 1 ovo com espinafre", "alimentos": ["ovo", "espinafre"] }
+    ]
+  }
+}

@@ -15,6 +15,13 @@ public interface IGlp1Repository
     Task RegistrarPesoAsync(string userId, decimal pesoKg, DateTime agoraUtc);
 
     Task<int> ContarSintomasAsync(string userId);
+    Task InserirSintomasAsync(IEnumerable<Glp1SymptomLog> sintomas);
+    Task<List<Glp1SymptomLog>> ObterSintomasDesdeAsync(string userId, DateTime desdeUtc);
+    Task InserirAlertaAsync(Glp1Alert alerta);
+
+    // Restrições/alergias e aversões do onboarding (Nutrition_Patients), para filtrar as dicas
+    Task<(string? Restricoes, string? Aversoes)> ObterRestricoesEAversoesAsync(string userId);
+
     Task<int> ContarAlertasAsync(string userId);
 
     Task<decimal> ObterProteinaDoDiaAsync(string userId, DateTime inicioDiaUtc);

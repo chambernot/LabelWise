@@ -57,6 +57,31 @@ public class NutritionServiceTests
         Assert.Equal(0, Assert.Single(_repository.RefeicoesGravadas).Calories);
     }
 
+    // ================================================================ contexto do paciente (Modo Nutri)
+
+    [Fact]
+    public async Task ContextoGlp1_EntraNoContextoDoPacienteEChegaAIA()
+    {
+        const string contextoGlp1 = "\n\n[MODO GLP-1 ATIVO: teste]\n- Medicamento: Tirzepatida";
+
+        await Servico().ProcessMealEntryAsync(Pedido() with { Glp1Context = contextoGlp1 });
+
+        var pedido = _agente.UltimoPedido!;
+        Assert.Contains("[PERFIL CLÍNICO E CONTEXTO DO PACIENTE HOJE]", pedido.TextInput);
+        Assert.EndsWith(contextoGlp1, pedido.TextInput);
+        Assert.Equal(contextoGlp1, pedido.Glp1Context); // a IA também sabe que precisa das regras de segurança
+    }
+
+    [Fact]
+    public async Task UsuarioComum_ContextoSemGlp1()
+    {
+        await Servico().ProcessMealEntryAsync(Pedido());
+
+        var pedido = _agente.UltimoPedido!;
+        Assert.DoesNotContain("GLP-1", pedido.TextInput);
+        Assert.Null(pedido.Glp1Context);
+    }
+
     // ================================================================ sugestões
 
     [Fact]
@@ -95,11 +120,17 @@ public class NutritionServiceTests
         }
 
         public Task<MealAnalysisResponseDto> ExtractMealDataAsync(ParseMealRequestDto request) => Task.FromResult(Analise);
-        public Task<MealAnalysisResponseDto> ExtractMealDataAsync(ParseMealRequestDto request, List<ChatMessageLog>? chatHistory) => Task.FromResult(Analise);
+        public ParseMealRequestDto? UltimoPedido { get; private set; }
+
+        public Task<MealAnalysisResponseDto> ExtractMealDataAsync(ParseMealRequestDto request, List<ChatMessageLog>? chatHistory)
+        {
+            UltimoPedido = request;
+            return Task.FromResult(Analise);
+        }
 
         public Task<ExtractDietGoalResponseDto> ExtractDietGoalsFromDocumentAsync(ExtractDietGoalRequestDto request) => throw new NotSupportedException();
         public Task<string> GenerateDailyFeedbackMessageAsync(string patientGoal, int targetCalories, int consumedCalories, decimal targetProtein, decimal consumedProtein, List<string> mealsLogged) => throw new NotSupportedException();
-        public Task<string> GenerateSmartSubstitutionAsync(string foodToSubstitute, MacroSummaryDto remainingBalance, string clinicalProtocol, string foodAversions) => throw new NotSupportedException();
+        public Task<string> GenerateSmartSubstitutionAsync(string foodToSubstitute, MacroSummaryDto remainingBalance, string clinicalProtocol, string foodAversions, bool modoGlp1 = false) => throw new NotSupportedException();
         public Task<string> GenerateWeeklyProgressSummaryAsync(string patientName, decimal initialWeight, decimal currentWeight, int targetCalories, double avgConsumedCalories, int avgWaterMl, int streakDays) => throw new NotSupportedException();
         public Task<AutoCalculateGoalDto> CalculateNutritionalGoalsAsync(string userProfileText, string mainGoal) => throw new NotSupportedException();
     }

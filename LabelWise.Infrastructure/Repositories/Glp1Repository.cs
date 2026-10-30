@@ -16,10 +16,12 @@ namespace LabelWise.Infrastructure.Repositories
         private readonly IMongoCollection<MealLog> _mealLogs;
         private readonly IMongoCollection<BsonDocument> _waterLogs;
         private readonly IMongoCollection<BsonDocument> _weightLogs;
+        private readonly IMongoCollection<BsonDocument> _patients; // só leitura
 
         public Glp1Repository(IMongoDatabase database)
         {
             _weightLogs = database.GetCollection<BsonDocument>("WeightLogs");
+            _patients = database.GetCollection<BsonDocument>("Nutrition_Patients");
             _profiles = database.GetCollection<Glp1Profile>(MongoCollectionNames.Glp1Profiles);
             _symptomLogs = database.GetCollection<Glp1SymptomLog>(MongoCollectionNames.Glp1SymptomLogs);
             _alerts = database.GetCollection<Glp1Alert>(MongoCollectionNames.Glp1Alerts);
@@ -65,6 +67,39 @@ namespace LabelWise.Infrastructure.Repositories
         public async Task<int> ContarSintomasAsync(string userId)
         {
             return (int)await _symptomLogs.CountDocumentsAsync(x => x.UserId == userId);
+        }
+
+        public async Task InserirSintomasAsync(IEnumerable<Glp1SymptomLog> sintomas)
+        {
+            var lista = sintomas.ToList();
+            if (lista.Count > 0)
+            {
+                await _symptomLogs.InsertManyAsync(lista);
+            }
+        }
+
+        public async Task<List<Glp1SymptomLog>> ObterSintomasDesdeAsync(string userId, DateTime desdeUtc)
+        {
+            return await _symptomLogs
+                .Find(x => x.UserId == userId && x.LoggedAt >= desdeUtc)
+                .SortByDescending(x => x.LoggedAt)
+                .ToListAsync();
+        }
+
+        public async Task InserirAlertaAsync(Glp1Alert alerta)
+        {
+            await _alerts.InsertOneAsync(alerta);
+        }
+
+        public async Task<(string? Restricoes, string? Aversoes)> ObterRestricoesEAversoesAsync(string userId)
+        {
+            var doc = await _patients.Find(Builders<BsonDocument>.Filter.Eq("_id", userId)).FirstOrDefaultAsync();
+            if (doc == null) return (null, null);
+
+            static string? Ler(BsonDocument d, string campo) =>
+                d.TryGetValue(campo, out var v) && v.IsString ? v.AsString : null;
+
+            return (Ler(doc, "MedicalRestrictions"), Ler(doc, "FoodAversions"));
         }
 
         public async Task<int> ContarAlertasAsync(string userId)

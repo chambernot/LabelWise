@@ -172,6 +172,78 @@ public class NutritionAgentServiceFalhaTests
         Assert.Contains("NUNCA sugira pular refeição", corpo);
     }
 
+    // ================================================================ regras de segurança do Modo GLP-1
+
+    private static (NutritionAgentService Agente, FakeHttpClientFactory Factory) AgenteComCaptura(string conteudo)
+    {
+        var factory = new FakeHttpClientFactory(ConteudoDaIA(conteudo));
+        var config = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?> { ["GeminiApiKey"] = "x" }).Build();
+        return (new NutritionAgentService(factory, config, NullLogger<NutritionAgentService>.Instance), factory);
+    }
+
+    private static string TextoDaMensagem(string corpo, int indice)
+    {
+        using var json = JsonDocument.Parse(corpo);
+        var content = json.RootElement.GetProperty("messages")[indice].GetProperty("content");
+        return content.ValueKind == JsonValueKind.String ? content.GetString()! : content.GetRawText();
+    }
+
+    [Fact]
+    public async Task ModoNutri_Glp1_SystemPromptRecebeAsRegrasDeSeguranca()
+    {
+        var (agente, factory) = AgenteComCaptura(@"{ ""isAdvice"": true, ""adviceText"": ""ok"" }");
+
+        await agente.ExtractMealDataAsync(Pedido with { Glp1Context = "\n[MODO GLP-1 ATIVO]" }, null);
+
+        var system = TextoDaMensagem(factory.UltimoCorpo!, 0);
+        Assert.Contains("REGRAS DE SEGURANÇA DO MODO GLP-1", system);
+        Assert.Contains("NUNCA recomende, ajuste, comente ou compare doses", system);
+        Assert.Contains("NUNCA incentive comer menos, pular refeições ou fazer jejum", system);
+        Assert.Contains("MODO 2 (MODO SOS / CONSELHO)", system); // o prompt original continua
+    }
+
+    [Fact]
+    public async Task ModoNutri_UsuarioComum_SystemPromptSemAsRegras()
+    {
+        var (agente, factory) = AgenteComCaptura(@"{ ""isAdvice"": true, ""adviceText"": ""ok"" }");
+
+        await agente.ExtractMealDataAsync(Pedido, null);
+
+        Assert.DoesNotContain("MODO GLP-1", TextoDaMensagem(factory.UltimoCorpo!, 0));
+    }
+
+    [Fact]
+    public async Task SugestoesGlp1_RecebemAsRegrasDeSeguranca()
+    {
+        var (agente, factory) = AgenteComCaptura(@"{ ""suggestions"": [] }");
+
+        await agente.GenerateProactiveSuggestionsAsync(new MacroSummaryDto(0, 0, 0, 0), "Jantar", null, new Glp1SuggestionContext(null, null, 40));
+
+        Assert.Contains("REGRAS DE SEGURANÇA DO MODO GLP-1", TextoDaMensagem(factory.UltimoCorpo!, 0));
+    }
+
+    [Fact]
+    public async Task SugestoesUsuarioComum_SemAsRegras()
+    {
+        var (agente, factory) = AgenteComCaptura(@"{ ""suggestions"": [""a"", ""b"", ""c""] }");
+
+        await agente.GenerateProactiveSuggestionsAsync(new MacroSummaryDto(800, 50, 80, 20), "Jantar");
+
+        Assert.DoesNotContain("MODO GLP-1", TextoDaMensagem(factory.UltimoCorpo!, 0));
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task Substituicao_RegrasSoNoModoGlp1(bool modoGlp1)
+    {
+        var (agente, factory) = AgenteComCaptura("Troque por patinho.");
+
+        await agente.GenerateSmartSubstitutionAsync("frango", new MacroSummaryDto(800, 50, 80, 20), "", "", modoGlp1);
+
+        Assert.Equal(modoGlp1, TextoDaMensagem(factory.UltimoCorpo!, 0).Contains("REGRAS DE SEGURANÇA DO MODO GLP-1"));
+    }
+
     [Theory]
     [InlineData("Pule o jantar hoje")]
     [InlineData("Faça jejum até amanhã")]
